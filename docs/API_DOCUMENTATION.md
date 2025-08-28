@@ -91,31 +91,6 @@ Handles user authentication and token management.
   }
   ```
 
-#### Log In
-- **Endpoint**: `POST /auth/log-in`
-- **Access**: Public
-- **Description**: Logs in a user using a Firebase ID token obtained from client-side phone authentication.
-- **Request Body**:
-  ```json
-  {
-    "token": "string" // Firebase ID Token
-  }
-  ```
-- **Success Response (200)**:
-  ```json
-  {
-    "message": "Login successful",
-    "user": { ...decodedToken }
-  }
-  ```
-- **Error Response (401)**:
-  ```json
-  {
-    "statusCode": 401,
-    "message": "Invalid token or login failed"
-  }
-  ```
-
 #### Register
 - **Endpoint**: `POST /auth/register`
 - **Access**: Public
@@ -124,8 +99,7 @@ Handles user authentication and token management.
   ```json
   {
     "phoneNumber": "string",
-    "name": "string",
-    "role": "customer" | "admin" // Default is 'customer' if not specified in request
+    "name": "string"
   }
   ```
 - **Success Response (201)**:
@@ -179,6 +153,10 @@ Manages products.
     - `limit` (number): Number of items to return.
     - `offset` (number): Number of items to skip.
     - `includeDiscounts` (boolean): Set to `true` to include applicable discount details.
+    - `categoryId` (string): Filter by product category ID.
+    - `minPrice` (number): Filter by minimum price.
+    - `maxPrice` (number): Filter by maximum price.
+    - `isFeatured` (boolean): Filter by featured products.
 - `GET /products/{id}`: (Public) Retrieves a specific product.
 - `POST /products`: (Admin) Creates a new product.
 - `PUT /products/{id}`: (Admin) Updates a product.
@@ -215,11 +193,35 @@ Manages promotions. Data is read-only via the API.
 
 Manages customer orders.
 
-- `GET /orders`: Retrieves all orders for the authenticated user.
-- `GET /orders/{id}`: Retrieves a specific order.
-- `POST /orders`: Creates a new order from the user's cart.
-- `PUT /orders/{id}`: Updates an order status (admin only).
-- `DELETE /orders/{id}`: Deletes an order (admin only).
+- `GET /orders`: (Customer) Retrieves all orders for the authenticated user.
+- `GET /orders/{id}`: (Customer) Retrieves a specific order.
+- `POST /orders`: (Customer) Creates a new order.
+  - **Request Body**:
+    ```json
+    {
+      "userId": "string",
+      "items": [
+        {
+          "productId": "string",
+          "name": "string",
+          "price": "number",
+          "quantity": "number"
+        }
+      ],
+      "totalAmount": "number",
+      "discountApplied": "string | null",
+      "promotionApplied": "string | null",
+      "status": "pending" | "processing" | "shipped" | "delivered" | "cancelled"
+    }
+    ```
+- `PUT /orders/{id}`: (Admin) Updates an order status.
+  - **Request Body**:
+    ```json
+    {
+      "status": "pending" | "processing" | "shipped" | "delivered" | "cancelled"
+    }
+    ```
+- `DELETE /orders/{id}`: (Admin) Deletes an order.
 
 ### Inventory
 
@@ -269,7 +271,6 @@ export const LoginSchema = z.object({
 export const RegisterSchema = z.object({
   phoneNumber: z.string().min(1),
   name: z.string().min(1),
-  role: z.enum([USER_ROLES.CUSTOMER, USER_ROLES.ADMIN]).optional(), // Role is optional for registration, defaults to CUSTOMER
 });
 
 export type LoginDto = z.infer<typeof LoginSchema>;
@@ -294,7 +295,7 @@ export const CartItemSchema = z.object({
 export const UserSchema = z.object({
   id: z.string().optional(),
   name: z.string().min(1),
-  email: z.string().email().optional(), // Email is optional for phone-based login
+  email: z.string().email(),
   phone: z.string().optional(),
   address: z.string().optional(),
   role: z.enum([USER_ROLES.CUSTOMER, USER_ROLES.ADMIN]),
@@ -403,6 +404,15 @@ export const ProductQuerySchema = z.object({
   includeDiscounts: z.preprocess(
     (a) => z.string().parse(a).toLowerCase() === 'true',
     z.boolean().optional(),
+  ),
+  categoryId: z.string().optional(),
+  minPrice: z.preprocess(
+    (a) => parseFloat(z.string().parse(a)),
+    z.number().nonnegative().optional(),
+  ),
+  maxPrice: z.preprocess(
+    (a) => parseFloat(z.string().parse(a)),
+    z.number().nonnegative().optional(),
   ),
 }).partial();
 
