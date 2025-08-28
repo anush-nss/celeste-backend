@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { AppLoggerService } from '../shared/logger/logger.service';
 import { Product } from './schemas/product.schema';
 import { FirestoreService } from '../shared/firestore.service';
+import { COLLECTION_NAMES } from '../shared/constants';
 
 @Injectable()
 export class ProductsService {
@@ -14,7 +15,7 @@ export class ProductsService {
   async findAll(query: any): Promise<Product[]> {
     this.logger.log('Finding all products', ProductsService.name);
     try {
-      const products = await this.firestore.getAll('products', query);
+      const products = await this.firestore.getAll(COLLECTION_NAMES.PRODUCTS, query);
       return products as Product[];
     } catch (error) {
       this.logger.error(`Failed to fetch products: ${error.message}`, error.stack, ProductsService.name);
@@ -26,7 +27,7 @@ export class ProductsService {
   async findOne(id: string): Promise<Product | null> {
     this.logger.log(`Finding product with ID: ${id}`, ProductsService.name);
     try {
-      const product = await this.firestore.getById('products', id);
+      const product = await this.firestore.getById(COLLECTION_NAMES.PRODUCTS, id);
       return product as Product | null;
     } catch (error) {
       this.logger.error(`Failed to fetch product ${id}: ${error.message}`, error.stack, ProductsService.name);

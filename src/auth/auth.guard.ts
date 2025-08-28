@@ -1,4 +1,9 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 
 @Injectable()
@@ -15,8 +20,13 @@ export class AuthGuard implements CanActivate {
 
     try {
       const decodedToken = await this.authService.verifyToken(authHeader);
-      // Attach user info to request for use in controllers
-      request.user = decodedToken;
+      
+      if (!decodedToken.role) {
+        throw new UnauthorizedException('User role not found in token');
+      }
+
+      // Attach user info and role to request for use in controllers
+      request.user = { ...decodedToken, role: decodedToken.role };
       return true;
     } catch (error) {
       throw new UnauthorizedException('Invalid authentication token');

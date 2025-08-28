@@ -23,119 +23,124 @@
 
 ## Description
 
-Celeste E-Commerce API - A NestJS-based e-commerce platform with Firebase integration.
-
-## Project setup
-
-```bash
-$ npm install
-```
-
-## Firebase Setup
-
-1. Create a Firebase project at https://console.firebase.google.com/
-2. Generate a service account key:
-   - Go to Project Settings > Service Accounts
-   - Click "Generate new private key"
-   - Save the JSON file securely
-3. Set environment variables:
-   - Copy `.env.example` to `.env`
-   - Update the values with your Firebase project details
-   - For `GOOGLE_APPLICATION_CREDENTIALS`, you can either:
-     - Set the path to your service account key file, or
-     - Set the individual variables: `FIREBASE_PROJECT_ID`, `FIREBASE_PRIVATE_KEY`, `FIREBASE_CLIENT_EMAIL`
-
-## Compile and run the project
-
-```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
-```
-
-## Run tests
-
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
-```
-
-## API Documentation
-
-Detailed API documentation can be found in the [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md) file. This documentation includes:
-
-- Complete endpoint specifications
-- Data models and schemas
-- Authentication requirements
-- Query parameter details
-- Implementation guidelines
+Celeste E-Commerce API - A robust, scalable, and feature-rich e-commerce backend built with NestJS, TypeScript, and Firebase. This API provides a comprehensive set of endpoints to power a modern online store, from user management and product catalogs to order processing and inventory tracking.
 
 ## Key Features
 
-- **Zod Validation**: All request validation is handled with Zod schemas instead of class-validator
-- **Centralized Error Handling**: Global exception filter for consistent error responses
-- **Standardized Responses**: Global response interceptor for consistent success responses
-- **Comprehensive Logging**: Request/response logging with contextual information
-- **Firebase Integration**: Authentication and database operations using Firebase
-- **Modular Architecture**: Well-organized module structure for scalability
+- **Modular Architecture**: Organized into distinct modules for each domain (e.g., `users`, `products`, `orders`), promoting separation of concerns and scalability.
+- **Firebase Integration**: Leverages Firebase for authentication (Firebase Auth) and database (Firestore), providing a reliable and scalable backend infrastructure.
+- **Centralized Error Handling**: A global exception filter ensures consistent and informative error responses across the API.
+- **Standardized Responses**: A global response interceptor formats all successful responses, providing a uniform structure for clients.
+- **Comprehensive Logging**: Middleware and a dedicated logger service provide detailed request/response logging with contextual information for effective monitoring and debugging.
+- **Zod Validation**: All incoming request data is validated using Zod schemas, ensuring type safety and data integrity.
+- **Authentication & Authorization**: Secure endpoints using JWT-based authentication with Firebase Auth. Public and protected routes are clearly defined.
+- **Configuration Management**: Environment-based configuration for easy management of settings across different environments (development, production, etc.).
 
-## Dependencies
+## Project Structure
 
-- **Zod**: Runtime validation and TypeScript-first schema declaration
-- **Firebase Admin**: Server-side Firebase integration
-- **NestJS**: Progressive Node.js framework
+The project follows a standard NestJS project structure, with the core logic located in the `src` directory.
 
-## Firebase Configuration
-
-The application uses the following Firebase configuration:
-
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+```
+src/
+├── auth/             # Authentication (Firebase Auth)
+├── categories/       # Product categories
+├── config/           # Environment configuration
+├── discounts/        # Discount management
+├── inventory/        # Inventory tracking
+├── orders/           # Order management
+├── products/         # Product and featured product management
+├── promotions/       # Promotional campaigns
+├── shared/           # Shared modules, services, and utilities
+│   ├── controllers/  # Base controller logic
+│   ├── exceptions/   # Custom exceptions and filter
+│   ├── interceptors/ # Response formatting interceptor
+│   ├── logger/       # Application logger service
+│   ├── middleware/   # Request logging middleware
+│   └── pipes/        # Zod validation pipe
+├── stores/           # Physical store information
+└── users/            # User management
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+## Project Setup
 
-## Resources
+1.  **Clone the repository:**
+    ```bash
+    git clone <repository-url>
+    cd celeste
+    ```
 
-Check out a few resources that may come in handy when working with NestJS:
+2.  **Install dependencies:**
+    ```bash
+    npm install
+    ```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+## Firebase Setup
 
-## Support
+1.  Create a Firebase project at [https://console.firebase.google.com/](https://console.firebase.google.com/).
+2.  Enable **Authentication** (e.g., Email/Password).
+3.  Set up **Firestore** as your database.
+4.  Generate a service account key:
+    -   Go to **Project Settings** > **Service Accounts**.
+    -   Click **"Generate new private key"**.
+    -   Save the downloaded JSON file in a secure location.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+## Environment Configuration
 
-## Stay in touch
+1.  Copy the example environment file:
+    ```bash
+    cp .env.example .env
+    ```
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+2.  Update the `.env` file with your Firebase project details and other configurations:
+    -   `GOOGLE_APPLICATION_CREDENTIALS`: The absolute path to your downloaded Firebase service account JSON file.
+    -   `FIREBASE_PROJECT_ID`: Your Firebase project ID.
+    -   `FIREBASE_PRIVATE_KEY`: The private key from the service account file.
+    -   `FIREBASE_CLIENT_EMAIL`: The client email from the service account file.
+    -   `PORT`: The port on which the application will run (e.g., 3000).
+    -   `NODE_ENV`: The application environment (e.g., `development`).
+
+## Available Scripts
+
+-   **Run in development mode:**
+    ```bash
+    $ npm run start:dev
+    ```
+
+-   **Build for production:**
+    ```bash
+    $ npm run build
+    ```
+
+-   **Run in production mode:**
+    ```bash
+    $ npm run start:prod
+    ```
+
+-   **Run tests:**
+    ```bash
+    # unit tests
+    $ npm run test
+
+    # e2e tests
+    $ npm run test:e2e
+
+    # test coverage
+    $ npm run test:cov
+    ```
+
+-   **Lint and format:**
+    ```bash
+    # lint
+    $ npm run lint
+
+    # format
+    $ npm run format
+    ```
+
+## API Documentation
+
+Detailed API documentation, including endpoint specifications, data models, and authentication requirements, can be found in the [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md) file.
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+This project is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).

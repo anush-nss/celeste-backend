@@ -8,7 +8,7 @@ export class OrdersService {
   constructor(private readonly logger: AppLoggerService) {}
 
   // Find all orders with optional filtering
-  findAll(query: any): Order[] {
+  findAll(query: Record<string, any>): Order[] {
     this.logger.log('Finding all orders', OrdersService.name);
     // Implementation will be added later
     return [];

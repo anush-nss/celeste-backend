@@ -1,9 +1,10 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Public } from '../auth/public.decorator';
+import { COLLECTION_NAMES } from '../shared/constants';
 
-@ApiTags('discounts')
-@Controller('discounts')
+@ApiTags(COLLECTION_NAMES.DISCOUNTS)
+@Controller(COLLECTION_NAMES.DISCOUNTS)
 export class DiscountsController {
   // Get all discounts
   @Public()

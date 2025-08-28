@@ -9,9 +9,10 @@ import { ProductsService } from './products.service';
 import { BaseController } from '../shared/controllers/base.controller';
 import { AppLoggerService } from '../shared/logger/logger.service';
 import { Public } from '../auth/public.decorator';
+import { COLLECTION_NAMES } from '../shared/constants';
 
-@ApiTags('products')
-@Controller('products')
+@ApiTags(COLLECTION_NAMES.PRODUCTS)
+@Controller(COLLECTION_NAMES.PRODUCTS)
 export class ProductsController extends BaseController {
   constructor(
     private readonly productsService: ProductsService,

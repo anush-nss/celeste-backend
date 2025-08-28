@@ -30,7 +30,7 @@ export class FirestoreService {
     return this.getDb().collection(collectionName);
   }
 
-  async getAll(collectionName: string, query?: any) {
+  async getAll(collectionName: string, query?: Record<string, any>) {
     let ref: admin.firestore.Query = this.getDb().collection(collectionName);
     
     // Apply filters if provided
@@ -64,7 +64,7 @@ export class FirestoreService {
     return { id: doc.id, ...doc.data() };
   }
 
-  async create(collectionName: string, data: any) {
+  async create(collectionName: string, data: Record<string, any>) {
     const docRef = await this.getDb().collection(collectionName).add({
       ...data,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -72,7 +72,15 @@ export class FirestoreService {
     return { id: docRef.id, ...data };
   }
 
-  async update(collectionName: string, id: string, data: any) {
+  async createWithId(collectionName: string, id: string, data: Record<string, any>) {
+    await this.getDb().collection(collectionName).doc(id).set({
+      ...data,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { id, ...data };
+  }
+
+  async update(collectionName: string, id: string, data: Record<string, any>) {
     await this.getDb().collection(collectionName).doc(id).update({
       ...data,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),

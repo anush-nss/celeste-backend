@@ -7,6 +7,7 @@ const EnvironmentSchema = z.object({
   FIREBASE_PROJECT_ID: z.string(),
   FIREBASE_PRIVATE_KEY: z.string(),
   FIREBASE_CLIENT_EMAIL: z.string(),
+  FIREBASE_WEB_API_KEY: z.string(),
   JWT_SECRET: z.string(),
 });
 

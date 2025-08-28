@@ -13,6 +13,7 @@ import { PromotionsModule } from './promotions/promotions.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { StoresModule } from './stores/stores.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { RolesGuard } from './auth/roles.guard';
 import configuration from './config/configuration';
 import { SharedModule } from './shared/shared.module';
 import { HttpExceptionFilter } from './shared/exceptions/http-exception.filter';
@@ -42,6 +43,10 @@ import { LoggingMiddleware } from './shared/middleware/logging.middleware';
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
     },
     {
       provide: APP_FILTER,

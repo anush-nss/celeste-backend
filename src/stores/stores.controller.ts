@@ -11,9 +11,10 @@ import { AppLoggerService } from '../shared/logger/logger.service';
 import { Public } from '../auth/public.decorator';
 import { ZodValidationPipe } from '../shared/pipes/zod-validation.pipe';
 import { NearbyStoresQuerySchema } from './schemas/store.schema';
+import { COLLECTION_NAMES } from '../shared/constants';
 
-@ApiTags('stores')
-@Controller('stores')
+@ApiTags(COLLECTION_NAMES.STORES)
+@Controller(COLLECTION_NAMES.STORES)
 export class StoresController extends BaseController {
   constructor(
     private readonly storesService: StoresService,

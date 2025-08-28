@@ -1,9 +1,10 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Public } from '../auth/public.decorator';
+import { COLLECTION_NAMES } from '../shared/constants';
 
-@ApiTags('inventory')
-@Controller('inventory')
+@ApiTags(COLLECTION_NAMES.INVENTORY)
+@Controller(COLLECTION_NAMES.INVENTORY)
 export class InventoryController {
   // Get all inventory items
   @Public()
