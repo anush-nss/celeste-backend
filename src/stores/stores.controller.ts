@@ -1,0 +1,53 @@
+import {
+  Controller,
+  Get,
+  Param,
+  Query,
+} from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
+import { StoresService } from './stores.service';
+import { BaseController } from '../shared/controllers/base.controller';
+import { AppLoggerService } from '../shared/logger/logger.service';
+import { Public } from '../auth/public.decorator';
+import { ZodValidationPipe } from '../shared/pipes/zod-validation.pipe';
+import { NearbyStoresQuerySchema } from './schemas/store.schema';
+
+@ApiTags('stores')
+@Controller('stores')
+export class StoresController extends BaseController {
+  constructor(
+    private readonly storesService: StoresService,
+    logger: AppLoggerService,
+  ) {
+    super(logger);
+  }
+
+  // Get all stores
+  @Public()
+  @Get()
+  async findAll(@Query() query: any) {
+    this.logInfo('Fetching all stores');
+    const stores = this.storesService.findAll(query);
+    return this.formatResponse(stores, 'Stores retrieved successfully');
+  }
+
+  // Get a specific store by ID
+  @Public()
+  @Get(':id')
+  async findOne(@Param('id') id: string) {
+    this.logInfo(`Fetching store with ID: ${id}`);
+    const store = this.storesService.findOne(id);
+    return this.formatResponse(store, 'Store retrieved successfully');
+  }
+
+  // Get nearby stores based on location
+  @Public()
+  @Get('nearby')
+  async findNearby(
+    @Query(new ZodValidationPipe(NearbyStoresQuerySchema)) query: any,
+  ) {
+    this.logInfo('Fetching nearby stores');
+    const stores = this.storesService.findNearby(query);
+    return this.formatResponse(stores, 'Nearby stores retrieved successfully');
+  }
+}

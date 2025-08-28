@@ -1,0 +1,23 @@
+import { Controller, Get, Param, Query } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
+import { Public } from '../auth/public.decorator';
+
+@ApiTags('discounts')
+@Controller('discounts')
+export class DiscountsController {
+  // Get all discounts
+  @Public()
+  @Get()
+  findAll(@Query() query: any) {
+    // Implementation will be added later
+    return [];
+  }
+
+  // Get a specific discount by ID
+  @Public()
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    // Implementation will be added later
+    return {};
+  }
+}
