@@ -13,3 +13,8 @@ export const COLLECTION_NAMES = {
   PROMOTIONS: 'promotions',
   STORES: 'stores',
 };
+
+export const DISCOUNT_TYPES = {
+  PERCENTAGE: 'percentage',
+  FLAT: 'flat',
+};

@@ -19,7 +19,7 @@ export class FirestoreService {
     }
   }
 
-  private getDb(): admin.firestore.Firestore {
+  public getDb(): admin.firestore.Firestore {
     if (!this.db) {
       this.db = this.firebaseService.getFirestore();
     }

@@ -5,11 +5,9 @@ export const ProductSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   price: z.number().nonnegative(),
-  stock: z.number().int().nonnegative(),
   unit: z.string(),
   categoryId: z.string(),
   imageUrl: z.string().optional(),
-  isFeatured: z.boolean().optional(),
   createdAt: z.date().optional(),
   updatedAt: z.date().optional(),
 });
@@ -18,14 +16,29 @@ export const CreateProductSchema = ProductSchema.omit({
   id: true, 
   createdAt: true, 
   updatedAt: true,
-  isFeatured: true
 });
 export const UpdateProductSchema = ProductSchema.partial().omit({ 
   id: true, 
   createdAt: true,
-  isFeatured: true
 });
+
+// New schema for product query parameters
+export const ProductQuerySchema = z.object({
+  limit: z.preprocess(
+    (a) => parseInt(z.string().parse(a), 10),
+    z.number().int().positive().optional(),
+  ),
+  offset: z.preprocess(
+    (a) => parseInt(z.string().parse(a), 10),
+    z.number().int().nonnegative().optional(),
+  ),
+  includeDiscounts: z.preprocess(
+    (a) => z.string().parse(a).toLowerCase() === 'true',
+    z.boolean().optional(),
+  ),
+}).partial(); // Make all query parameters optional
 
 export type Product = z.infer<typeof ProductSchema>;
 export type CreateProductDto = z.infer<typeof CreateProductSchema>;
 export type UpdateProductDto = z.infer<typeof UpdateProductSchema>;
+export type ProductQueryDto = z.infer<typeof ProductQuerySchema>;
