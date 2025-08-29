@@ -6,7 +6,7 @@ export const LoginSchema = z.object({
 });
 
 export const RegisterSchema = z.object({
-  phoneNumber: z.string().min(1),
+  idToken: z.string().min(1),
   name: z.string().min(1),
 });
 

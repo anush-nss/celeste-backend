@@ -52,15 +52,4 @@ export class AuthService {
       throw new Error(`Failed to set custom user claims: ${error.message}`);
     }
   }
-
-  async createUserWithPhoneNumber(phoneNumber: string): Promise<admin.auth.UserRecord> {
-    try {
-      const userRecord = await this.firebaseService.getAuth().createUser({
-        phoneNumber: phoneNumber,
-      });
-      return userRecord;
-    } catch (error) {
-      throw new Error(`Failed to create user: ${error.message}`);
-    }
-  }
 }
