@@ -14,6 +14,7 @@ export const UserSchema = z.object({
   phone: z.string().optional(),
   address: z.string().optional(),
   role: z.enum([USER_ROLES.CUSTOMER, USER_ROLES.ADMIN]),
+  isDelivery: z.boolean().optional(),
   createdAt: z.date().optional(),
   wishlist: z.array(z.string()).optional(),
   cart: z.array(CartItemSchema).optional(),
