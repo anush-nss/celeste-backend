@@ -138,31 +138,15 @@ components:
     UserRegistration:
       type: object
       required:
-        - email
-        - password
-        - firstName
-        - lastName
+        - idToken
+        - name
       properties:
-        email:
+        idToken:
           type: string
-          format: email
-          example: user@example.com
-        password:
+          example: "eyJhbGciOiJSUzI1NiIsImtpZCI6IjkyZTg4M2..."
+        name:
           type: string
-          format: password
-          example: StrongPassword123
-        firstName:
-          type: string
-          example: John
-        lastName:
-          type: string
-          example: Doe
-        phoneNumber:
-          type: string
-          example: '+15551234567'
-        address:
-          type: string
-          example: '123 Main St, Anytown, USA'
+          example: "John Doe"
     Product:
       type: object
       properties:
@@ -329,12 +313,8 @@ paths:
             schema:
               $ref: '#/components/schemas/UserRegistration'
             example:
-              email: newuser@example.com
-              password: SecurePassword123
-              firstName: Jane
-              lastName: Doe
-              phoneNumber: '+1234567890'
-              address: '456 Oak Ave, Townsville, USA'
+              idToken: "eyJhbGciOiJSUzI1NiIsImtpZCI6IjkyZTg4M2..."
+              name: "Jane Doe"
       responses:
         '201':
           description: User registered successfully

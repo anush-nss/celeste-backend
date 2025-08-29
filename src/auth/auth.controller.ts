@@ -114,37 +114,41 @@ export class AuthController {
   @Public()
   @Post('register')
   @UsePipes(new ZodValidationPipe(RegisterSchema))
-  async register(@Body() body: { phoneNumber: string; name: string }) {
+  async register(@Body() body: { idToken: string; name: string }) {
     try {
-      // 1. Create user in Firebase Authentication
-      const userRecord = await this.authService.createUserWithPhoneNumber(
-        body.phoneNumber,
-      );
+      // 1. Verify the ID token using Firebase Admin SDK
+      const decodedToken = await this.authService.verifyToken(body.idToken);
+      const uid = decodedToken.uid;
+      const phoneNumber = decodedToken.phone_number;
+
+      if (!phoneNumber) {
+        throw new UnauthorizedException('Phone number not verified');
+      }
 
       // Default role assignment
       const role = USER_ROLES.CUSTOMER;
 
       // 2. Store user details in Firestore
       const newUser: User = {
-        id: userRecord.uid,
+        id: uid,
         name: body.name,
-        phone: body.phoneNumber,
+        phone: phoneNumber,
         role,
       };
       await this.firestoreService.createWithId(
         COLLECTION_NAMES.USERS,
-        userRecord.uid,
+        uid,
         newUser,
       );
 
       // 3. Set custom claims for the user (role)
-      await this.authService.setCustomUserClaims(userRecord.uid, {
+      await this.authService.setCustomUserClaims(uid, {
         role,
       });
 
       return {
         message: 'Registration successful',
-        user: { uid: userRecord.uid, role },
+        user: { uid, role },
       };
     } catch (error) {
       throw new UnauthorizedException(`Registration failed: ${error.message}`);
