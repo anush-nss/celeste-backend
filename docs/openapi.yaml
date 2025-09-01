@@ -349,6 +349,11 @@ paths:
           schema:
             type: string
           description: ID of the product to retrieve
+        - in: query
+          name: includeDiscounts
+          schema:
+            type: boolean
+          description: Include discounts for the product
       responses:
         '200':
           description: Product details

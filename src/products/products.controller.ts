@@ -47,9 +47,9 @@ export class ProductsController extends BaseController {
   // Get a specific product by ID
   @Public()
   @Get(':id')
-  async findOne(@Param('id') id: string) {
+  async findOne(@Param('id') id: string, @Query() query: ProductQueryDto) {
     this.logInfo(`Fetching product with ID: ${id}`);
-    const product = await this.productsService.findOne(id);
+    const product = await this.productsService.findOne(id, query);
     return this.formatResponse(product, 'Product retrieved successfully');
   }
 

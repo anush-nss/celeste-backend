@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DiscountSchema } from '../../discounts/schemas/discount.schema';
 
 export const ProductSchema = z.object({
   id: z.string().optional(),
@@ -10,6 +11,7 @@ export const ProductSchema = z.object({
   imageUrl: z.string().optional(),
   createdAt: z.date().optional(),
   updatedAt: z.date().optional(),
+  discounts: z.array(DiscountSchema).optional(),
 });
 
 export const CreateProductSchema = ProductSchema.omit({ 

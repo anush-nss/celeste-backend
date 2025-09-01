@@ -44,11 +44,22 @@ export class ProductsService {
     }
   }
 
-  async findOne(id: string): Promise<Product | null> {
+  async findOne(id: string, query: ProductQueryDto): Promise<Product | null> {
     this.logger.log(`Finding product with ID: ${id}`, ProductsService.name);
     try {
-      const product = await this.firestore.getById(COLLECTION_NAMES.PRODUCTS, id);
-      return product as Product | null;
+      const product = await this.firestore.getById(COLLECTION_NAMES.PRODUCTS, id) as Product;
+      if (!product) {
+        return null;
+      }
+
+      if (query.includeDiscounts) {
+        const discounts = await this.firestore.getAll(COLLECTION_NAMES.DISCOUNTS, {
+          applicableProducts: [product.id],
+        }) as Discount[];
+        product.discounts = discounts;
+      }
+
+      return product;
     } catch (error) {
       this.logger.error(`Failed to fetch product ${id}: ${error.message}`, error.stack, ProductsService.name);
       throw error;
