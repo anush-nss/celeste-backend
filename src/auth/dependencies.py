@@ -1,0 +1,29 @@
+from fastapi import Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordBearer
+from firebase_admin import auth
+from typing import Annotated, List
+from src.core.firebase import get_firebase_auth
+from src.core.exceptions import UnauthorizedException, ForbiddenException
+from src.shared.constants import UserRole
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/verify")
+
+async def verify_token(token: Annotated[str, Depends(oauth2_scheme)]):
+    try:
+        decoded_token = get_firebase_auth().verify_id_token(token)
+        return decoded_token
+    except Exception as e:
+        raise UnauthorizedException(detail=f"Invalid authentication credentials: {e}")
+
+async def get_current_user(decoded_token: Annotated[dict, Depends(verify_token)]):
+    return decoded_token
+
+class RoleChecker:
+    def __init__(self, allowed_roles: List[UserRole]):
+        self.allowed_roles = allowed_roles
+
+    async def __call__(self, request: Request, current_user: Annotated[dict, Depends(get_current_user)]):
+        user_role = current_user.get("role", UserRole.CUSTOMER) # Default to customer if role not present
+        if user_role not in self.allowed_roles:
+            raise ForbiddenException("You do not have permission to perform this action.")
+        return current_user
