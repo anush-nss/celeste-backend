@@ -4,6 +4,7 @@ import { FirestoreService } from '../shared/firestore.service';
 import { COLLECTION_NAMES } from '../shared/constants';
 import { Product, CreateProductDto, UpdateProductDto, ProductQueryDto } from './schemas/product.schema';
 import { Discount } from '../discounts/schemas/discount.schema';
+import { Inventory } from '../inventory/schemas/inventory.schema';
 import * as admin from 'firebase-admin';
 
 @Injectable()
@@ -16,7 +17,13 @@ export class ProductsService {
   async findAll(query: ProductQueryDto): Promise<Product[]> {
     this.logger.log('Finding all products', ProductsService.name);
     try {
-      const { limit, offset, includeDiscounts, ...filters } = query;
+      const { limit, offset, includeDiscounts, includeInventory, categoryId, ...otherFilters } = query;
+
+      const filters = {
+        ...otherFilters,
+        ...(categoryId && { categoryId: this.firestore.getDb().collection(COLLECTION_NAMES.CATEGORIES).doc(categoryId) })
+      };
+
       const products = await this.firestore.getAll(COLLECTION_NAMES.PRODUCTS, {
         limit,
         offset,
@@ -29,15 +36,25 @@ export class ProductsService {
           applicableProducts: productIds,
         }) as Discount[];
 
-        return products.map((product) => {
-          const applicableDiscounts = discounts.filter((discount) =>
+        products.forEach((product) => {
+          product.discounts = discounts.filter((discount) =>
             discount.applicableProducts?.includes(product.id),
           );
-          return { ...product, discounts: applicableDiscounts } as Product;
         });
       }
 
-      return products as Product[];
+      if (includeInventory) {
+        const productIds = products.map((p) => p.id);
+        const inventory = await this.firestore.getAll(COLLECTION_NAMES.INVENTORY, {
+          productId: productIds,
+        }) as Inventory[];
+
+        products.forEach((product) => {
+          product.inventory = inventory.filter((item) => item.productId === product.id);
+        });
+      }
+
+      return products;
     } catch (error) {
       this.logger.error(`Failed to fetch products: ${error.message}`, error.stack, ProductsService.name);
       throw error;
@@ -57,6 +74,13 @@ export class ProductsService {
           applicableProducts: [product.id],
         }) as Discount[];
         product.discounts = discounts;
+      }
+
+      if (query.includeInventory) {
+        const inventory = await this.firestore.getAll(COLLECTION_NAMES.INVENTORY, {
+          productId: product.id,
+        }) as Inventory[];
+        product.inventory = inventory;
       }
 
       return product;

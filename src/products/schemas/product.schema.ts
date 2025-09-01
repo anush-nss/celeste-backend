@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DiscountSchema } from '../../discounts/schemas/discount.schema';
+import { InventorySchema } from '../../inventory/schemas/inventory.schema';
 
 export const ProductSchema = z.object({
   id: z.string().optional(),
@@ -12,6 +13,7 @@ export const ProductSchema = z.object({
   createdAt: z.date().optional(),
   updatedAt: z.date().optional(),
   discounts: z.array(DiscountSchema).optional(),
+  inventory: z.array(InventorySchema).optional(),
 });
 
 export const CreateProductSchema = ProductSchema.omit({ 
@@ -38,6 +40,11 @@ export const ProductQuerySchema = z.object({
     (a) => z.string().parse(a).toLowerCase() === 'true',
     z.boolean().optional(),
   ),
+  includeInventory: z.preprocess(
+    (a) => z.string().parse(a).toLowerCase() === 'true',
+    z.boolean().optional(),
+  ),
+  categoryId: z.string().optional(),
 }).partial(); // Make all query parameters optional
 
 export type Product = z.infer<typeof ProductSchema>;

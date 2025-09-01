@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { AppLoggerService } from '../shared/logger/logger.service';
-import { Store } from './schemas/store.schema';
+import { Store, StoreQuery } from './schemas/store.schema';
 import { FirestoreService } from '../shared/firestore.service';
 import { COLLECTION_NAMES } from '../shared/constants';
+import { Inventory } from '../inventory/schemas/inventory.schema';
 
 @Injectable()
 export class StoresService {
@@ -12,11 +13,24 @@ export class StoresService {
   ) {}
 
   // Find all stores with optional filtering
-  async findAll(query: any): Promise<Store[]> {
+  async findAll(query: StoreQuery): Promise<Store[]> {
     this.logger.log('Finding all stores', StoresService.name);
     try {
-      const stores = await this.firestore.getAll(COLLECTION_NAMES.STORES, query);
-      return stores as Store[];
+      const { includeInventory, ...filters } = query;
+      const stores = await this.firestore.getAll(COLLECTION_NAMES.STORES, filters) as Store[];
+
+      if (includeInventory) {
+        const storeIds = stores.map((s) => s.id);
+        const inventory = await this.firestore.getAll(COLLECTION_NAMES.INVENTORY, {
+          storeId: storeIds,
+        }) as Inventory[];
+
+        stores.forEach((store) => {
+          store.inventory = inventory.filter((item) => item.storeId === store.id);
+        });
+      }
+
+      return stores;
     } catch (error) {
       this.logger.error(`Failed to fetch stores: ${error.message}`, error.stack, StoresService.name);
       throw error;
@@ -24,11 +38,22 @@ export class StoresService {
   }
 
   // Find a specific store by ID
-  async findOne(id: string): Promise<Store | null> {
+  async findOne(id: string, query: StoreQuery): Promise<Store | null> {
     this.logger.log(`Finding store with ID: ${id}`, StoresService.name);
     try {
-      const store = await this.firestore.getById(COLLECTION_NAMES.STORES, id);
-      return store as Store | null;
+      const store = await this.firestore.getById(COLLECTION_NAMES.STORES, id) as Store;
+      if (!store) {
+        return null;
+      }
+
+      if (query.includeInventory) {
+        const inventory = await this.firestore.getAll(COLLECTION_NAMES.INVENTORY, {
+          storeId: store.id,
+        }) as Inventory[];
+        store.inventory = inventory;
+      }
+
+      return store;
     } catch (error) {
       this.logger.error(`Failed to fetch store ${id}: ${error.message}`, error.stack, StoresService.name);
       throw error;

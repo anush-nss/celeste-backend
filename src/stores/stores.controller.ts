@@ -3,6 +3,7 @@ import {
   Get,
   Param,
   Query,
+  UsePipes,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { StoresService } from './stores.service';
@@ -10,7 +11,7 @@ import { BaseController } from '../shared/controllers/base.controller';
 import { AppLoggerService } from '../shared/logger/logger.service';
 import { Public } from '../auth/public.decorator';
 import { ZodValidationPipe } from '../shared/pipes/zod-validation.pipe';
-import { NearbyStoresQuerySchema } from './schemas/store.schema';
+import { NearbyStoresQuerySchema, StoreQuerySchema } from './schemas/store.schema';
 import { COLLECTION_NAMES } from '../shared/constants';
 
 @ApiTags(COLLECTION_NAMES.STORES)
@@ -26,6 +27,7 @@ export class StoresController extends BaseController {
   // Get all stores
   @Public()
   @Get()
+  @UsePipes(new ZodValidationPipe(StoreQuerySchema))
   async findAll(@Query() query: any) {
     this.logInfo('Fetching all stores');
     const stores = this.storesService.findAll(query);
@@ -35,9 +37,10 @@ export class StoresController extends BaseController {
   // Get a specific store by ID
   @Public()
   @Get(':id')
-  async findOne(@Param('id') id: string) {
+  @UsePipes(new ZodValidationPipe(StoreQuerySchema))
+  async findOne(@Param('id') id: string, @Query() query: any) {
     this.logInfo(`Fetching store with ID: ${id}`);
-    const store = this.storesService.findOne(id);
+    const store = this.storesService.findOne(id, query);
     return this.formatResponse(store, 'Store retrieved successfully');
   }
 

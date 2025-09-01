@@ -67,6 +67,10 @@ components:
           example: '2024-07-25T10:00:00Z'
     CreateUser:
       type: object
+      required:
+        - name
+        - email
+        - role
       properties:
         name:
           type: string
@@ -172,6 +176,71 @@ components:
         imageUrl:
           type: string
           example: 'https://example.com/headphones.jpg'
+        createdAt:
+          type: string
+          format: date-time
+          example: '2024-07-25T10:00:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2024-07-25T10:00:00Z'
+        discounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Discount'
+        inventory:
+          type: array
+          items:
+            $ref: '#/components/schemas/Inventory'
+    CreateProduct:
+      type: object
+      required:
+        - name
+        - price
+        - unit
+        - categoryId
+      properties:
+        name:
+          type: string
+          example: 'Wireless Bluetooth Headphones'
+        description:
+          type: string
+          example: 'High-quality over-ear headphones with noise cancellation.'
+        price:
+          type: number
+          format: float
+          example: 99.99
+        unit:
+          type: string
+          example: 'piece'
+        categoryId:
+          type: string
+          example: 'cat_456'
+        imageUrl:
+          type: string
+          example: 'https://example.com/headphones.jpg'
+    UpdateProduct:
+      type: object
+      properties:
+        name:
+          type: string
+          example: 'Wireless Bluetooth Headphones'
+        description:
+          type: string
+          example: 'High-quality over-ear headphones with noise cancellation.'
+        price:
+          type: number
+          format: float
+          example: 99.99
+        unit:
+          type: string
+          example: 'piece'
+        categoryId:
+          type: string
+          example: 'cat_456'
+        imageUrl:
+          type: string
+          example: 'https://example.com/headphones.jpg'
     Category:
       type: object
       properties:
@@ -191,12 +260,122 @@ components:
           type: string
           nullable: true
           example: null
+    CreateCategory:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          example: 'Electronics'
+        description:
+          type: string
+          example: 'Devices and gadgets for modern living.'
+        imageUrl:
+          type: string
+          example: 'https://example.com/electronics.jpg'
+        parentCategoryId:
+          type: string
+          nullable: true
+          example: null
+    UpdateCategory:
+      type: object
+      properties:
+        name:
+          type: string
+          example: 'Electronics'
+        description:
+          type: string
+          example: 'Devices and gadgets for modern living.'
+        imageUrl:
+          type: string
+          example: 'https://example.com/electronics.jpg'
+        parentCategoryId:
+          type: string
+          nullable: true
+          example: null
     Discount:
       type: object
       properties:
         id:
           type: string
           example: disc_789
+        name:
+          type: string
+          example: 'Summer Sale'
+        description:
+          type: string
+          example: '20% off all electronics.'
+        type:
+          type: string
+          enum: [PERCENTAGE, FLAT]
+          example: PERCENTAGE
+        value:
+          type: number
+          format: float
+          example: 20
+        validFrom:
+          type: string
+          format: date-time
+          example: '2024-06-01T00:00:00Z'
+        validTo:
+          type: string
+          format: date-time
+          example: '2024-08-31T23:59:59Z'
+        applicableProducts:
+          type: array
+          items:
+            type: string
+          example: ['prod_123', 'prod_456']
+        applicableCategories:
+          type: array
+          items:
+            type: string
+          example: ['cat_456']
+    CreateDiscount:
+      type: object
+      required:
+        - name
+        - type
+        - value
+        - validFrom
+        - validTo
+      properties:
+        name:
+          type: string
+          example: 'Summer Sale'
+        description:
+          type: string
+          example: '20% off all electronics.'
+        type:
+          type: string
+          enum: [PERCENTAGE, FLAT]
+          example: PERCENTAGE
+        value:
+          type: number
+          format: float
+          example: 20
+        validFrom:
+          type: string
+          format: date-time
+          example: '2024-06-01T00:00:00Z'
+        validTo:
+          type: string
+          format: date-time
+          example: '2024-08-31T23:59:59Z'
+        applicableProducts:
+          type: array
+          items:
+            type: string
+          example: ['prod_123', 'prod_456']
+        applicableCategories:
+          type: array
+          items:
+            type: string
+          example: ['cat_456']
+    UpdateDiscount:
+      type: object
+      properties:
         name:
           type: string
           example: 'Summer Sale'
@@ -262,9 +441,202 @@ components:
         isActive:
           type: boolean
           example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: '2024-07-25T10:00:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2024-07-25T10:00:00Z'
+        inventory:
+          type: array
+          items:
+            $ref: '#/components/schemas/Inventory'
+    Location:
+      type: object
+      required:
+        - latitude
+        - longitude
+      properties:
+        latitude:
+          type: number
+          example: 34.0522
+        longitude:
+          type: number
+          example: -118.2437
+    CreateStore:
+      type: object
+      required:
+        - name
+        - address
+        - location
+      properties:
+        name:
+          type: string
+          example: 'Main Street Store'
+        description:
+          type: string
+          example: 'Our flagship store.'
+        address:
+          type: string
+          example: '123 Main St, Anytown, USA'
+        phone:
+          type: string
+          example: '+15551234567'
+        email:
+          type: string
+          example: 'main@example.com'
+        location:
+          $ref: '#/components/schemas/Location'
+        isActive:
+          type: boolean
+          example: true
+    UpdateStore:
+      type: object
+      properties:
+        name:
+          type: string
+          example: 'Main Street Store'
+        description:
+          type: string
+          example: 'Our flagship store.'
+        address:
+          type: string
+          example: '123 Main St, Anytown, USA'
+        phone:
+          type: string
+          example: '+15551234567'
+        email:
+          type: string
+          example: 'main@example.com'
+        location:
+          $ref: '#/components/schemas/Location'
+        isActive:
+          type: boolean
+          example: true
+    Inventory:
+      type: object
+      properties:
+        id:
+          type: string
+          example: inv_123
+        productId:
+          type: string
+          example: prod_123
+        storeId:
+          type: string
+          example: store_123
+        stock:
+          type: number
+          format: integer
+          example: 100
+        lastUpdated:
+          type: string
+          format: date-time
+          example: '2024-07-25T10:00:00Z'
+    CreateInventory:
+      type: object
+      required:
+        - productId
+        - storeId
+        - stock
+      properties:
+        productId:
+          type: string
+          example: prod_123
+        storeId:
+          type: string
+          example: store_123
+        stock:
+          type: number
+          format: integer
+          example: 100
+    UpdateInventory:
+      type: object
+      properties:
+        stock:
+          type: number
+          format: integer
+          example: 100
 security:
   - bearerAuth: []
 paths:
+  /:
+    get:
+      summary: Get a hello message
+      tags:
+        - App
+      responses:
+        '200':
+          description: A hello message
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: 'Hello World!'
+  /auth/verify:
+    post:
+      summary: Verify a user token
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  example: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      responses:
+        '200':
+          description: Token is valid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                    example: true
+                  user:
+                    type: object # This should be a more specific schema if available
+                    example: { "uid": "some_uid", "email": "test@example.com" }
+        '401':
+          description: Invalid token
+  /auth/log-in:
+    post:
+      summary: Log in a user with a token
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  example: "eyJhbGciOiJSUzI1NiIsImtpZCI6IjkyZTg4M2..."
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Login successful"
+                  user:
+                    type: object # This should be a more specific schema if available
+                    example: { "uid": "some_uid", "email": "test@example.com" }
+        '401':
+          description: Unauthorized
   /auth/register:
     post:
       summary: Register a new user
@@ -285,130 +657,22 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Auth'
-        '400':
-          description: Invalid input
-  /products:
-    get:
-      summary: Get all products
-      tags:
-        - Products
-      parameters:
-        - in: query
-          name: limit
-          schema:
-            type: integer
-          description: Limit the number of products returned
-        - in: query
-          name: offset
-          schema:
-            type: integer
-          description: Offset for pagination
-        - in: query
-          name: includeDiscounts
-          schema:
-            type: boolean
-          description: Include discounts for each product
-      responses:
-        '200':
-          description: A list of products
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Product'
-    post:
-      summary: Create a new product
-      tags:
-        - Products
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Product'
-      responses:
-        '201':
-          description: Product created successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Product'
-  /products/{id}:
-    get:
-      summary: Get a product by ID
-      tags:
-        - Products
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-          description: ID of the product to retrieve
-        - in: query
-          name: includeDiscounts
-          schema:
-            type: boolean
-          description: Include discounts for the product
-      responses:
-        '200':
-          description: Product details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Product'
-        '404':
-          description: Product not found
-    put:
-      summary: Update a product
-      tags:
-        - Products
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-          description: ID of the product to update
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Product'
-      responses:
-        '200':
-          description: Product updated successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Product'
-        '404':
-          description: Product not found
-    delete:
-      summary: Delete a product
-      tags:
-        - Products
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-          description: ID of the product to delete
-      responses:
-        '204':
-          description: Product deleted successfully
-        '404':
-          description: Product not found
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Registration successful"
+                  user:
+                    type: object
+                    properties:
+                      uid:
+                        type: string
+                        example: "some_uid"
+                      role:
+                        type: string
+                        example: "CUSTOMER"
+        '401':
+          description: Registration failed
   /categories:
     get:
       summary: Get all categories
@@ -434,7 +698,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Category'
+              $ref: '#/components/schemas/CreateCategory'
       responses:
         '201':
           description: Category created successfully
@@ -481,7 +745,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Category'
+              $ref: '#/components/schemas/UpdateCategory'
       responses:
         '200':
           description: Category updated successfully
@@ -505,8 +769,15 @@ paths:
             type: string
           description: ID of the category to delete
       responses:
-        '204':
+        '200':
           description: Category deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
         '404':
           description: Category not found
   /discounts:
@@ -545,7 +816,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Discount'
+              $ref: '#/components/schemas/CreateDiscount'
       responses:
         '201':
           description: Discount created successfully
@@ -592,7 +863,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Discount'
+              $ref: '#/components/schemas/UpdateDiscount'
       responses:
         '200':
           description: Discount updated successfully
@@ -616,10 +887,586 @@ paths:
             type: string
           description: ID of the discount to delete
       responses:
-        '204':
+        '200':
           description: Discount deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
         '404':
           description: Discount not found
+  /inventory:
+    get:
+      summary: Get all inventory items
+      tags:
+        - Inventory
+      parameters:
+        - in: query
+          name: productId
+          schema:
+            type: string
+          description: Filter by product ID
+        - in: query
+          name: storeId
+          schema:
+            type: string
+          description: Filter by store ID
+      responses:
+        '200':
+          description: A list of inventory items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Inventory'
+    post:
+      summary: Create a new inventory item
+      tags:
+        - Inventory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInventory'
+      responses:
+        '201':
+          description: Inventory item created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Inventory'
+  /inventory/{id}:
+    get:
+      summary: Get an inventory item by ID
+      tags:
+        - Inventory
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID of the inventory item to retrieve
+      responses:
+        '200':
+          description: Inventory item details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Inventory'
+        '404':
+          description: Inventory item not found
+    put:
+      summary: Update an inventory item
+      tags:
+        - Inventory
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID of the inventory item to update
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInventory'
+      responses:
+        '200':
+          description: Inventory item updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Inventory'
+        '404':
+          description: Inventory item not found
+    delete:
+      summary: Delete an inventory item
+      tags:
+        - Inventory
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID of the inventory item to delete
+      responses:
+        '200':
+          description: Inventory item deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+        '404':
+          description: Inventory item not found
+  /featured:
+    get:
+      summary: Get all featured products
+      tags:
+        - Featured
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+          description: Limit the number of products returned
+        - in: query
+          name: offset
+          schema:
+            type: integer
+          description: Offset for pagination
+        - in: query
+          name: includeDiscounts
+          schema:
+            type: boolean
+          description: Include discounts for each product
+        - in: query
+          name: includeInventory
+          schema:
+            type: boolean
+          description: Include inventory for each product
+        - in: query
+          name: categoryId
+          schema:
+            type: string
+          description: Filter by category ID
+      responses:
+        '200':
+          description: A list of featured products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Product'
+  /products:
+    get:
+      summary: Get all products
+      tags:
+        - Products
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+          description: Limit the number of products returned
+        - in: query
+          name: offset
+          schema:
+            type: integer
+          description: Offset for pagination
+        - in: query
+          name: includeDiscounts
+          schema:
+            type: boolean
+          description: Include discounts for each product
+        - in: query
+          name: includeInventory
+          schema:
+            type: boolean
+          description: Include inventory for each product
+        - in: query
+          name: categoryId
+          schema:
+            type: string
+          description: Filter by category ID
+      responses:
+        '200':
+          description: A list of products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Product'
+              examples:
+                default:
+                  value:
+                    - id: prod_123
+                      name: 'Wireless Bluetooth Headphones'
+                      description: 'High-quality over-ear headphones with noise cancellation.'
+                      price: 99.99
+                      unit: 'piece'
+                      categoryId: 'cat_456'
+                      imageUrl: 'https://example.com/headphones.jpg'
+                withInventoryAndDiscounts:
+                  value:
+                    - id: prod_123
+                      name: 'Wireless Bluetooth Headphones'
+                      description: 'High-quality over-ear headphones with noise cancellation.'
+                      price: 99.99
+                      unit: 'piece'
+                      categoryId: 'cat_456'
+                      imageUrl: 'https://example.com/headphones.jpg'
+                      discounts:
+                        - id: disc_789
+                          name: 'Summer Sale'
+                          description: '20% off all electronics.'
+                          type: PERCENTAGE
+                          value: 20
+                          validFrom: '2024-06-01T00:00:00Z'
+                          validTo: '2024-08-31T23:59:59Z'
+                          applicableProducts: ['prod_123', 'prod_456']
+                          applicableCategories: ['cat_456']
+                      inventory:
+                        - id: inv_123
+                          productId: prod_123
+                          storeId: store_123
+                          stock: 100
+                          lastUpdated: '2024-07-25T10:00:00Z'
+    post:
+      summary: Create a new product
+      tags:
+        - Products
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProduct'
+      responses:
+        '201':
+          description: Product created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+  /products/{id}:
+    get:
+      summary: Get a product by ID
+      tags:
+        - Products
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID of the product to retrieve
+        - in: query
+          name: includeDiscounts
+          schema:
+            type: boolean
+          description: Include discounts for the product
+        - in: query
+          name: includeInventory
+          schema:
+            type: boolean
+          description: Include inventory for the product
+      responses:
+        '200':
+          description: Product details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+              examples:
+                default:
+                  value:
+                    id: prod_123
+                    name: 'Wireless Bluetooth Headphones'
+                    description: 'High-quality over-ear headphones with noise cancellation.'
+                    price: 99.99
+                    unit: 'piece'
+                    categoryId: 'cat_456'
+                    imageUrl: 'https://example.com/headphones.jpg'
+                withInventoryAndDiscounts:
+                  value:
+                    id: prod_123
+                    name: 'Wireless Bluetooth Headphones'
+                    description: 'High-quality over-ear headphones with noise cancellation.'
+                    price: 99.99
+                    unit: 'piece'
+                    categoryId: 'cat_456'
+                    imageUrl: 'https://example.com/headphones.jpg'
+                    discounts:
+                      - id: disc_789
+                        name: 'Summer Sale'
+                        description: '20% off all electronics.'
+                        type: PERCENTAGE
+                        value: 20
+                        validFrom: '2024-06-01T00:00:00Z'
+                        validTo: '2024-08-31T23:59:59Z'
+                        applicableProducts: ['prod_123', 'prod_456']
+                        applicableCategories: ['cat_456']
+                    inventory:
+                      - id: inv_123
+                        productId: prod_123
+                        storeId: store_123
+                        stock: 100
+                        lastUpdated: '2024-07-25T10:00:00Z'
+        '404':
+          description: Product not found
+    put:
+      summary: Update a product
+      tags:
+        - Products
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID of the product to update
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProduct'
+      responses:
+        '200':
+          description: Product updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          description: Product not found
+    delete:
+      summary: Delete a product
+      tags:
+        - Products
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID of the product to delete
+      responses:
+        '200':
+          description: Product deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+        '404':
+          description: Product not found
+  /stores:
+    get:
+      summary: Get all stores
+      tags:
+        - Stores
+      parameters:
+        - in: query
+          name: includeInventory
+          schema:
+            type: boolean
+          description: Include inventory for each store
+      responses:
+        '200':
+          description: A list of stores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Store'
+              examples:
+                default:
+                  value:
+                    - id: store_123
+                      name: 'Main Street Store'
+                      description: 'Our flagship store.'
+                      address: '123 Main St, Anytown, USA'
+                      phone: '+15551234567'
+                      email: 'main@example.com'
+                      location:
+                        latitude: 34.0522
+                        longitude: -118.2437
+                      isActive: true
+                withInventory:
+                  value:
+                    - id: store_123
+                      name: 'Main Street Store'
+                      description: 'Our flagship store.'
+                      address: '123 Main St, Anytown, USA'
+                      phone: '+15551234567'
+                      email: 'main@example.com'
+                      location:
+                        latitude: 34.0522
+                        longitude: -118.2437
+                      isActive: true
+                      inventory:
+                        - id: inv_123
+                          productId: prod_123
+                          storeId: store_123
+                          stock: 100
+                          lastUpdated: '2024-07-25T10:00:00Z'
+    post:
+      summary: Create a new store
+      tags:
+        - Stores
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStore'
+      responses:
+        '201':
+          description: Store created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Store'
+  /stores/{id}:
+    get:
+      summary: Get a store by ID
+      tags:
+        - Stores
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID of the store to retrieve
+        - in: query
+          name: includeInventory
+          schema:
+            type: boolean
+          description: Include inventory for the store
+      responses:
+        '200':
+          description: Store details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Store'
+              examples:
+                default:
+                  value:
+                    id: store_123
+                    name: 'Main Street Store'
+                    description: 'Our flagship store.'
+                    address: '123 Main St, Anytown, USA'
+                    phone: '+15551234567'
+                    email: 'main@example.com'
+                    location:
+                      latitude: 34.0522
+                      longitude: -118.2437
+                    isActive: true
+                withInventory:
+                  value:
+                    id: store_123
+                    name: 'Main Street Store'
+                    description: 'Our flagship store.'
+                    address: '123 Main St, Anytown, USA'
+                    phone: '+15551234567'
+                    email: 'main@example.com'
+                    location:
+                      latitude: 34.0522
+                      longitude: -118.2437
+                    isActive: true
+                    inventory:
+                      - id: inv_123
+                        productId: prod_123
+                        storeId: store_123
+                        stock: 100
+                        lastUpdated: '2024-07-25T10:00:00Z'
+        '404':
+          description: Store not found
+    put:
+      summary: Update a store
+      tags:
+        - Stores
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID of the store to update
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStore'
+      responses:
+        '200':
+          description: Store updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Store'
+        '404':
+          description: Store not found
+    delete:
+      summary: Delete a store
+      tags:
+        - Stores
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID of the store to delete
+      responses:
+        '200':
+          description: Store deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+        '404':
+          description: Store not found
+  /users:
+    post:
+      summary: Create a new user
+      tags:
+        - Users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUser'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
   /users/{id}:
     get:
       summary: Get user profile
@@ -645,6 +1492,8 @@ paths:
       summary: Update user profile
       tags:
         - Users
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: id
@@ -671,6 +1520,8 @@ paths:
       summary: Delete a user
       tags:
         - Users
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: id
@@ -679,33 +1530,24 @@ paths:
             type: string
           description: ID of the user to delete
       responses:
-        '204':
+        '200':
           description: User deleted successfully
-        '404':
-          description: User not found
-  /users:
-    post:
-      summary: Create a new user
-      tags:
-        - Users
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateUser'
-      responses:
-        '201':
-          description: User created successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                type: object
+                properties:
+                  id:
+                    type: string
+        '404':
+          description: User not found
   /users/{id}/wishlist:
     post:
       summary: Add a product to the user's wishlist
       tags:
         - Users
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: id
@@ -722,6 +1564,15 @@ paths:
       responses:
         '200':
           description: Product added to wishlist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                  productId:
+                    type: string
         '404':
           description: User not found
   /users/{id}/wishlist/{productId}:
@@ -729,6 +1580,8 @@ paths:
       summary: Remove a product from the user's wishlist
       tags:
         - Users
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: id
@@ -745,6 +1598,15 @@ paths:
       responses:
         '200':
           description: Product removed from wishlist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                  productId:
+                    type: string
         '404':
           description: User or product not found
   /users/{id}/cart:
@@ -752,6 +1614,8 @@ paths:
       summary: Add an item to the user's cart
       tags:
         - Users
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: id
@@ -779,6 +1643,8 @@ paths:
       summary: Update an item in the user's cart
       tags:
         - Users
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: id
@@ -811,6 +1677,8 @@ paths:
       summary: Remove an item from the user's cart
       tags:
         - Users
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: id
@@ -827,77 +1695,14 @@ paths:
       responses:
         '200':
           description: Item removed from cart
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                  productId:
+                    type: string
         '404':
           description: User or product not found
-  /stores:
-    get:
-      summary: Get all stores
-      tags:
-        - Stores
-      responses:
-        '200':
-          description: A list of stores
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Store'
-  /stores/{id}:
-    get:
-      summary: Get a store by ID
-      tags:
-        - Stores
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-          description: ID of the store to retrieve
-      responses:
-        '200':
-          description: Store details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Store'
-        '404':
-          description: Store not found
-  /stores/nearby:
-    get:
-      summary: Get nearby stores
-      tags:
-        - Stores
-      parameters:
-        - in: query
-          name: latitude
-          required: true
-          schema:
-            type: number
-          description: Latitude for the search
-        - in: query
-          name: longitude
-          required: true
-          schema:
-            type: number
-          description: Longitude for the search
-        - in: query
-          name: radius
-          schema:
-            type: number
-          description: Radius for the search in kilometers
-        - in: query
-          name: limit
-          schema:
-            type: number
-          description: Limit the number of stores returned
-      responses:
-        '200':
-          description: A list of nearby stores
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Store'

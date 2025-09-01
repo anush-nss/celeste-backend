@@ -1,15 +1,22 @@
 import { Injectable } from '@nestjs/common';
 import { AppLoggerService } from '../shared/logger/logger.service';
+import { ProductsService } from './products.service';
+import { ProductQueryDto } from './schemas/product.schema';
 
 @Injectable()
 export class FeaturedService {
-  constructor(private readonly logger: AppLoggerService) {}
+  constructor(
+    private readonly logger: AppLoggerService,
+    private readonly productsService: ProductsService,
+  ) {}
 
   // Find all featured products
-  findAll(query: any) {
-    this.logger.log('Finding all featured products', FeaturedService.name);
-    // Implementation will be added later
-    return [];
+  findAll(query: ProductQueryDto) {
+    this.logger.log(
+      `Finding all featured products with query: ${JSON.stringify(query)}`,
+      FeaturedService.name,
+    );
+    return this.productsService.findAll(query);
   }
 
   // Find a specific featured product by ID

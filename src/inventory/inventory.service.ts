@@ -1,37 +1,54 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { AppLoggerService } from '../shared/logger/logger.service';
+import { FirestoreService } from '../shared/firestore.service';
+import { COLLECTION_NAMES } from '../shared/constants';
 import { Inventory, CreateInventoryDto, UpdateInventoryDto } from './schemas/inventory.schema';
 
 @Injectable()
 export class InventoryService {
-  constructor(private readonly logger: AppLoggerService) {}
+  constructor(
+    private readonly logger: AppLoggerService,
+    private readonly firestore: FirestoreService,
+  ) {}
 
-  // Find all inventory items with optional filtering
-  findAll(query: any): Inventory[] {
+  async findAll(query: any): Promise<Inventory[]> {
     this.logger.log('Finding all inventory items', InventoryService.name);
-    // Implementation will be added later
-    return [];
+    const inventory = await this.firestore.getAll(COLLECTION_NAMES.INVENTORY, query);
+    return inventory as Inventory[];
   }
 
-  // Find inventory by product ID
-  findByProduct(productId: string): Inventory {
-    this.logger.log(`Finding inventory for product ID: ${productId}`, InventoryService.name);
-    // Implementation will be added later
-    return { 
-      id: 'inventory123',
-      productId,
-      stock: 100
-    };
-  }
-
-  // Find a specific inventory item by ID
-  findOne(id: string): Inventory {
+  async findOne(id: string): Promise<Inventory> {
     this.logger.log(`Finding inventory item with ID: ${id}`, InventoryService.name);
-    // Implementation will be added later
-    return { 
-      id,
-      productId: 'product123',
-      stock: 50
-    };
+    const inventoryItem = await this.firestore.getById(COLLECTION_NAMES.INVENTORY, id);
+    if (!inventoryItem) {
+      throw new NotFoundException(`Inventory item with ID ${id} not found`);
+    }
+    return inventoryItem as Inventory;
+  }
+
+  async create(createInventoryDto: CreateInventoryDto): Promise<Inventory> {
+    this.logger.log('Creating new inventory item', InventoryService.name);
+    const newInventoryItem = await this.firestore.create(COLLECTION_NAMES.INVENTORY, createInventoryDto);
+    return newInventoryItem as Inventory;
+  }
+
+  async update(id: string, updateInventoryDto: UpdateInventoryDto): Promise<Inventory> {
+    this.logger.log(`Updating inventory item with ID: ${id}`, InventoryService.name);
+    const existingInventoryItem = await this.firestore.getById(COLLECTION_NAMES.INVENTORY, id);
+    if (!existingInventoryItem) {
+      throw new NotFoundException(`Inventory item with ID ${id} not found`);
+    }
+    const updatedInventoryItem = await this.firestore.update(COLLECTION_NAMES.INVENTORY, id, updateInventoryDto);
+    return updatedInventoryItem as Inventory;
+  }
+
+  async remove(id: string): Promise<{ id: string }> {
+    this.logger.log(`Removing inventory item with ID: ${id}`, InventoryService.name);
+    const existingInventoryItem = await this.firestore.getById(COLLECTION_NAMES.INVENTORY, id);
+    if (!existingInventoryItem) {
+      throw new NotFoundException(`Inventory item with ID ${id} not found`);
+    }
+    await this.firestore.delete(COLLECTION_NAMES.INVENTORY, id);
+    return { id };
   }
 }
