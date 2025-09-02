@@ -1,19 +1,24 @@
-from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, Security, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 from src.core.firebase import get_firebase_auth
 from src.core.exceptions import UnauthorizedException, ForbiddenException
 from src.shared.constants import UserRole
 from src.models.token_models import DecodedToken
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/verify")
+security = HTTPBearer()
 
-async def verify_token(token: Annotated[str, Depends(oauth2_scheme)]):
+async def verify_token(
+    credentials: HTTPAuthorizationCredentials = Security(security),
+) -> DecodedToken:
+    if not credentials or not credentials.credentials:
+        raise UnauthorizedException(detail="Authentication token is missing")
+
+    token = credentials.credentials
     try:
-        decoded_token_dict = get_firebase_auth().verify_id_token(token)
-        decoded_token = DecodedToken(**decoded_token_dict)
-        return decoded_token
+        decoded_token_dict = auth.verify_id_token(token)
+        return DecodedToken(**decoded_token_dict)
     except Exception as e:
         raise UnauthorizedException(detail=f"Invalid authentication credentials: {e}")
 

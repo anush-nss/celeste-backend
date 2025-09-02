@@ -5,7 +5,7 @@ import os
 from src.models.auth_models import RegisterSchema, LoginSchema, UserRegistration
 from src.models.user_models import UserSchema, CreateUserSchema
 from src.models.token_models import DecodedToken
-from src.auth.dependencies import verify_token, get_current_user
+from src.auth.dependencies import get_current_user
 from src.services.user_service import UserService
 from firebase_admin import auth
 from src.core.responses import success_response
@@ -13,15 +13,6 @@ from src.shared.constants import UserRole
 
 auth_router = APIRouter(prefix="/auth", tags=["Auth"])
 user_service = UserService()
-
-@auth_router.post("/verify", summary="Verify a user token")
-async def verify_user_token(token_data: LoginSchema):
-    try:
-        decoded_token_dict = auth.verify_id_token(token_data.token)
-        decoded_token = DecodedToken(**decoded_token_dict)
-        return success_response({"valid": True, "user": decoded_token})
-    except Exception as e:
-        return success_response({"valid": False, "message": f"Invalid token: {e}"}, status_code=status.HTTP_401_UNAUTHORIZED)
 
 @auth_router.post("/register", summary="Register a new user", status_code=status.HTTP_201_CREATED)
 async def register_user(user_registration: UserRegistration):
@@ -45,13 +36,33 @@ async def register_user(user_registration: UserRegistration):
 
 @auth_router.get("/profile", summary="Get current user profile")
 async def get_profile(current_user: Annotated[DecodedToken, Depends(get_current_user)]):
-    return success_response(current_user)
+    return success_response(current_user.model_dump())
 
 if os.getenv("ENVIRONMENT") == "development":
+    import requests
+
     @auth_router.post("/dev/token", summary="[DEV] Get ID token for a user")
     async def get_id_token(uid: str):
         try:
             custom_token = auth.create_custom_token(uid)
-            return success_response({"token": custom_token.decode("utf-8")})
+
+            # Exchange custom token for ID token
+            api_key = os.getenv("FIREBASE_WEB_API_KEY")
+            if not api_key:
+                raise HTTPException(status_code=500, detail="FIREBASE_WEB_API_KEY not set")
+
+            rest_api_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key={api_key}"
+            payload = {
+                "token": custom_token.decode("utf-8"),
+                "returnSecureToken": True
+            }
+            response = requests.post(rest_api_url, json=payload)
+            response.raise_for_status()  # Raise an exception for bad status codes
+
+            id_token = response.json().get("idToken")
+            if not id_token:
+                raise HTTPException(status_code=500, detail="Failed to get ID token from Firebase")
+
+            return success_response({"idToken": id_token})
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

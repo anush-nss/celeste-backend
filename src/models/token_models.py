@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional
+from src.shared.constants import UserRole
 
 class DecodedToken(BaseModel):
     iss: str
@@ -16,3 +17,4 @@ class DecodedToken(BaseModel):
     picture: Optional[str] = None
     firebase: dict
     uid: str
+    role: Optional[UserRole] = None

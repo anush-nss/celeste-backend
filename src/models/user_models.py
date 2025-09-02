@@ -6,7 +6,6 @@ from src.shared.constants import UserRole
 class CartItemSchema(BaseModel):
     productId: str
     quantity: int = Field(..., gt=0)
-    addedAt: datetime
 
 class UserSchema(BaseModel):
     id: Optional[str] = None

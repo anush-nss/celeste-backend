@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, status, HTTPException
 from typing import Annotated, List
 from datetime import datetime
+
 from src.models.user_models import UserSchema, CreateUserSchema, UpdateUserSchema, AddToWishlistSchema, AddToCartSchema, UpdateCartItemSchema, CartItemSchema
+from src.models.token_models import DecodedToken
 from src.services.user_service import UserService
 from src.auth.dependencies import get_current_user, RoleChecker
 from src.shared.constants import UserRole
@@ -22,8 +24,8 @@ async def create_user(user_data: CreateUserSchema):
     return success_response(new_user.model_dump(), status_code=status.HTTP_201_CREATED)
 
 @users_router.get("/me", summary="Get current user profile")
-async def get_user_profile(current_user: Annotated[dict, Depends(get_current_user)]):
-    user_id = current_user.get("uid")
+async def get_user_profile(current_user: Annotated[DecodedToken, Depends(get_current_user)]):
+    user_id = current_user.uid
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found in token")
 
@@ -41,8 +43,9 @@ async def get_user_by_id_admin(id: str):
     return success_response(user.model_dump())
 
 @users_router.put("/me", summary="Update current user profile")
-async def update_user_profile(user_data: UpdateUserSchema, current_user: Annotated[dict, Depends(get_current_user)]):
-    user_id = current_user.get("uid")
+async def update_user_profile(user_data: UpdateUserSchema, current_user: Annotated[DecodedToken, Depends(get_current_user)]):
+    user_id = current_user.uid
+    print(current_user)
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found in token")
 
@@ -82,114 +85,79 @@ async def delete_user(id: str):
     return success_response({"id": id, "message": "User deleted successfully"})
 
 @users_router.post("/me/wishlist", summary="Add a product to the user's wishlist")
-async def add_to_wishlist(item: AddToWishlistSchema, current_user: Annotated[dict, Depends(get_current_user)]):
-    user_id = current_user.get("uid")
+async def add_to_wishlist(item: AddToWishlistSchema, current_user: Annotated[DecodedToken, Depends(get_current_user)]):
+    user_id = current_user.uid
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found in token")
         
-    # Placeholder for wishlist logic
-    # In a real app, you would add the product to the user's wishlist in Firestore
-    user = await user_service.get_user_by_id(user_id)
-    if not user:
-        raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
+    result = await user_service.add_to_wishlist(user_id, item.productId)
+    if not result:
+        raise HTTPException(status_code=500, detail="Failed to add product to wishlist")
     
-    if not user.wishlist:
-        user.wishlist = []
-    if item.productId not in user.wishlist:
-        user.wishlist.append(item.productId)
-    
-    # await user_service.update_user_wishlist(id, user.wishlist)
     return success_response({"userId": user_id, "productId": item.productId})
 
 @users_router.delete("/me/wishlist/{productId}", summary="Remove a product from the user's wishlist")
-async def remove_from_wishlist(productId: str, current_user: Annotated[dict, Depends(get_current_user)]):
-    user_id = current_user.get("uid")
+async def remove_from_wishlist(productId: str, current_user: Annotated[DecodedToken, Depends(get_current_user)]):
+    user_id = current_user.uid
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found in token")
         
-    # Placeholder for wishlist logic
-    user = await user_service.get_user_by_id(user_id)
-    if not user:
-        raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
+    result = await user_service.remove_from_wishlist(user_id, productId)
+    if not result:
+        raise HTTPException(status_code=500, detail="Failed to remove product from wishlist")
     
-    if user.wishlist and productId in user.wishlist:
-        user.wishlist.remove(productId)
-    
-    # await user_service.update_user_wishlist(id, user.wishlist)
     return success_response({"userId": user_id, "productId": productId})
 
 @users_router.post("/me/cart", summary="Add an item to the user's cart")
-async def add_to_cart(item: AddToCartSchema, current_user: Annotated[dict, Depends(get_current_user)]):
-    user_id = current_user.get("uid")
+async def add_to_cart(item: AddToCartSchema, current_user: Annotated[DecodedToken, Depends(get_current_user)]):
+    user_id = current_user.uid
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found in token")
         
-    # Placeholder for cart logic
-    user = await user_service.get_user_by_id(user_id)
-    if not user:
-        raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
-    
-    if not user.cart:
-        user.cart = []
-    
-    # Check if product already in cart
-    cart_item = None
-    for existing_item in user.cart:
-        if existing_item.productId == item.productId:
-            existing_item.quantity += item.quantity
-            cart_item = existing_item
-            break
+    cart_item = await user_service.add_to_cart(user_id, item.productId, item.quantity)
     if not cart_item:
-        # Create proper CartItemSchema instance with addedAt timestamp
-        cart_item = CartItemSchema(
-            productId=item.productId,
-            quantity=item.quantity,
-            addedAt=datetime.now()
-        )
-        user.cart.append(cart_item)
+        raise HTTPException(status_code=500, detail="Failed to add item to cart")
     
-    # await user_service.update_user_cart(id, user.cart)
-    # Return the cart item (either updated or newly created)
-    return success_response(cart_item.model_dump()) # Return the added item
+    return success_response(cart_item)
 
 @users_router.put("/me/cart/{productId}", summary="Update an item in the user's cart")
-async def update_cart_item(productId: str, item: UpdateCartItemSchema, current_user: Annotated[dict, Depends(get_current_user)]):
-    user_id = current_user.get("uid")
+async def update_cart_item(productId: str, item: UpdateCartItemSchema, current_user: Annotated[DecodedToken, Depends(get_current_user)]):
+    user_id = current_user.uid
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found in token")
         
-    # Placeholder for cart logic
-    user = await user_service.get_user_by_id(user_id)
-    if not user:
-        raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
-    
-    cart_item = None
-    if user.cart:
-        for existing_item in user.cart:
-            if existing_item.productId == productId:
-                existing_item.quantity = item.quantity
-                cart_item = existing_item
-                break
-    
+    cart_item = await user_service.update_cart_item(user_id, productId, item.quantity)
     if not cart_item:
-        raise ResourceNotFoundException(detail=f"Product {productId} not found in user's cart.")
+        raise HTTPException(status_code=500, detail="Failed to update cart item")
     
-    # await user_service.update_user_cart(id, user.cart)
-    return success_response(cart_item.model_dump()) # Return the updated item
+    return success_response(cart_item)
 
 @users_router.delete("/me/cart/{productId}", summary="Remove an item from the user's cart")
-async def remove_from_cart(productId: str, current_user: Annotated[dict, Depends(get_current_user)]):
-    user_id = current_user.get("uid")
+async def remove_from_cart(productId: str, current_user: Annotated[DecodedToken, Depends(get_current_user)]):
+    user_id = current_user.uid
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found in token")
         
-    # Placeholder for cart logic
-    user = await user_service.get_user_by_id(user_id)
-    if not user:
-        raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
+    result = await user_service.remove_from_cart(user_id, productId)
+    if not result:
+        raise HTTPException(status_code=500, detail="Failed to remove item from cart")
     
-    if user.cart:
-        user.cart = [item for item in user.cart if item.productId != productId]
-    
-    # await user_service.update_user_cart(id, user.cart)
     return success_response({"userId": user_id, "productId": productId})
+
+@users_router.get("/me/cart", summary="Get the user's cart")
+async def get_cart(current_user: Annotated[DecodedToken, Depends(get_current_user)]):
+    user_id = current_user.uid
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID not found in token")
+        
+    cart = await user_service.get_cart(user_id)
+    return success_response(cart)
+
+@users_router.get("/me/wishlist", summary="Get the user's wishlist")
+async def get_wishlist(current_user: Annotated[DecodedToken, Depends(get_current_user)]):
+    user_id = current_user.uid
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID not found in token")
+        
+    wishlist = await user_service.get_wishlist(user_id)
+    return success_response(wishlist)

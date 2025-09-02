@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer
 from src.routers.auth_router import auth_router
 from src.routers.users_router import users_router
 from src.routers.categories_router import categories_router
@@ -15,7 +16,11 @@ import time
 
 logger = get_logger(__name__)
 
-app = FastAPI(title="Celeste API", description="API documentation for the Celeste e-commerce platform.", version="1.0.0")
+app = FastAPI(
+    title="Celeste API", 
+    description="API documentation for the Celeste e-commerce platform.", 
+    version="1.0.0",
+)
 
 app.include_router(auth_router)
 app.include_router(users_router)
@@ -47,8 +52,9 @@ def custom_openapi():
             "bearerFormat": "JWT",
         }
     }
-    openapi_schema["security"] = [{"BearerAuth": []}]
     app.openapi_schema = openapi_schema
+    # Add global security requirement
+    openapi_schema["security"] = [{"BearerAuth": []}]
     return app.openapi_schema
 
 app.openapi = custom_openapi

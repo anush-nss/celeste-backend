@@ -22,7 +22,7 @@ async def get_category_by_id(id: str):
         raise ResourceNotFoundException(detail=f"Category with ID {id} not found")
     return success_response(category.model_dump())
 
-@categories_router.post("/", summary="Create a new category", response_model=CategorySchema, status_code=status.HTTP_201_CREATED, dependencies=[Depends(RoleChecker([UserRole.ADMIN]))])
+@categories_router.post("/", summary="Create a new category", response_model=CategorySchema, status_code=status.HTTP_201_CREATED, dependencies=[Depends(RoleChecker([UserRole.ADMIN], ))])
 async def create_category(category_data: CreateCategorySchema):
     new_category = await category_service.create_category(category_data)
     return success_response(new_category.model_dump(), status_code=status.HTTP_201_CREATED)
