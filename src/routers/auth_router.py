@@ -6,6 +6,7 @@ from src.auth.dependencies import verify_token, get_current_user
 from src.services.user_service import UserService
 from firebase_admin import auth
 from src.core.responses import success_response
+from src.shared.constants import UserRole
 
 auth_router = APIRouter(prefix="/auth", tags=["Auth"])
 user_service = UserService()
@@ -21,12 +22,16 @@ async def verify_user_token(token_data: LoginSchema):
 @auth_router.post("/register", summary="Register a new user", status_code=status.HTTP_201_CREATED)
 async def register_user(user_registration: UserRegistration):
     try:
-        # Create user in Firebase Authentication
-        firebase_user = auth.create_user(uid=user_registration.idToken, display_name=user_registration.name)
+        # Verify the ID token
+        decoded_token = auth.verify_id_token(user_registration.idToken)
+        uid = decoded_token['uid']
+
+        # Add custom claim for user role
+        auth.set_custom_user_claims(uid, {'role': UserRole.CUSTOMER.value})
 
         # Create user in Firestore
         create_user_data = CreateUserSchema(name=user_registration.name)
-        new_user = await user_service.create_user(create_user_data, firebase_user.uid)
+        new_user = await user_service.create_user(create_user_data, uid)
 
         return success_response({"message": "Registration successful", "user": {"uid": new_user.id, "role": new_user.role}}, status_code=status.HTTP_201_CREATED)
     except Exception as e:
