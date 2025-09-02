@@ -30,3 +30,12 @@ class UserService:
             if user_dict:  # Ensure user_dict is not None
                 return UserSchema(**user_dict)
         return None
+
+    async def update_user(self, user_id: str, user_data: dict) -> UserSchema | None:
+        self.users_collection.document(user_id).update(user_data)
+        updated_user_doc = self.users_collection.document(user_id).get()
+        if updated_user_doc.exists:
+            updated_dict = updated_user_doc.to_dict()
+            if updated_dict:
+                return UserSchema(**updated_dict)
+        return None

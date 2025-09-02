@@ -1,5 +1,7 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Annotated
+import os
 from src.models.auth_models import RegisterSchema, LoginSchema, UserRegistration
 from src.models.user_models import UserSchema, CreateUserSchema
 from src.models.token_models import DecodedToken
@@ -44,3 +46,12 @@ async def register_user(user_registration: UserRegistration):
 @auth_router.get("/profile", summary="Get current user profile")
 async def get_profile(current_user: Annotated[DecodedToken, Depends(get_current_user)]):
     return success_response(current_user)
+
+if os.getenv("ENVIRONMENT") == "development":
+    @auth_router.post("/dev/token", summary="[DEV] Get ID token for a user")
+    async def get_id_token(uid: str):
+        try:
+            custom_token = auth.create_custom_token(uid)
+            return success_response({"token": custom_token.decode("utf-8")})
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

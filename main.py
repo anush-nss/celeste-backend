@@ -27,7 +27,32 @@ app.include_router(inventory_router)
 app.include_router(stores_router)
 app.include_router(promotions_router)
 
-app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(Exception, http_exception_handler)
+
+from fastapi.openapi.utils import get_openapi
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title="Celeste API",
+        version="1.0.0",
+        description="API documentation for the Celeste e-commerce platform.",
+        routes=app.routes,
+    )
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+    }
+    openapi_schema["security"] = [{"BearerAuth": []}]
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
