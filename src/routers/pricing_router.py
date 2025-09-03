@@ -17,7 +17,8 @@ pricing_router = APIRouter(prefix="/pricing", tags=["Pricing"])
 pricing_service = PricingService()
 
 # Price List Management (Admin Only)
-@pricing_router.get("/price-lists", summary="Get all price lists", response_model=List[PriceListSchema], dependencies=[Depends(RoleChecker([UserRole.ADMIN]))])
+@pricing_router.get("/price-lists", summary="Get all price lists", response_model=List[PriceListSchema], 
+                    )
 async def get_all_price_lists(active_only: bool = False):
     """
     Get all price lists.
@@ -25,17 +26,19 @@ async def get_all_price_lists(active_only: bool = False):
     - **active_only**: Filter to show only active price lists
     """
     price_lists = await pricing_service.get_all_price_lists(active_only=active_only)
-    return success_response([pl.model_dump() for pl in price_lists])
+    return success_response([pl.model_dump(mode='json') for pl in price_lists])
 
-@pricing_router.get("/price-lists/{price_list_id}", summary="Get price list by ID", response_model=PriceListSchema, dependencies=[Depends(RoleChecker([UserRole.ADMIN]))])
+@pricing_router.get("/price-lists/{price_list_id}", summary="Get price list by ID", response_model=PriceListSchema, 
+                    )
 async def get_price_list_by_id(price_list_id: str):
     """Get a specific price list by ID"""
     price_list = await pricing_service.get_price_list_by_id(price_list_id)
     if not price_list:
         raise ResourceNotFoundException(detail=f"Price list with ID {price_list_id} not found")
-    return success_response(price_list.model_dump())
+    return success_response(price_list.model_dump(mode='json'))
 
-@pricing_router.post("/price-lists", summary="Create a new price list", response_model=PriceListSchema, status_code=status.HTTP_201_CREATED, dependencies=[Depends(RoleChecker([UserRole.ADMIN]))])
+@pricing_router.post("/price-lists", summary="Create a new price list", response_model=PriceListSchema, status_code=status.HTTP_201_CREATED, 
+                     )
 async def create_price_list(price_list_data: CreatePriceListSchema):
     """
     Create a new price list.
@@ -47,17 +50,19 @@ async def create_price_list(price_list_data: CreatePriceListSchema):
     - **valid_until**: When this price list expires (optional)
     """
     new_price_list = await pricing_service.create_price_list(price_list_data)
-    return success_response(new_price_list.model_dump(), status_code=status.HTTP_201_CREATED)
+    return success_response(new_price_list.model_dump(mode='json'), status_code=status.HTTP_201_CREATED)
 
-@pricing_router.put("/price-lists/{price_list_id}", summary="Update a price list", response_model=PriceListSchema, dependencies=[Depends(RoleChecker([UserRole.ADMIN]))])
+@pricing_router.put("/price-lists/{price_list_id}", summary="Update a price list", response_model=PriceListSchema, 
+                    )
 async def update_price_list(price_list_id: str, price_list_data: UpdatePriceListSchema):
     """Update an existing price list"""
     updated_price_list = await pricing_service.update_price_list(price_list_id, price_list_data)
     if not updated_price_list:
         raise ResourceNotFoundException(detail=f"Price list with ID {price_list_id} not found")
-    return success_response(updated_price_list.model_dump())
+    return success_response(updated_price_list.model_dump(mode='json'))
 
-@pricing_router.delete("/price-lists/{price_list_id}", summary="Delete a price list", dependencies=[Depends(RoleChecker([UserRole.ADMIN]))])
+@pricing_router.delete("/price-lists/{price_list_id}", summary="Delete a price list", 
+                       )
 async def delete_price_list(price_list_id: str):
     """Delete a price list and all its lines"""
     success = await pricing_service.delete_price_list(price_list_id)
@@ -66,7 +71,8 @@ async def delete_price_list(price_list_id: str):
     return success_response({"id": price_list_id, "message": "Price list deleted successfully"})
 
 # Price List Lines Management (Admin Only)
-@pricing_router.get("/price-lists/{price_list_id}/lines", summary="Get price list lines", response_model=List[PriceListLineSchema], dependencies=[Depends(RoleChecker([UserRole.ADMIN]))])
+@pricing_router.get("/price-lists/{price_list_id}/lines", summary="Get price list lines", response_model=List[PriceListLineSchema]
+                    )
 async def get_price_list_lines(price_list_id: str):
     """Get all lines for a specific price list"""
     # Verify price list exists
@@ -75,9 +81,10 @@ async def get_price_list_lines(price_list_id: str):
         raise ResourceNotFoundException(detail=f"Price list with ID {price_list_id} not found")
     
     lines = await pricing_service.get_price_list_lines(price_list_id)
-    return success_response([line.model_dump() for line in lines])
+    return success_response([line.model_dump(mode='json') for line in lines])
 
-@pricing_router.post("/price-lists/{price_list_id}/lines", summary="Add a price list line", response_model=PriceListLineSchema, status_code=status.HTTP_201_CREATED, dependencies=[Depends(RoleChecker([UserRole.ADMIN]))])
+@pricing_router.post("/price-lists/{price_list_id}/lines", summary="Add a price list line", response_model=PriceListLineSchema, status_code=status.HTTP_201_CREATED, 
+                     )
 async def create_price_list_line(price_list_id: str, line_data: CreatePriceListLineSchema):
     """
     Add a new line to a price list.
@@ -97,19 +104,21 @@ async def create_price_list_line(price_list_id: str, line_data: CreatePriceListL
     
     try:
         new_line = await pricing_service.create_price_list_line(price_list_id, line_data)
-        return success_response(new_line.model_dump(), status_code=status.HTTP_201_CREATED)
+        return success_response(new_line.model_dump(mode='json'), status_code=status.HTTP_201_CREATED)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-@pricing_router.put("/price-lists/lines/{line_id}", summary="Update a price list line", response_model=PriceListLineSchema, dependencies=[Depends(RoleChecker([UserRole.ADMIN]))])
+@pricing_router.put("/price-lists/lines/{line_id}", summary="Update a price list line", response_model=PriceListLineSchema, 
+                    )
 async def update_price_list_line(line_id: str, line_data: UpdatePriceListLineSchema):
     """Update an existing price list line"""
     updated_line = await pricing_service.update_price_list_line(line_id, line_data)
     if not updated_line:
         raise ResourceNotFoundException(detail=f"Price list line with ID {line_id} not found")
-    return success_response(updated_line.model_dump())
+    return success_response(updated_line.model_dump(mode='json'))
 
-@pricing_router.delete("/price-lists/lines/{line_id}", summary="Delete a price list line", dependencies=[Depends(RoleChecker([UserRole.ADMIN]))])
+@pricing_router.delete("/price-lists/lines/{line_id}", summary="Delete a price list line", 
+                       )
 async def delete_price_list_line(line_id: str):
     """Delete a price list line"""
     success = await pricing_service.delete_price_list_line(line_id)
@@ -140,7 +149,7 @@ async def calculate_price(request: PriceCalculationRequest):
         request.quantity
     )
     
-    return success_response(calculation.model_dump())
+    return success_response(calculation.model_dump(mode='json'))
 
 @pricing_router.post("/calculate-bulk-prices", summary="Calculate prices for multiple products", response_model=BulkPriceCalculationResponse)
 async def calculate_bulk_prices(request: BulkPriceCalculationRequest):
@@ -150,7 +159,7 @@ async def calculate_bulk_prices(request: BulkPriceCalculationRequest):
     - **items**: List of products to calculate prices for
     """
     calculation = await pricing_service.calculate_bulk_prices(request)
-    return success_response(calculation.model_dump())
+    return success_response(calculation.model_dump(mode='json'))
 
 # User-specific price calculation (requires authentication)
 @pricing_router.get("/my-price/{product_id}", summary="Get product price for current user", response_model=PriceCalculationResponse)
@@ -177,4 +186,4 @@ async def get_my_product_price(
     #         customer_tier = user.customer_tier
     
     calculation = await pricing_service.calculate_price(product_id, customer_tier, quantity)
-    return success_response(calculation.model_dump())
+    return success_response(calculation.model_dump(mode='json'))

@@ -27,7 +27,7 @@ class CreateUserSchema(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
     address: Optional[str] = None
-    role: UserRole = UserRole.CUSTOMER
+    role: UserRole = Field(default=UserRole.CUSTOMER, description="Role of the user")
     customer_tier: CustomerTier = Field(default=CustomerTier.BRONZE, description="Customer loyalty tier")
 
 class UpdateUserSchema(BaseModel):

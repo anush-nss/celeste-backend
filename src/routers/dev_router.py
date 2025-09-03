@@ -4,6 +4,7 @@ from src.core.firebase import get_firestore_db
 from src.core.responses import success_response
 import firebase_admin
 from firebase_admin import auth
+from google.cloud.firestore import SERVER_TIMESTAMP
 
 dev_router = APIRouter(prefix="/dev", tags=["Development"])
 
@@ -45,20 +46,32 @@ async def add_data_to_collection(
         if isinstance(data, dict):
             # Single document
             doc_ref = collection_ref.document()
-            doc_ref.set(data)
+            # Add server timestamps
+            doc_data = data.copy()
+            doc_data.update({
+                'created_at': SERVER_TIMESTAMP,
+                'updated_at': SERVER_TIMESTAMP
+            })
+            doc_ref.set(doc_data)
             added_documents.append({
                 "id": doc_ref.id,
-                "data": data
+                "data": data  # Return original data without server timestamp placeholders
             })
         elif isinstance(data, list):
             # Multiple documents
-            for doc_data in data:
-                if isinstance(doc_data, dict):
+            for item_data in data:
+                if isinstance(item_data, dict):
                     doc_ref = collection_ref.document()
+                    # Add server timestamps
+                    doc_data = item_data.copy()
+                    doc_data.update({
+                        'created_at': SERVER_TIMESTAMP,
+                        'updated_at': SERVER_TIMESTAMP
+                    })
                     doc_ref.set(doc_data)
                     added_documents.append({
                         "id": doc_ref.id,
-                        "data": doc_data
+                        "data": item_data  # Return original data without server timestamp placeholders
                     })
                 else:
                     raise HTTPException(

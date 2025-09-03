@@ -1,6 +1,6 @@
 from src.core.firebase import get_firestore_db
 from src.models.user_models import CreateUserSchema, UserSchema, CartItemSchema
-from src.shared.constants import UserRole
+from src.shared.constants import UserRole, CustomerTier
 
 class UserService:
     def __init__(self):
@@ -10,9 +10,18 @@ class UserService:
     async def create_user(self, user_data: CreateUserSchema, uid: str) -> UserSchema:
         user_dict = user_data.model_dump()
         user_dict['id'] = uid
-        # Ensure role is set, default to CUSTOMER if not provided
-        if 'role' not in user_dict:
+        
+        # The role and customer_tier fields are already set by default in the models
+        # but ensure they are stored as string values in Firestore
+        if 'role' in user_dict and hasattr(user_dict['role'], 'value'):
+            user_dict['role'] = user_dict['role'].value
+        elif 'role' not in user_dict or user_dict['role'] is None:
             user_dict['role'] = UserRole.CUSTOMER.value
+        
+        if 'customer_tier' in user_dict and hasattr(user_dict['customer_tier'], 'value'):
+            user_dict['customer_tier'] = user_dict['customer_tier'].value
+        elif 'customer_tier' not in user_dict or user_dict['customer_tier'] is None:
+            user_dict['customer_tier'] = CustomerTier.BRONZE.value
         
         self.users_collection.document(uid).set(user_dict)
         created_user_doc = self.users_collection.document(uid).get()

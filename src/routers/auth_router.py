@@ -26,8 +26,14 @@ async def register_user(user_registration: UserRegistration):
         # Add custom claim for user role
         auth.set_custom_user_claims(uid, {'role': UserRole.CUSTOMER.value})
 
-        # Create user in Firestore
-        create_user_data = CreateUserSchema(name=user_registration.name, phone=phone_number)
+        # Create user in Firestore with explicit defaults
+        from src.shared.constants import CustomerTier
+        create_user_data = CreateUserSchema(
+            name=user_registration.name, 
+            phone=phone_number,
+            role=UserRole.CUSTOMER,
+            customer_tier=CustomerTier.BRONZE
+        )
         new_user = await user_service.create_user(create_user_data, uid)
 
         return success_response({"message": "Registration successful", "user": {"uid": new_user.id, "role": new_user.role}}, status_code=status.HTTP_201_CREATED)
