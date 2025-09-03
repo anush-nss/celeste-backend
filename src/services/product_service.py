@@ -53,17 +53,20 @@ class ProductService:
         """
         Enhanced product listing with cursor-based pagination and smart pricing
         """
-        products_ref = self.products_collection.order_by('name')  # Consistent ordering for pagination
+        # Start with base collection - avoid composite indexes by filtering in memory when possible
+        products_ref = self.products_collection
 
-        # Apply filters
+        # Apply only one where clause to avoid composite index requirements
+        primary_filter = None
         if query_params.categoryId:
             products_ref = products_ref.where('categoryId', '==', query_params.categoryId)
-        if query_params.minPrice is not None:
-            products_ref = products_ref.where('price', '>=', query_params.minPrice)
-        if query_params.maxPrice is not None:
-            products_ref = products_ref.where('price', '<=', query_params.maxPrice)
-        if query_params.isFeatured is not None:
+            primary_filter = 'categoryId'
+        elif query_params.isFeatured is not None:
             products_ref = products_ref.where('isFeatured', '==', query_params.isFeatured)
+            primary_filter = 'isFeatured'
+        
+        # Add ordering - use __name__ for consistent pagination without requiring composite index
+        products_ref = products_ref.order_by('__name__')
 
         # Apply limit (default 20, max 100)
         limit = min(query_params.limit or 20, 100)
@@ -85,16 +88,34 @@ class ProductService:
         if has_more:
             docs = docs[:-1]  # Remove the extra document
 
-        # Convert to product objects
+        # Convert to product objects and apply memory-based filtering
         products = []
         for doc in docs:
             doc_dict = doc.to_dict()
             if doc_dict:
+                # Apply memory-based filters that we couldn't apply in the query
+                # to avoid composite index requirements
+                
+                # Price range filtering
+                if query_params.minPrice is not None and doc_dict.get('price', 0) < query_params.minPrice:
+                    continue
+                if query_params.maxPrice is not None and doc_dict.get('price', 0) > query_params.maxPrice:
+                    continue
+                
+                # Featured filter (if not applied as primary filter)
+                if primary_filter != 'isFeatured' and query_params.isFeatured is not None:
+                    if doc_dict.get('isFeatured', False) != query_params.isFeatured:
+                        continue
+                
                 products.append({
                     'id': doc.id,
                     'data': doc_dict,
                     'doc_ref': doc
                 })
+                
+                # Stop if we have enough products after filtering
+                if len(products) >= limit:
+                    break
 
         # Apply pricing if requested and pricing service available
         enhanced_products = []
@@ -134,10 +155,13 @@ class ProductService:
                 enhanced_products.append(enhanced_product)
 
         # Prepare pagination metadata
+        # Adjust has_more based on actual filtered results
+        actual_has_more = len(products) >= limit and has_more
+        
         pagination = {
             "current_cursor": query_params.cursor,
-            "next_cursor": products[-1]['id'] if products and has_more else None,
-            "has_more": has_more,
+            "next_cursor": products[-1]['id'] if products and actual_has_more else None,
+            "has_more": actual_has_more,
             "total_returned": len(enhanced_products)
         }
 
