@@ -15,6 +15,7 @@ from src.routers.customer_tiers_router import customer_tiers_router
 from src.core.responses import http_exception_handler
 from src.core.logger import get_logger
 import time
+import os
 
 logger = get_logger(__name__)
 
@@ -35,6 +36,11 @@ app.include_router(stores_router)
 app.include_router(promotions_router)
 app.include_router(pricing_router)
 app.include_router(customer_tiers_router)
+
+# Include dev router only in development environment
+if os.getenv("ENVIRONMENT") == "development":
+    from src.routers.dev_router import dev_router
+    app.include_router(dev_router)
 
 app.add_exception_handler(Exception, http_exception_handler)
 

@@ -38,31 +38,3 @@ async def register_user(user_registration: UserRegistration):
 async def get_profile(current_user: Annotated[DecodedToken, Depends(get_current_user)]):
     return success_response(current_user.model_dump())
 
-if os.getenv("ENVIRONMENT") == "development":
-    import requests
-
-    @auth_router.post("/dev/token", summary="[DEV] Get ID token for a user")
-    async def get_id_token(uid: str):
-        try:
-            custom_token = auth.create_custom_token(uid)
-
-            # Exchange custom token for ID token
-            api_key = os.getenv("FIREBASE_WEB_API_KEY")
-            if not api_key:
-                raise HTTPException(status_code=500, detail="FIREBASE_WEB_API_KEY not set")
-
-            rest_api_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key={api_key}"
-            payload = {
-                "token": custom_token.decode("utf-8"),
-                "returnSecureToken": True
-            }
-            response = requests.post(rest_api_url, json=payload)
-            response.raise_for_status()  # Raise an exception for bad status codes
-
-            id_token = response.json().get("idToken")
-            if not id_token:
-                raise HTTPException(status_code=500, detail="Failed to get ID token from Firebase")
-
-            return success_response({"idToken": id_token})
-        except Exception as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
