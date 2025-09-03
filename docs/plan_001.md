@@ -74,15 +74,23 @@ This plan implements the advanced pricing system with customer tiers and price l
 
 ### Calculation Process
 ```python
-def calculate_price(product_id: str, user_tier: str, quantity: int = 1):
-    base_price = get_product_base_price(product_id)
+def calculate_price(product_id: str, user_tier: str = None, quantity: int = 1):
+    base_price = get_product_base_price(product_id)  # Default product price
     
-    # Get applicable price lists (cached)
-    price_lists = get_applicable_price_lists(user_tier)
+    # If no tier provided, return base price (normal price)
+    if not user_tier:
+        return base_price
+    
+    # Get price lists from tier benefits and global price lists
+    tier_price_lists = get_tier_price_lists(user_tier)
+    global_price_lists = get_global_price_lists()
+    
+    # Combine and sort by priority
+    all_price_lists = tier_price_lists + global_price_lists
     
     # Apply price list lines in priority order
     final_price = base_price
-    for price_list in price_lists:
+    for price_list in all_price_lists:
         price_lines = get_applicable_price_lines(price_list, product_id, quantity)
         final_price = apply_discount(final_price, price_lines)
     
@@ -126,8 +134,8 @@ class Collections(str, Enum):
 ### Step 2: Pydantic Models
 - `src/models/pricing_models.py`
 - `src/models/tier_models.py`
-- Update `src/models/user_models.py`
-- Update `src/models/product_models.py`
+- Update `src/models/user_models.py` (add customer_tier field only)
+- Keep `src/models/product_models.py` unchanged (base price remains)
 
 ### Step 3: Service Layer
 - `src/services/pricing_service.py`
@@ -164,9 +172,11 @@ class Collections(str, Enum):
 - `GET /users/me/tier-progress` - Get tier progress
 
 ### Enhanced Product Endpoints
+- `GET /products/{id}` - Get product with base price (default)
 - `GET /products/{id}?tier={tier}&quantity={qty}` - Get product with tier pricing
-- `POST /products/calculate-price` - Bulk price calculation
+- `POST /products/calculate-price` - Bulk price calculation for cart items
 - `GET /products?tier={tier}` - List products with tier pricing
+- `GET /products` - List products with base prices (no tier applied)
 
 ## 📊 Performance Considerations
 

@@ -10,6 +10,8 @@ from src.routers.orders_router import orders_router
 from src.routers.inventory_router import inventory_router
 from src.routers.stores_router import stores_router
 from src.routers.promotions_router import promotions_router
+from src.routers.pricing_router import pricing_router
+from src.routers.customer_tiers_router import customer_tiers_router
 from src.core.responses import http_exception_handler
 from src.core.logger import get_logger
 import time
@@ -31,6 +33,8 @@ app.include_router(orders_router)
 app.include_router(inventory_router)
 app.include_router(stores_router)
 app.include_router(promotions_router)
+app.include_router(pricing_router)
+app.include_router(customer_tiers_router)
 
 app.add_exception_handler(Exception, http_exception_handler)
 

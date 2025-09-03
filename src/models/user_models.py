@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field, EmailStr
-from src.shared.constants import UserRole
+from src.shared.constants import UserRole, CustomerTier
 
 class CartItemSchema(BaseModel):
     productId: str
@@ -14,7 +14,11 @@ class UserSchema(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     role: UserRole = UserRole.CUSTOMER
+    customer_tier: CustomerTier = Field(default=CustomerTier.BRONZE, description="Customer loyalty tier")
+    total_orders: int = Field(default=0, ge=0, description="Total number of orders placed")
+    lifetime_value: float = Field(default=0.0, ge=0, description="Total amount spent by customer")
     createdAt: Optional[datetime] = None
+    last_order_at: Optional[datetime] = None
     wishlist: Optional[List[str]] = None
     cart: Optional[List[CartItemSchema]] = None
 
@@ -24,6 +28,7 @@ class CreateUserSchema(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     role: UserRole = UserRole.CUSTOMER
+    customer_tier: CustomerTier = Field(default=CustomerTier.BRONZE, description="Customer loyalty tier")
 
 class UpdateUserSchema(BaseModel):
     name: Optional[str] = None
@@ -31,6 +36,7 @@ class UpdateUserSchema(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     role: Optional[UserRole] = None
+    customer_tier: Optional[CustomerTier] = Field(None, description="Customer loyalty tier")
 
 class AddToWishlistSchema(BaseModel):
     productId: str = Field(..., min_length=1)
