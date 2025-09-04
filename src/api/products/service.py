@@ -9,7 +9,6 @@ from src.api.products.models import (
     PaginatedProductsResponse,
     PricingInfoSchema,
 )
-from src.config.constants import CustomerTier
 
 
 class ProductService:
@@ -59,7 +58,7 @@ class ProductService:
     async def get_products_with_pagination(
         self,
         query_params: ProductQuerySchema,
-        customer_tier: Optional[CustomerTier] = None,
+        customer_tier: Optional[str] = None,
         pricing_service=None,
     ) -> PaginatedProductsResponse:
         """

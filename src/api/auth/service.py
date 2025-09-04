@@ -4,7 +4,7 @@ from firebase_admin import auth
 from src.api.auth.models import UserRegistration, DecodedToken
 from src.api.users.models import CreateUserSchema, UserSchema
 from src.api.users.service import UserService
-from src.config.constants import UserRole, CustomerTier
+from src.config.constants import UserRole
 from src.shared.exceptions import ResourceNotFoundException
 import requests
 
@@ -36,12 +36,11 @@ class AuthService:
             # Add custom claim for user role
             auth.set_custom_user_claims(uid, {"role": UserRole.CUSTOMER.value})
 
-            # Create user in Firestore with explicit defaults
+            # Create user in Firestore - tier will be set by UserService from database
             create_user_data = CreateUserSchema(
                 name=user_registration.name,
                 phone=phone_number,
                 role=UserRole.CUSTOMER,
-                customer_tier=CustomerTier.BRONZE,
             )
             new_user = await self.user_service.create_user(create_user_data, uid)
 

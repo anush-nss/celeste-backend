@@ -14,7 +14,7 @@ from src.api.products.service import ProductService
 from src.api.pricing.service import PricingService
 from src.dependencies.auth import RoleChecker, get_current_user
 from src.dependencies.tiers import get_user_tier
-from src.config.constants import UserRole, CustomerTier
+from src.config.constants import UserRole
 from src.shared.exceptions import ResourceNotFoundException
 from src.shared.responses import success_response
 
@@ -42,7 +42,7 @@ async def get_all_products(
     minPrice: Optional[float] = Query(None, description="Filter by minimum price"),
     maxPrice: Optional[float] = Query(None, description="Filter by maximum price"),
     isFeatured: Optional[bool] = Query(None, description="Filter by featured products"),
-    user_tier: Optional[CustomerTier] = Depends(get_user_tier),
+    user_tier: Optional[str] = Depends(get_user_tier),
 ):
     """
     Enhanced product listing with:
@@ -81,7 +81,7 @@ async def get_product_by_id(
         True, description="Include pricing calculations"
     ),
     quantity: Optional[int] = Query(1, description="Quantity for bulk pricing"),
-    user_tier: Optional[CustomerTier] = Depends(get_user_tier),
+    user_tier: Optional[str] = Depends(get_user_tier),
 ):
     """
     Get a single product with smart pricing based on Bearer token tier detection

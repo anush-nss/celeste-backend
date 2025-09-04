@@ -1,12 +1,14 @@
 from src.shared.database import get_firestore_db
 from src.api.users.models import CreateUserSchema, UserSchema, CartItemSchema
-from src.config.constants import UserRole, CustomerTier
+from src.config.constants import UserRole, DEFAULT_FALLBACK_TIER
+from src.api.tiers.service import TierService
 
 
 class UserService:
     def __init__(self):
         self.db = get_firestore_db()
         self.users_collection = self.db.collection("users")
+        self.tier_service = TierService()
 
     async def create_user(self, user_data: CreateUserSchema, uid: str) -> UserSchema:
         user_dict = user_data.model_dump()
@@ -19,12 +21,10 @@ class UserService:
         elif "role" not in user_dict or user_dict["role"] is None:
             user_dict["role"] = UserRole.CUSTOMER.value
 
-        if "customer_tier" in user_dict and hasattr(
-            user_dict["customer_tier"], "value"
-        ):
-            user_dict["customer_tier"] = user_dict["customer_tier"].value
-        elif "customer_tier" not in user_dict or user_dict["customer_tier"] is None:
-            user_dict["customer_tier"] = CustomerTier.BRONZE.value
+        if "customer_tier" not in user_dict or user_dict["customer_tier"] is None:
+            # Get default tier from database, fallback to constant if not found
+            default_tier = await self.tier_service.get_default_tier()
+            user_dict["customer_tier"] = default_tier
 
         self.users_collection.document(uid).set(user_dict)
         created_user_doc = self.users_collection.document(uid).get()

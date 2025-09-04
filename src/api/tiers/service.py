@@ -12,7 +12,7 @@ from src.api.tiers.models import (
     TierRequirementsSchema,
     TierBenefitsSchema,
 )
-from src.config.constants import Collections, CustomerTier
+from src.config.constants import Collections, DEFAULT_FALLBACK_TIER
 
 
 class TierService:
@@ -49,12 +49,12 @@ class TierService:
         return None
 
     async def get_customer_tier_by_code(
-        self, tier_code: CustomerTier
+        self, tier_code: str
     ) -> Optional[CustomerTierSchema]:
         """Get a customer tier by tier code"""
         try:
             docs = (
-                self.customer_tiers_collection.where("tier_code", "==", tier_code.value)
+                self.customer_tiers_collection.where("tier_code", "==", tier_code)
                 .limit(1)
                 .stream()
             )
@@ -129,17 +129,36 @@ class TierService:
         doc_ref.delete()
         return True
 
+    async def get_default_tier(self) -> str:
+        """Get the default tier from database, fallback to constant if not found"""
+        try:
+            docs = (
+                self.customer_tiers_collection.where("is_default", "==", True)
+                .where("active", "==", True)
+                .limit(1)
+                .stream()
+            )
+            doc = next(docs, None)
+            if doc:
+                tier_data = doc.to_dict()
+                if tier_data:
+                    return tier_data.get("tier_code", DEFAULT_FALLBACK_TIER)
+        except Exception as e:
+            self.logger.error(f"Error in get_default_tier: {e}")
+
+        return DEFAULT_FALLBACK_TIER
+
     # User Tier Operations
-    async def get_user_tier(self, user_id: str) -> Optional[CustomerTier]:
+    async def get_user_tier(self, user_id: str) -> Optional[str]:
         """Get a user's current tier"""
         user_doc = self.users_collection.document(user_id).get()
         if user_doc.exists:
             user_data = user_doc.to_dict()
             if user_data and user_data.get("customer_tier"):
-                return CustomerTier(user_data["customer_tier"])
+                return user_data["customer_tier"]
         return None
 
-    async def update_user_tier(self, user_id: str, new_tier: CustomerTier) -> bool:
+    async def update_user_tier(self, user_id: str, new_tier: str) -> bool:
         """Update a user's tier"""
         doc_ref = self.users_collection.document(user_id)
         doc = doc_ref.get()
@@ -147,7 +166,7 @@ class TierService:
         if not doc.exists:
             return False
 
-        doc_ref.update({"customer_tier": new_tier.value, "updated_at": datetime.now()})
+        doc_ref.update({"customer_tier": new_tier, "updated_at": datetime.now()})
         return True
 
     async def get_user_statistics(self, user_id: str) -> Dict:
@@ -187,7 +206,7 @@ class TierService:
         stats = await self.get_user_statistics(user_id)
 
         # Get current user tier
-        current_tier = await self.get_user_tier(user_id) or CustomerTier.BRONZE
+        current_tier = await self.get_user_tier(user_id) or DEFAULT_FALLBACK_TIER
 
         # Get all active tiers ordered by level
         tiers = await self.get_all_customer_tiers(active_only=True)
@@ -211,7 +230,7 @@ class TierService:
 
         # Find the highest eligible tier
         if not eligible_tiers:
-            recommended_tier = CustomerTier.BRONZE
+            recommended_tier = DEFAULT_FALLBACK_TIER
         else:
             # Sort eligible tiers by level (highest first)
             eligible_tier_objects = [
@@ -256,7 +275,7 @@ class TierService:
         # Get current tier info
         current_tier_info = await self.get_customer_tier_by_code(current_tier)
         if not current_tier_info:
-            raise ValueError(f"Tier {current_tier.value} not found")
+            raise ValueError(f"Tier {current_tier} not found")
 
         # Get user statistics
         stats = await self.get_user_statistics(user_id)
@@ -348,7 +367,7 @@ class TierService:
         # Get tier info and progress
         tier_info = await self.get_customer_tier_by_code(current_tier)
         if not tier_info:
-            raise ValueError(f"Tier {current_tier.value} not found")
+            raise ValueError(f"Tier {current_tier} not found")
 
         progress = await self.get_user_tier_progress(user_id)
         stats = await self.get_user_statistics(user_id)
@@ -370,7 +389,7 @@ class TierService:
         default_tiers = [
             CreateCustomerTierSchema(
                 name="Bronze",
-                tier_code=CustomerTier.BRONZE,
+                tier_code="BRONZE",
                 level=1,
                 requirements=TierRequirementsSchema(
                     min_orders=0, min_lifetime_value=0.0, min_monthly_orders=0
@@ -383,10 +402,11 @@ class TierService:
                 ),
                 icon_url=None,
                 color="#CD7F32",
+                is_default=True,
             ),
             CreateCustomerTierSchema(
                 name="Silver",
-                tier_code=CustomerTier.SILVER,
+                tier_code="SILVER",
                 level=2,
                 requirements=TierRequirementsSchema(
                     min_orders=5, min_lifetime_value=100.0, min_monthly_orders=1
@@ -402,7 +422,7 @@ class TierService:
             ),
             CreateCustomerTierSchema(
                 name="Gold",
-                tier_code=CustomerTier.GOLD,
+                tier_code="GOLD",
                 level=3,
                 requirements=TierRequirementsSchema(
                     min_orders=20, min_lifetime_value=500.0, min_monthly_orders=2
@@ -418,7 +438,7 @@ class TierService:
             ),
             CreateCustomerTierSchema(
                 name="Platinum",
-                tier_code=CustomerTier.PLATINUM,
+                tier_code="PLATINUM",
                 level=4,
                 requirements=TierRequirementsSchema(
                     min_orders=50, min_lifetime_value=2000.0, min_monthly_orders=5

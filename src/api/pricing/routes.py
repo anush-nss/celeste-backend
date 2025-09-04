@@ -15,7 +15,7 @@ from src.api.pricing.models import (
 from src.api.auth.models import DecodedToken
 from src.api.pricing.service import PricingService
 from src.dependencies.auth import get_current_user, RoleChecker
-from src.config.constants import UserRole, CustomerTier
+from src.config.constants import UserRole
 from src.shared.exceptions import ResourceNotFoundException
 from src.shared.responses import success_response
 
@@ -213,13 +213,7 @@ async def calculate_price(request: PriceCalculationRequest):
     """
     customer_tier = None
     if request.customer_tier:
-        try:
-            customer_tier = CustomerTier(request.customer_tier)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid customer tier: {request.customer_tier}",
-            )
+        customer_tier = request.customer_tier
 
     calculation = await pricing_service.calculate_price(
         request.product_id, customer_tier, request.quantity
@@ -263,7 +257,7 @@ async def get_my_product_price(
     # Get user's tier from their profile
     # Note: This would require integrating with user service to get the user's tier
     # For now, we'll use a default tier if not authenticated
-    customer_tier = CustomerTier.BRONZE  # Default tier
+    customer_tier = "BRONZE"  # Default tier
 
     # TODO: Get actual user tier from user service
     # if current_user:

@@ -19,11 +19,8 @@ class OrderStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class CustomerTier(str, Enum):
-    BRONZE = "BRONZE"
-    SILVER = "SILVER"
-    GOLD = "GOLD"
-    PLATINUM = "PLATINUM"
+# Default fallback tier when no default tier is found in database
+DEFAULT_FALLBACK_TIER = "BRONZE"
 
 
 class PriceListType(str, Enum):

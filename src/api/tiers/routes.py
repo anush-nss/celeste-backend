@@ -11,7 +11,7 @@ from src.api.tiers.models import (
 from src.api.auth.models import DecodedToken
 from src.api.tiers.service import TierService
 from src.dependencies.auth import get_current_user, RoleChecker
-from src.config.constants import UserRole, CustomerTier
+from src.config.constants import UserRole
 from src.shared.exceptions import ResourceNotFoundException
 from src.shared.responses import success_response
 
@@ -240,7 +240,7 @@ async def auto_update_user_tier(user_id: str):
     summary="Manually update user's tier",
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def manually_update_user_tier(user_id: str, new_tier: CustomerTier):
+async def manually_update_user_tier(user_id: str, new_tier: str):
     """Manually update a user's tier (Admin only)"""
     success = await tier_service.update_user_tier(user_id, new_tier)
     if not success:
@@ -248,7 +248,7 @@ async def manually_update_user_tier(user_id: str, new_tier: CustomerTier):
     return success_response(
         {
             "user_id": user_id,
-            "new_tier": new_tier.value,
+            "new_tier": new_tier,
             "message": "User tier updated successfully",
         }
     )

@@ -4,7 +4,7 @@ from firebase_admin import auth
 from typing import Annotated, List, Optional
 from src.shared.database import get_firebase_auth
 from src.shared.exceptions import UnauthorizedException, ForbiddenException
-from src.config.constants import UserRole, CustomerTier
+from src.config.constants import UserRole
 from src.api.auth.models import DecodedToken
 
 security = HTTPBearer()

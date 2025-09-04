@@ -13,7 +13,7 @@ from src.api.pricing.models import (
     BulkPriceCalculationRequest,
     BulkPriceCalculationResponse,
 )
-from src.config.constants import Collections, PriceListType, DiscountType, CustomerTier
+from src.config.constants import Collections, PriceListType, DiscountType
 
 
 class PricingService:
@@ -200,11 +200,11 @@ class PricingService:
                 return product_data.get("price", 0.0)
         return 0.0
 
-    async def get_tier_price_lists(self, customer_tier: CustomerTier) -> List[str]:
+    async def get_tier_price_lists(self, customer_tier: str) -> List[str]:
         """Get price list IDs associated with a customer tier"""
         # Get customer tier document
         tier_docs = (
-            self.customer_tiers_collection.where("tier_code", "==", customer_tier.value)
+            self.customer_tiers_collection.where("tier_code", "==", customer_tier)
             .limit(1)
             .stream()
         )
@@ -342,7 +342,7 @@ class PricingService:
     async def calculate_price(
         self,
         product_id: str,
-        customer_tier: Optional[CustomerTier] = None,
+        customer_tier: Optional[str] = None,
         quantity: int = 1,
     ) -> PriceCalculationResponse:
         """Calculate price for a product considering customer tier and quantity"""
@@ -420,7 +420,7 @@ class PricingService:
             final_price=final_price,
             discount_applied=discount_applied,
             discount_percentage=discount_percentage,
-            customer_tier=customer_tier.value if customer_tier else None,
+            customer_tier=customer_tier if customer_tier else None,
             quantity=quantity,
             applied_price_lists=applied_price_lists,
         )
@@ -436,7 +436,7 @@ class PricingService:
         for item in request.items:
             calculation = await self.calculate_price(
                 item.product_id,
-                CustomerTier(item.customer_tier) if item.customer_tier else None,
+                item.customer_tier or None,
                 item.quantity,
             )
             results.append(calculation)
@@ -455,7 +455,7 @@ class PricingService:
     async def calculate_bulk_product_pricing(
         self,
         products: List,
-        customer_tier: Optional[CustomerTier] = None,
+        customer_tier: Optional[str] = None,
         quantity: int = 1,
     ) -> List[Dict]:
         """
@@ -494,7 +494,7 @@ class PricingService:
                     "discount_applied": 0.0,
                     "discount_percentage": 0.0,
                     "applied_price_lists": [],
-                    "customer_tier": customer_tier.value if customer_tier else None,
+                    "customer_tier": customer_tier if customer_tier else None,
                 }
                 for product in products
             ]
@@ -553,7 +553,7 @@ class PricingService:
                     "discount_applied": discount_applied,
                     "discount_percentage": discount_percentage,
                     "applied_price_lists": applied_price_lists,
-                    "customer_tier": customer_tier.value if customer_tier else None,
+                    "customer_tier": customer_tier if customer_tier else None,
                 }
             )
 

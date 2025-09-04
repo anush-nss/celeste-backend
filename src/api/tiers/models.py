@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
-from src.config.constants import CustomerTier
 
 
 class TierRequirementsSchema(BaseModel):
@@ -36,7 +35,7 @@ class CustomerTierSchema(BaseModel):
     name: str = Field(
         ..., min_length=1, description="Tier name (e.g., 'Gold', 'Platinum')"
     )
-    tier_code: CustomerTier = Field(..., description="Tier code")
+    tier_code: str = Field(..., description="Tier code")
     level: int = Field(
         ..., ge=1, description="Tier level (higher number = better tier)"
     )
@@ -47,13 +46,16 @@ class CustomerTierSchema(BaseModel):
     icon_url: Optional[str] = Field(None, description="URL to tier icon")
     color: str = Field(default="#888888", description="Tier color (hex code)")
     active: bool = Field(default=True, description="Whether this tier is active")
+    is_default: bool = Field(
+        default=False, description="Whether this is the default tier for new users"
+    )
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
 
 class CreateCustomerTierSchema(BaseModel):
     name: str = Field(..., min_length=1, description="Tier name")
-    tier_code: CustomerTier = Field(..., description="Tier code")
+    tier_code: str = Field(..., description="Tier code")
     level: int = Field(..., ge=1, description="Tier level")
     requirements: TierRequirementsSchema = Field(
         ..., description="Requirements to achieve this tier"
@@ -62,6 +64,9 @@ class CreateCustomerTierSchema(BaseModel):
     icon_url: Optional[str] = Field(None, description="URL to tier icon")
     color: str = Field(default="#888888", description="Tier color")
     active: bool = Field(default=True, description="Whether this tier is active")
+    is_default: bool = Field(
+        default=False, description="Whether this is the default tier for new users"
+    )
 
 
 class UpdateCustomerTierSchema(BaseModel):
@@ -76,12 +81,15 @@ class UpdateCustomerTierSchema(BaseModel):
     icon_url: Optional[str] = Field(None, description="URL to tier icon")
     color: Optional[str] = Field(None, description="Tier color")
     active: Optional[bool] = Field(None, description="Whether this tier is active")
+    is_default: Optional[bool] = Field(
+        None, description="Whether this is the default tier for new users"
+    )
 
 
 class UserTierProgressSchema(BaseModel):
-    current_tier: CustomerTier
+    current_tier: str
     current_tier_name: str
-    next_tier: Optional[CustomerTier] = None
+    next_tier: Optional[str] = None
     next_tier_name: Optional[str] = None
     progress: dict = Field(..., description="Progress towards next tier")
     benefits: TierBenefitsSchema = Field(..., description="Current tier benefits")
@@ -89,7 +97,7 @@ class UserTierProgressSchema(BaseModel):
 
 class UserTierInfoSchema(BaseModel):
     user_id: str
-    current_tier: CustomerTier
+    current_tier: str
     tier_info: CustomerTierSchema
     progress: UserTierProgressSchema
     statistics: dict = Field(..., description="User statistics for tier calculation")
@@ -100,7 +108,7 @@ class TierEvaluationSchema(BaseModel):
     total_orders: int
     lifetime_value: float
     monthly_orders: int
-    current_tier: CustomerTier
-    eligible_tiers: List[CustomerTier]
-    recommended_tier: CustomerTier
+    current_tier: str
+    eligible_tiers: List[str]
+    recommended_tier: str
     tier_changed: bool = False
