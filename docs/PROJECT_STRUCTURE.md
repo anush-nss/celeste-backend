@@ -32,43 +32,73 @@ celeste/
 │   └── PROJECT_STRUCTURE.md        # This file
 ├── src/                            # Source code
 │   ├── __init__.py
-│   ├── auth/                       # Authentication module
-│   │   └── dependencies.py         # Auth dependencies, role checking, tier detection
-│   ├── core/                       # Core functionality
-│   │   ├── exceptions.py           # Custom exceptions
-│   │   ├── firebase.py             # Firebase configuration
-│   │   ├── logger.py               # Logging configuration
-│   │   └── responses.py            # Response formatting
-│   ├── models/                     # Pydantic data models
-│   │   ├── __init__.py
-│   │   ├── auth_models.py          # Authentication models
-│   │   ├── category_models.py      # Category models
-│   │   ├── discount_models.py      # Discount models
-│   │   ├── inventory_models.py     # Inventory models
-│   │   ├── order_models.py         # Order models
-│   │   ├── pricing_models.py       # ⭐ NEW: Pricing and tier models
-│   │   ├── product_models.py       # Enhanced product models with pricing
-│   │   ├── store_models.py         # Store models
-│   │   ├── token_models.py         # Token models
-│   │   └── user_models.py          # Enhanced user models with tiers
-│   ├── routers/                    # API route handlers
-│   │   ├── auth_router.py          # Authentication routes with tier defaults
-│   │   ├── categories_router.py    # Category routes
-│   │   ├── dev_router.py           # ⭐ NEW: Development tools
-│   │   ├── discounts_router.py     # Discount routes
-│   │   ├── inventory_router.py     # Inventory routes
-│   │   ├── orders_router.py        # Order routes
-│   │   ├── pricing_router.py       # ⭐ NEW: Pricing management routes
-│   │   ├── products_router.py      # Enhanced products with smart pricing
-│   │   ├── promotions_router.py    # Promotion routes
-│   │   ├── stores_router.py        # Store routes
-│   │   └── users_router.py         # User routes with tier support
-│   ├── services/                   # Business logic services
-│   │   ├── pricing_service.py      # ⭐ NEW: Pricing calculations service
-│   │   ├── product_service.py      # Enhanced product service with pagination
-│   │   └── user_service.py         # Enhanced user service with tiers
+│   ├── api/                        # Modular API structure
+│   │   ├── admin/                  # Admin functionality
+│   │   │   ├── routes.py           # Admin routes (dev tools)
+│   │   │   ├── models.py           # Admin models
+│   │   │   ├── service.py          # Admin services
+│   │   │   └── __init__.py
+│   │   ├── auth/                   # Authentication module
+│   │   │   ├── routes.py           # Authentication routes with tier defaults
+│   │   │   ├── models.py           # Authentication models
+│   │   │   ├── token_models.py     # Token models
+│   │   │   └── __init__.py
+│   │   ├── categories/             # Category management
+│   │   │   ├── routes.py           # Category routes
+│   │   │   ├── models.py           # Category models
+│   │   │   ├── service.py          # Category services
+│   │   │   └── __init__.py
+│   │   ├── inventory/              # Inventory management
+│   │   │   ├── routes.py           # Inventory routes
+│   │   │   ├── models.py           # Inventory models
+│   │   │   ├── service.py          # Inventory services
+│   │   │   └── __init__.py
+│   │   ├── orders/                 # Order management
+│   │   │   ├── routes.py           # Order routes
+│   │   │   ├── models.py           # Order models
+│   │   │   ├── service.py          # Order services
+│   │   │   └── __init__.py
+│   │   ├── pricing/                # ⭐ NEW: Pricing management
+│   │   │   ├── routes.py           # Pricing management routes
+│   │   │   ├── models.py           # Pricing and tier models
+│   │   │   ├── service.py          # Pricing calculations service
+│   │   │   └── __init__.py
+│   │   ├── products/               # Product management
+│   │   │   ├── routes.py           # Enhanced products with smart pricing
+│   │   │   ├── models.py           # Enhanced product models with pricing
+│   │   │   ├── service.py          # Enhanced product service with pagination
+│   │   │   └── __init__.py
+│   │   ├── stores/                 # Store management
+│   │   │   ├── routes.py           # Store routes
+│   │   │   ├── models.py           # Store models
+│   │   │   ├── service.py          # Store services
+│   │   │   └── __init__.py
+│   │   ├── tiers/                  # ⭐ NEW: Customer tier management
+│   │   │   ├── routes.py           # Tier management routes (admin + user)
+│   │   │   ├── models.py           # Customer tier models and schemas
+│   │   │   ├── service.py          # Tier evaluation and management service
+│   │   │   └── __init__.py
+│   │   └── users/                  # User management
+│   │       ├── routes.py           # User routes with tier support
+│   │       ├── models.py           # Enhanced user models with tiers
+│   │       ├── service.py          # Enhanced user service with tiers
+│   │       └── __init__.py
+│   ├── config/                     # Configuration management
+│   │   ├── constants.py            # Enhanced constants with tiers and pricing
+│   │   └── settings.py             # Application settings
+│   ├── dependencies/               # Dependency injection
+│   │   ├── auth.py                 # Auth dependencies and role checking
+│   │   ├── tiers.py                # ⭐ NEW: Tier-related dependencies
+│   │   └── __init__.py
+│   ├── middleware/                 # Middleware components
+│   │   ├── timing.py               # Request timing middleware
+│   │   ├── logging.py              # Request logging middleware
+│   │   └── __init__.py
 │   └── shared/                     # Shared utilities
-│       └── constants.py            # Enhanced constants with tiers and pricing
+│       ├── database.py             # Firebase configuration and database connection
+│       ├── exceptions.py           # Custom exceptions
+│       ├── logger.py               # Logging configuration
+│       └── responses.py            # Response formatting
 ├── main.py                         # Application entry point
 ├── requirements.txt                # Python dependencies
 ├── service-account.json            # Firebase service account (gitignored)
@@ -92,19 +122,23 @@ Key features:
 - Global exception handler
 - Bearer token authentication setup
 
-### 2. Authentication & Authorization (`src/auth/`)
+### 2. Authentication & Authorization (`src/dependencies/auth.py`)
 
-#### `dependencies.py`
-Contains authentication, authorization, and tier detection logic:
+#### `auth.py`
+Contains authentication and authorization logic:
 - `get_current_user()`: Validates JWT tokens and returns user information
 - `get_optional_user()`: Silent Bearer token extraction (no auth errors)
-- `get_user_tier()`: Database-backed customer tier detection
 - `RoleChecker`: Dependency class for role-based access control
 - Firebase token verification
 
-### 3. Core Components (`src/core/`)
+#### `tiers.py` ⭐ **NEW**
+Contains tier-related dependency logic:
+- `get_user_tier()`: Database-backed customer tier detection
+- Integration with tier service for user tier retrieval
 
-#### `firebase.py`
+### 3. Shared Components (`src/shared/`)
+
+#### `database.py`
 Firebase configuration and initialization:
 - Firebase Admin SDK setup
 - Firestore client initialization
@@ -127,18 +161,18 @@ Logging configuration:
 - Request/response logging
 - Error tracking
 
-### 4. Data Models (`src/models/`)
+### 4. Data Models (Domain-Specific `src/api/{domain}/models.py`)
 
-Pydantic models for data validation and serialization:
+Pydantic models for data validation and serialization, organized by domain:
 
-#### `user_models.py` ⭐ **Enhanced**
+#### `src/api/users/models.py` ⭐ **Enhanced**
 - `UserSchema`: Complete user data model with customer tiers
 - `CreateUserSchema`: User creation payload with explicit defaults
 - `UpdateUserSchema`: User update payload with tier support
 - `CartItemSchema`: Cart item structure
 - `AddToWishlistSchema`, `AddToCartSchema`: Action schemas
 
-#### `product_models.py` ⭐ **Enhanced**
+#### `src/api/products/models.py` ⭐ **Enhanced**
 - `ProductSchema`: Complete product data model
 - `EnhancedProductSchema`: Product model with pricing and inventory info
 - `PricingInfoSchema`: Detailed pricing breakdown structure
@@ -147,38 +181,49 @@ Pydantic models for data validation and serialization:
 - `UpdateProductSchema`: Product update payload
 - `ProductQuerySchema`: Enhanced query parameters with pricing options
 
-#### `pricing_models.py` ⭐ **New**
+#### `src/api/pricing/models.py` ⭐ **New**
 - `PriceListSchema`: Price list management model
 - `PriceListLineSchema`: Individual pricing rule model
 - `PriceCalculationRequest/Response`: Price calculation models
 - `BulkPriceCalculationRequest/Response`: Bulk pricing models
 - Complete CRUD models for price management
 
+#### `src/api/tiers/models.py` ⭐ **NEW**
+- `CustomerTierSchema`: Complete customer tier definition model
+- `TierRequirementsSchema`: Requirements to achieve tier (orders, value, activity)
+- `TierBenefitsSchema`: Benefits provided by tier (discounts, perks)
+- `UserTierProgressSchema`: User's progress towards next tier
+- `TierEvaluationSchema`: Tier evaluation results and recommendations
+- Complete CRUD models for tier management
+
 #### Other Model Files
-- `auth_models.py`: Authentication-related models
-- `category_models.py`: Product category models
-- `discount_models.py`: Discount and pricing models
-- `order_models.py`: Order management models
-- `inventory_models.py`: Inventory tracking models
-- `store_models.py`: Physical store models
-- `token_models.py`: JWT token models
+- `src/api/auth/models.py`: Authentication-related models
+- `src/api/categories/models.py`: Product category models
+- `src/api/admin/models.py`: Admin models
+- `src/api/orders/models.py`: Order management models
+- `src/api/inventory/models.py`: Inventory tracking models
+- `src/api/stores/models.py`: Physical store models
 
-### 5. API Routes (`src/routers/`)
+### 5. API Routes (Domain-Specific `src/api/{domain}/routes.py`)
 
-Each router handles a specific domain of functionality:
+Each route module handles a specific domain of functionality:
 
-#### `auth_router.py`
+#### `src/api/auth/routes.py` ⭐ **Enhanced**
 - User registration with Firebase
 - Profile management
 - Development token generation
+- User registration with explicit tier defaults
+- Firebase Auth integration
+- Automatic role and tier assignment
 
-#### `users_router.py`
+#### `src/api/users/routes.py` ⭐ **Enhanced**
 - User profile CRUD operations
 - Cart management (add, update, remove, get)
 - Wishlist management (add, remove, get)
 - Role-based access control
+- Enhanced user management with tier support
 
-#### `products_router.py` ⭐ **Enhanced**
+#### `src/api/products/routes.py` ⭐ **Enhanced**
 - Enhanced product CRUD operations
 - Smart pricing with automatic tier detection
 - Cursor-based pagination (default: 20, max: 100)
@@ -186,61 +231,73 @@ Each router handles a specific domain of functionality:
 - Advanced filtering and querying
 - Admin-only creation/modification
 
-#### `pricing_router.py` ⭐ **New**
+#### `src/api/pricing/routes.py` ⭐ **New**
 - Complete price list management (Admin only)
 - Price list line CRUD operations
 - Price calculation endpoints (single and bulk)
 - User-specific pricing endpoints
 - Comprehensive OpenAPI documentation
 
-#### `auth_router.py` ⭐ **Enhanced**
-- User registration with explicit tier defaults
-- Firebase Auth integration
-- Automatic role and tier assignment
-- Profile management
+#### `src/api/tiers/routes.py` ⭐ **NEW**
+- Customer tier CRUD operations (Admin only)
+- User tier information and progress tracking
+- Automatic tier evaluation and updates
+- Tier benefits and requirements management
+- Public tier information endpoints
 
-#### `dev_router.py` ⭐ **New** (Development Only)
+#### `src/api/orders/routes.py`
+- Order creation and management
+- Status updates
+- User-specific order retrieval
+
+#### `src/api/admin/routes.py` ⭐ **New** (Development Only)
 - Development token generation
 - Database management tools
 - Collection browsing and data insertion
 - Test data creation utilities
 
-#### `orders_router.py`
-- Order creation and management
-- Status updates
-- User-specific order retrieval
+#### Other Route Modules
+- `src/api/categories/routes.py`: Product categorization
+- `src/api/inventory/routes.py`: Stock tracking
+- `src/api/stores/routes.py`: Physical store management
+- `src/api/tiers/routes.py`: Customer tier management
 
-#### Other Routers
-- `categories_router.py`: Product categorization
-- `discounts_router.py`: Discount management
-- `inventory_router.py`: Stock tracking
-- `stores_router.py`: Physical store management
-- `promotions_router.py`: Marketing campaigns
-- `users_router.py`: Enhanced user management with tier support
+### 6. Business Logic (Domain-Specific `src/api/{domain}/service.py`)
 
-### 6. Business Logic (`src/services/`)
+Service classes containing business logic, organized by domain:
 
-Service classes containing business logic:
-
-#### `pricing_service.py` ⭐ **New**
+#### `src/api/pricing/service.py` ⭐ **New**
 - Advanced pricing calculation engine
 - Tier-based price list discovery and application
 - Global price list management with `is_global` field
 - Bulk pricing optimization for product listings
 - UTC timezone handling for price list validity
-- Composite discount application logic
 
-#### `product_service.py` ⭐ **Enhanced**
+#### `src/api/products/service.py` ⭐ **Enhanced**
 - Enhanced product service with cursor-based pagination
 - Integration with pricing service for bulk calculations
 - `get_products_with_pagination()` for efficient listings
 - Legacy compatibility with existing methods
 
-#### `user_service.py` ⭐ **Enhanced**
+#### `src/api/users/service.py` ⭐ **Enhanced**
 - Database-backed tier storage and retrieval
 - Explicit role and tier defaults during user creation
 - Enhanced cart and wishlist functionality
 - User tier management integration
+
+#### `src/api/tiers/service.py` ⭐ **NEW**
+- Comprehensive tier management and evaluation system
+- User statistics calculation for tier evaluation
+- Automatic tier progression and updates
+- Tier requirements validation and progress tracking
+- Default tier initialization and management
+
+#### Other Service Modules
+- `src/api/orders/service.py`: Order management logic
+- `src/api/categories/service.py`: Category management logic
+- `src/api/inventory/service.py`: Inventory management logic
+- `src/api/stores/service.py`: Store management logic
+- `src/api/admin/service.py`: Admin and development utilities
 
 #### General Service Patterns
 - Separation of concerns between routes and business logic
@@ -248,9 +305,9 @@ Service classes containing business logic:
 - Cross-domain operations and validation
 - Error handling with graceful fallbacks
 
-### 7. Shared Components (`src/shared/`)
+### 7. Configuration & Utilities (`src/config/` and `src/shared/`)
 
-#### `constants.py` ⭐ **Enhanced**
+#### `src/config/constants.py` ⭐ **Enhanced**
 Application-wide constants with pricing and tier enums:
 ```python
 class UserRole(str, Enum):
@@ -344,11 +401,10 @@ All API responses follow consistent structure:
 - `categories/`: Product categories
 - `orders/`: Order records
 - `inventory/`: Stock levels
-- `discounts/`: Discount rules
 - `stores/`: Physical store locations
-- `promotions/`: Marketing campaigns
 - `price_lists/`: ⭐ **NEW** Price list definitions
 - `price_list_lines/`: ⭐ **NEW** Individual pricing rules
+- `customer_tiers/`: ⭐ **NEW** Customer tier definitions and requirements
 
 ### Data Relationships
 - Users have carts, wishlists, and customer tiers (embedded/fields)
@@ -358,15 +414,18 @@ All API responses follow consistent structure:
 - Price lists contain multiple price list lines (reference)
 - Price list lines target products, categories, or all products
 - Customer tiers determine applicable price lists
+- Customer tiers have requirements and benefits (embedded)
+- Users are assigned customer tiers based on activity evaluation
 
 ## Development Workflow
 
 ### 1. Adding New Features
-1. Define data models in `src/models/`
-2. Create service layer in `src/services/`
-3. Implement router in `src/routers/`
-4. Add router to `main.py`
-5. Update documentation
+1. Create new domain module in `src/api/{domain}/`
+2. Define data models in `src/api/{domain}/models.py`
+3. Create service layer in `src/api/{domain}/service.py`
+4. Implement routes in `src/api/{domain}/routes.py`
+5. Add router to `main.py`
+6. Update documentation
 
 ### 2. Authentication Flow
 1. User registers/logs in through Firebase Auth
@@ -438,10 +497,10 @@ All API responses follow consistent structure:
 1. **Caching**: Redis for pricing calculations and session caching
 2. **File Storage**: Cloud storage for product images
 3. **Search**: Elasticsearch for advanced product search with pricing filters
-4. **Notifications**: Push notifications for price changes and promotions
+4. **Notifications**: Push notifications for price changes
 5. **Analytics**: User behavior, pricing effectiveness, and sales analytics
 6. **Testing**: Comprehensive test suite for pricing calculations
-7. **Advanced Pricing**: Time-based pricing, geographic pricing, bulk tier discounts
+7. **Advanced Pricing**: Time-based pricing, geographic pricing, bulk tier pricing
 8. **Inventory Integration**: Real-time inventory with pricing synchronization
 
 ### Scalability Considerations
