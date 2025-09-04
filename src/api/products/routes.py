@@ -8,7 +8,6 @@ from src.api.products.models import (
     EnhancedProductSchema,
     PaginatedProductsResponse,
 )
-from src.api.pricing.models import PriceCalculationResponse
 from src.api.auth.models import DecodedToken
 from src.api.products.service import ProductService
 from src.api.pricing.service import PricingService

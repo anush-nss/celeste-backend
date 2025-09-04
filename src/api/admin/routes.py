@@ -4,6 +4,7 @@ from src.shared.database import get_firestore_db
 from src.shared.responses import success_response
 from src.api.auth.service import AuthService
 from google.cloud.firestore import SERVER_TIMESTAMP
+from datetime import datetime
 
 dev_router = APIRouter(prefix="/dev", tags=["Development"])
 auth_service = AuthService()
@@ -147,6 +148,10 @@ async def get_collection_data(collection: str, limit: int = 100):
         for doc in docs:
             doc_data = doc.to_dict()
             if doc_data:
+                # Convert DatetimeWithNanoseconds to ISO format strings
+                for key, value in doc_data.items():
+                    if hasattr(value, 'timestamp'):  # DatetimeWithNanoseconds object
+                        doc_data[key] = value.isoformat()
                 documents.append({"id": doc.id, "data": doc_data})
 
         return success_response(

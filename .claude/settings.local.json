@@ -1,6 +1,9 @@
 {
   "permissions": {
-    "allow": ["Read(/C:\\Users\\Anushanga\\Desktop\\Projects\\celeste/**)"],
+    "allow": [
+      "Read(/C:\\Users\\Anushanga\\Desktop\\Projects\\celeste\\src\\api\\pricing/**)",
+      "Read(/C:\\Users\\Anushanga\\Desktop\\Projects\\celeste\\src\\api\\pricing/**)"
+    ],
     "deny": [],
     "ask": []
   }

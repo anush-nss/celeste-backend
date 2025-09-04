@@ -37,9 +37,7 @@ class CreateUserSchema(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     role: UserRole = Field(default=UserRole.CUSTOMER, description="Role of the user")
-    customer_tier: str = Field(
-        default=DEFAULT_FALLBACK_TIER, description="Customer loyalty tier"
-    )
+    customer_tier: Optional[str] = None 
 
 
 class UpdateUserSchema(BaseModel):

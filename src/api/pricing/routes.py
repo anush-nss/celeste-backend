@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, status, HTTPException
-from typing import Annotated, List
+from typing import List
 from src.api.pricing.models import (
     PriceListSchema,
     CreatePriceListSchema,
@@ -7,15 +7,8 @@ from src.api.pricing.models import (
     PriceListLineSchema,
     CreatePriceListLineSchema,
     UpdatePriceListLineSchema,
-    PriceCalculationRequest,
-    PriceCalculationResponse,
-    BulkPriceCalculationRequest,
-    BulkPriceCalculationResponse,
 )
-from src.api.auth.models import DecodedToken
 from src.api.pricing.service import PricingService
-from src.dependencies.auth import get_current_user, RoleChecker
-from src.config.constants import UserRole
 from src.shared.exceptions import ResourceNotFoundException
 from src.shared.responses import success_response
 
@@ -195,77 +188,3 @@ async def delete_price_list_line(line_id: str):
     return success_response(
         {"id": line_id, "message": "Price list line deleted successfully"}
     )
-
-
-# Price Calculation Endpoints (Public/Customer)
-@pricing_router.post(
-    "/calculate-price",
-    summary="Calculate price for a single product",
-    response_model=PriceCalculationResponse,
-)
-async def calculate_price(request: PriceCalculationRequest):
-    """
-    Calculate price for a single product based on customer tier and quantity.
-
-    - **product_id**: Product ID to calculate price for
-    - **customer_tier**: Customer tier for pricing (optional)
-    - **quantity**: Quantity for bulk pricing
-    """
-    customer_tier = None
-    if request.customer_tier:
-        customer_tier = request.customer_tier
-
-    calculation = await pricing_service.calculate_price(
-        request.product_id, customer_tier, request.quantity
-    )
-
-    return success_response(calculation.model_dump(mode="json"))
-
-
-@pricing_router.post(
-    "/calculate-bulk-prices",
-    summary="Calculate prices for multiple products",
-    response_model=BulkPriceCalculationResponse,
-)
-async def calculate_bulk_prices(request: BulkPriceCalculationRequest):
-    """
-    Calculate prices for multiple products (useful for cart calculations).
-
-    - **items**: List of products to calculate prices for
-    """
-    calculation = await pricing_service.calculate_bulk_prices(request)
-    return success_response(calculation.model_dump(mode="json"))
-
-
-# User-specific price calculation (requires authentication)
-@pricing_router.get(
-    "/my-price/{product_id}",
-    summary="Get product price for current user",
-    response_model=PriceCalculationResponse,
-)
-async def get_my_product_price(
-    product_id: str,
-    current_user: Annotated[DecodedToken, Depends(get_current_user)],
-    quantity: int = 1,
-):
-    """
-    Get product price for the current authenticated user based on their tier.
-
-    - **product_id**: Product ID to get price for
-    - **quantity**: Quantity for bulk pricing
-    """
-    # Get user's tier from their profile
-    # Note: This would require integrating with user service to get the user's tier
-    # For now, we'll use a default tier if not authenticated
-    customer_tier = "BRONZE"  # Default tier
-
-    # TODO: Get actual user tier from user service
-    # if current_user:
-    #     user = await user_service.get_user_by_id(current_user.uid)
-    #     if user:
-    #         customer_tier = user.customer_tier
-
-    calculation = await pricing_service.calculate_price(
-        product_id, customer_tier, quantity
-    )
-    return success_response(calculation.model_dump(mode="json"))

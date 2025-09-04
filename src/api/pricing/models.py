@@ -114,35 +114,3 @@ class UpdatePriceListLineSchema(BaseModel):
     max_product_qty: Optional[int] = Field(
         None, ge=1, description="Maximum quantity allowed"
     )
-
-
-class PriceCalculationRequest(BaseModel):
-    product_id: str = Field(..., description="Product ID to calculate price for")
-    customer_tier: Optional[str] = Field(None, description="Customer tier for pricing")
-    quantity: int = Field(default=1, ge=1, description="Quantity for bulk pricing")
-
-
-class PriceCalculationResponse(BaseModel):
-    product_id: str
-    base_price: float
-    final_price: float
-    discount_applied: float
-    discount_percentage: float
-    customer_tier: Optional[str] = None
-    quantity: int
-    applied_price_lists: List[str] = Field(
-        default_factory=list, description="Names of applied price lists"
-    )
-
-
-class BulkPriceCalculationRequest(BaseModel):
-    items: List[PriceCalculationRequest] = Field(
-        ..., description="List of products to calculate prices for"
-    )
-
-
-class BulkPriceCalculationResponse(BaseModel):
-    items: List[PriceCalculationResponse]
-    total_base_price: float
-    total_final_price: float
-    total_savings: float

@@ -20,11 +20,10 @@ class UserService:
             user_dict["role"] = user_dict["role"].value
         elif "role" not in user_dict or user_dict["role"] is None:
             user_dict["role"] = UserRole.CUSTOMER.value
-
-        if "customer_tier" not in user_dict or user_dict["customer_tier"] is None:
-            # Get default tier from database, fallback to constant if not found
-            default_tier = await self.tier_service.get_default_tier()
-            user_dict["customer_tier"] = default_tier
+        
+        # Set default customer tier when creating user
+        default_tier = await self.tier_service.get_default_tier()
+        user_dict["customer_tier"] = default_tier
 
         self.users_collection.document(uid).set(user_dict)
         created_user_doc = self.users_collection.document(uid).get()

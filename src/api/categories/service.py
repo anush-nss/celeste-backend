@@ -12,11 +12,11 @@ class CategoryService:
         self.categories_collection = self.db.collection("categories")
 
     async def get_all_categories(self) -> list[CategorySchema]:
-        docs = self.categories_collection.stream()
+        docs = self.categories_collection.order_by("order").stream()
         result = []
         for doc in docs:
             doc_dict = doc.to_dict()
-            if doc_dict:  # Ensure doc_dict is not None
+            if doc_dict:
                 result.append(CategorySchema(id=doc.id, **doc_dict))
         return result
 

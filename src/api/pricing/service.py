@@ -8,10 +8,6 @@ from src.api.pricing.models import (
     PriceListLineSchema,
     CreatePriceListLineSchema,
     UpdatePriceListLineSchema,
-    PriceCalculationRequest,
-    PriceCalculationResponse,
-    BulkPriceCalculationRequest,
-    BulkPriceCalculationResponse,
 )
 from src.config.constants import Collections, PriceListType, DiscountType
 
@@ -339,118 +335,6 @@ class PricingService:
             return max(0, base_price - price_line.amount)
         return base_price
 
-    async def calculate_price(
-        self,
-        product_id: str,
-        customer_tier: Optional[str] = None,
-        quantity: int = 1,
-    ) -> PriceCalculationResponse:
-        """Calculate price for a product considering customer tier and quantity"""
-        base_price = await self.get_product_base_price(product_id)
-
-        # If no tier provided, return base price
-        if not customer_tier:
-            return PriceCalculationResponse(
-                product_id=product_id,
-                base_price=base_price,
-                final_price=base_price,
-                discount_applied=0.0,
-                discount_percentage=0.0,
-                customer_tier=None,
-                quantity=quantity,
-                applied_price_lists=[],
-            )
-
-        # Get product details for category information
-        product_doc = self.products_collection.document(product_id).get()
-        category_ids = []
-        if product_doc.exists:
-            product_data = product_doc.to_dict()
-            if product_data:
-                category_ids = product_data.get("category_ids", [])
-
-        # Get applicable price lists
-        tier_price_lists = await self.get_tier_price_lists(customer_tier)
-        global_price_lists = await self.get_global_price_lists()
-        print(tier_price_lists, global_price_lists)
-        all_price_list_ids = tier_price_lists + global_price_lists
-
-        # Get all price lists and sort by priority
-        price_lists = []
-        for price_list_id in all_price_list_ids:
-            price_list = await self.get_price_list_by_id(price_list_id)
-            if price_list and price_list.active:
-                now = datetime.now(timezone.utc)  # aware
-                if price_list.valid_from <= now and (
-                    price_list.valid_until is None or price_list.valid_until >= now
-                ):
-                    price_lists.append(price_list)
-
-        # Sort by priority (lower number = higher priority)
-        price_lists.sort(key=lambda x: x.priority)
-
-        # Apply discounts from applicable price lists
-        final_price = base_price
-        applied_price_lists = []
-
-        for price_list in price_lists:
-            applicable_lines = await self.get_applicable_price_lines(
-                price_list.id, product_id, category_ids, quantity
-            )
-
-            # Apply the best discount from this price list
-            best_price = final_price
-            for line in applicable_lines:
-                discounted_price = self.apply_discount(final_price, line)
-                if discounted_price < best_price:
-                    best_price = discounted_price
-
-            if best_price < final_price:
-                final_price = best_price
-                applied_price_lists.append(price_list.name)
-
-        discount_applied = base_price - final_price
-        discount_percentage = (
-            (discount_applied / base_price * 100) if base_price > 0 else 0
-        )
-
-        return PriceCalculationResponse(
-            product_id=product_id,
-            base_price=base_price,
-            final_price=final_price,
-            discount_applied=discount_applied,
-            discount_percentage=discount_percentage,
-            customer_tier=customer_tier if customer_tier else None,
-            quantity=quantity,
-            applied_price_lists=applied_price_lists,
-        )
-
-    async def calculate_bulk_prices(
-        self, request: BulkPriceCalculationRequest
-    ) -> BulkPriceCalculationResponse:
-        """Calculate prices for multiple products"""
-        results = []
-        total_base_price = 0.0
-        total_final_price = 0.0
-
-        for item in request.items:
-            calculation = await self.calculate_price(
-                item.product_id,
-                item.customer_tier or None,
-                item.quantity,
-            )
-            results.append(calculation)
-            total_base_price += calculation.base_price * calculation.quantity
-            total_final_price += calculation.final_price * calculation.quantity
-
-        total_savings = total_base_price - total_final_price
-
-        return BulkPriceCalculationResponse(
-            items=results,
-            total_base_price=total_base_price,
-            total_final_price=total_final_price,
-            total_savings=total_savings,
-        )
 
     async def calculate_bulk_product_pricing(
         self,

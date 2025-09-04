@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, HttpUrl
 class CategorySchema(BaseModel):
     id: Optional[str] = None
     name: str = Field(..., min_length=1)
+    order: int
     description: Optional[str] = None
     imageUrl: Optional[HttpUrl] = None
     parentCategoryId: Optional[str] = None
@@ -15,6 +16,7 @@ class CreateCategorySchema(BaseModel):
     description: Optional[str] = None
     imageUrl: Optional[HttpUrl] = None
     parentCategoryId: Optional[str] = None
+    order: int
 
 
 class UpdateCategorySchema(BaseModel):
@@ -22,3 +24,4 @@ class UpdateCategorySchema(BaseModel):
     description: Optional[str] = None
     imageUrl: Optional[HttpUrl] = None
     parentCategoryId: Optional[str] = None
+    order: Optional[int] = None
