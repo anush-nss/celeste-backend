@@ -276,11 +276,10 @@ class PricingService:
         if not valid_price_lists:
             return [self.create_base_pricing_result(p.get("price", 0.0), customer_tier) for p in products]
 
-        all_price_lines = {}
-        for price_list in valid_price_lists:
-            if price_list.id:
-                lines = await self.get_price_list_lines(price_list.id)
-                all_price_lines[price_list.id] = lines
+        price_list_ids = [pl.id for pl in valid_price_lists if pl.id]
+        tasks = [self.get_price_list_lines(pl_id) for pl_id in price_list_ids]
+        results = await asyncio.gather(*tasks)
+        all_price_lines = {pl_id: lines for pl_id, lines in zip(price_list_ids, results)}
 
         results = []
         for product in products:

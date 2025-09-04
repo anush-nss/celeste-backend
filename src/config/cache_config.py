@@ -47,12 +47,6 @@ class CacheConfig:
         'inventory': 'inventory'
     }
     
-    # Redis configuration (for future use)
-    REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-    REDIS_SOCKET_TIMEOUT = int(os.getenv('REDIS_SOCKET_TIMEOUT', '5'))
-    REDIS_CONNECT_TIMEOUT = int(os.getenv('REDIS_CONNECT_TIMEOUT', '5'))
-    USE_REDIS = os.getenv('USE_REDIS', 'false').lower() == 'true'
-    
     @classmethod
     def get_ttl(cls, cache_type: str) -> int:
         """Get TTL for specific cache type"""
@@ -104,12 +98,6 @@ class CacheConfig:
             'maintenance': {
                 'cleanup_interval_minutes': cls.CLEANUP_INTERVAL_MINUTES,
                 'max_cache_size_mb': cls.MAX_CACHE_SIZE_MB
-            },
-            'redis': {
-                'use_redis': cls.USE_REDIS,
-                'redis_url': cls.REDIS_URL,
-                'socket_timeout': cls.REDIS_SOCKET_TIMEOUT,
-                'connect_timeout': cls.REDIS_CONNECT_TIMEOUT
             }
         }
 
