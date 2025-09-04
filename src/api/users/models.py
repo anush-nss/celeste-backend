@@ -15,6 +15,7 @@ class UserSchema(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    isDelivery: Optional[bool] = None
     role: UserRole = UserRole.CUSTOMER
     customer_tier: str = Field(
         default=DEFAULT_FALLBACK_TIER, description="Customer loyalty tier"
@@ -45,6 +46,7 @@ class UpdateUserSchema(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    isDelivery: Optional[bool] = None
     role: Optional[UserRole] = None
     customer_tier: Optional[str] = Field(None, description="Customer loyalty tier")
 
