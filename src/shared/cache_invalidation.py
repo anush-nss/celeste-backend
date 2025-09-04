@@ -17,7 +17,7 @@ class CacheInvalidationManager:
     def register_domain_cache(self, domain: str, cache_instance):
         """Register a domain cache for cross-domain invalidation"""
         self._domain_caches[domain] = cache_instance
-        logger.info(f"Registered cache for domain: {domain}")
+        logger.debug(f"Registered cache for domain: {domain}")
     
     def invalidate_pricing_dependencies(self, changed_domain: str, changed_id: Optional[str] = None) -> int:
         """Invalidate pricing caches when dependencies change"""
@@ -29,7 +29,7 @@ class CacheInvalidationManager:
             logger.warning("Pricing cache not registered for cross-domain invalidation")
             return 0
         
-        logger.info(f"Invalidating pricing caches due to {changed_domain} change: {changed_id or 'all'}")
+        logger.debug(f"Invalidating pricing caches due to {changed_domain} change: {changed_id or 'all'}")
         
         # Invalidate pricing calculations when dependencies change
         if changed_domain in ['tiers', 'categories', 'products', 'price_lists']:

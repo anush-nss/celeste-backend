@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 from typing import List, Optional, Dict
+from google.cloud.firestore_v1.base_query import FieldFilter
 from src.shared.db_client import db_client
 from src.shared.utils import get_logger
 from src.config.cache_config import cache_config
@@ -57,7 +58,7 @@ class PricingService:
         
         query = self.price_lists_collection.order_by(field_path="priority")
         if active_only:
-            query = query.where("active", "==", True)
+            query = query.where(filter=FieldFilter("active", "==", True))
 
         docs = query.stream()
         price_lists = []
@@ -102,7 +103,7 @@ class PricingService:
         if not doc.exists:
             return False
 
-        lines_query = self.price_list_lines_collection.where("price_list_id", "==", price_list_id)
+        lines_query = self.price_list_lines_collection.where(filter=FieldFilter("price_list_id", "==", price_list_id))
         lines_docs = lines_query.stream()
 
         async for line_doc in lines_docs:
@@ -138,7 +139,7 @@ class PricingService:
         if cached_lines is not None:
             return cached_lines
         
-        docs = self.price_list_lines_collection.where("price_list_id", "==", price_list_id).stream()
+        docs = self.price_list_lines_collection.where(filter=FieldFilter("price_list_id", "==", price_list_id)).stream()
         lines = []
         async for doc in docs:
             doc_data = doc.to_dict()

@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
+from google.cloud.firestore_v1.base_query import FieldFilter
 from src.shared.db_client import db_client
 from src.shared.utils import get_logger
 from src.config.cache_config import cache_config
@@ -71,7 +72,7 @@ class TierService:
 
         try:
             docs = (
-                self.customer_tiers_collection.where("tier_code", "==", tier_code)
+                self.customer_tiers_collection.where(filter=FieldFilter("tier_code", "==", tier_code))
                 .limit(1)
                 .stream()
             )
@@ -98,6 +99,8 @@ class TierService:
 
         try:
             query = self.customer_tiers_collection
+            if active_only:
+                query = query.where(filter=FieldFilter("active", "==", True))
             docs = query.stream()
             tiers = []
             async for doc in docs:
@@ -166,8 +169,8 @@ class TierService:
 
         try:
             docs = (
-                self.customer_tiers_collection.where("is_default", "==", True)
-                .where("active", "==", True)
+                self.customer_tiers_collection.where(filter=FieldFilter("is_default", "==", True))
+                .where(filter=FieldFilter("active", "==", True))
                 .limit(1)
                 .stream()
             )
@@ -217,8 +220,8 @@ class TierService:
 
         thirty_days_ago = datetime.now() - timedelta(days=30)
         recent_orders_query = self.orders_collection.where(
-            "user_id", "==", user_id
-        ).where("createdAt", ">=", thirty_days_ago)
+            filter=FieldFilter("user_id", "==", user_id)
+        ).where(filter=FieldFilter("createdAt", ">=", thirty_days_ago))
 
         recent_orders = [doc async for doc in recent_orders_query.stream()]
         monthly_orders = len(recent_orders)

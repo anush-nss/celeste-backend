@@ -1,5 +1,6 @@
 import asyncio
 from typing import Optional, List
+from google.cloud.firestore_v1.base_query import FieldFilter
 from src.shared.db_client import db_client
 from src.config.cache_config import cache_config
 from .cache import products_cache
@@ -28,11 +29,11 @@ class ProductService:
 
         # Apply filters
         if query_params.categoryId:
-            query = query.where("categoryId", "==", query_params.categoryId)
+            query = query.where(filter=FieldFilter("categoryId", "==", query_params.categoryId))
         if query_params.minPrice is not None:
-            query = query.where("price", ">=", query_params.minPrice)
+            query = query.where(filter=FieldFilter("price", ">=", query_params.minPrice))
         if query_params.maxPrice is not None:
-            query = query.where("price", "<=", query_params.maxPrice)
+            query = query.where(filter=FieldFilter("price", "<=", query_params.maxPrice))
 
         # Apply pagination
         limit = min(query_params.limit or 20, 100)

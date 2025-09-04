@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Celeste API is a comprehensive FastAPI-based e-commerce backend that provides robust functionality for managing users, products, orders, inventory, and more. It uses Firebase for authentication and Firestore as the primary database.
+The Celeste API is a comprehensive FastAPI-based e-commerce backend that provides robust functionality for managing users, products, orders, inventory, and more. It uses Firebase for authentication and Firestore as the primary database, with a Redis-based caching layer for high performance.
 
 ## Base URL
 ```
@@ -25,6 +25,27 @@ BearerAuth:
 ```
 Authorization: Bearer <JWT_TOKEN>
 ```
+
+## Caching Strategy ⭐ NEW
+
+The Celeste API uses a sophisticated caching layer to ensure high performance and reduce database load. The caching is implemented using Redis.
+
+### Cache Layers
+
+-   **Redis Cache:** A distributed cache shared across all instances of the application. It is used to cache frequently accessed data such as products, categories, price lists, and customer tiers.
+
+### Cache Invalidation
+
+-   **Automatic Invalidation:** The cache is automatically invalidated when data is created, updated, or deleted.
+-   **Cross-Domain Invalidation:** A centralized cache invalidation manager ensures that changes in one domain (e.g., tiers) correctly invalidate dependent data in other domains (e.g., pricing).
+
+### Cached Data
+
+The following data is cached:
+-   Products
+-   Categories
+-   Price Lists and Price List Lines
+-   Customer Tiers
 
 ## API Endpoints
 
@@ -73,17 +94,7 @@ Get current user profile information.
 }
 ```
 
-#### POST `/auth/dev/token` (Development Only)
-Generate an ID token for development purposes.
-
-**Request Body:**
-```json
-{
-  "uid": "string"
-}
-```
-
----
+--- 
 
 ### User Management (`/users`)
 
@@ -204,7 +215,7 @@ Get all products with smart pricing and cursor-based pagination.
 - `categoryId`: Filter by category ID
 - `minPrice`: Minimum price filter
 - `maxPrice`: Maximum price filter
-- `isFeatured`: Filter featured products only
+- `only_discounted`: Filter for products with discounts applied (default: false)
 
 **Headers (Optional):** `Authorization: Bearer <token>` (for tier-based pricing)
 
@@ -285,7 +296,7 @@ Delete a product.
 
 ---
 
-### Pricing Management (`/pricing`) ⭐ **New**
+### Pricing Management (`/pricing`)
 
 #### Price List Management (Admin Only)
 
@@ -350,64 +361,9 @@ Add a price list line.
 }
 ```
 
-#### Price Calculation Endpoints
-
-##### POST `/pricing/calculate-price`
-Calculate price for a single product.
-
-**Request Body:**
-```json
-{
-  "product_id": "string",
-  "customer_tier": "gold",
-  "quantity": 1
-}
-```
-
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "product_id": "string",
-    "base_price": 99.99,
-    "final_price": 84.99,
-    "discount_applied": 15.00,
-    "discount_percentage": 15.15,
-    "quantity": 1,
-    "customer_tier": "gold",
-    "applied_price_lists": ["Gold Customer Discounts"]
-  }
-}
-```
-
-##### POST `/pricing/calculate-bulk-prices`
-Calculate prices for multiple products (cart scenarios).
-
-**Request Body:**
-```json
-{
-  "customer_tier": "gold",
-  "items": [
-    {
-      "product_id": "string",
-      "quantity": 2
-    }
-  ]
-}
-```
-
-##### GET `/pricing/my-price/{product_id}`
-Get product price for current authenticated user.
-
-**Headers:** `Authorization: Bearer <token>`
-
-**Query Parameters:**
-- `quantity`: Quantity for bulk pricing (default: 1)
-
 ---
 
-### Customer Tiers (`/tiers`) ⭐ **NEW**
+### Customer Tiers (`/tiers`)
 
 Customer tier management system for automatic tier evaluation, benefits, and progress tracking.
 
@@ -543,37 +499,6 @@ Auto-evaluate and update tier for specific user.
 
 ##### PUT `/tiers/users/{user_id}/tier` (Admin Only)
 Manually update a user's tier.
-
----
-
-### Development Tools (`/dev`) ⭐ **Development Environment Only**
-
-#### POST `/dev/auth/token`
-Generate development tokens for testing.
-
-**Request Body:**
-```json
-{
-  "uid": "string"
-}
-```
-
-#### POST `/dev/db/add`
-Add test data to database collections.
-
-**Request Body:**
-```json
-{
-  "collection": "string",
-  "data": {}
-}
-```
-
-#### GET `/dev/db/collections`
-List all database collections.
-
-#### GET `/dev/db/{collection}`
-Get all documents from a collection.
 
 ---
 
@@ -715,7 +640,7 @@ Delete a store.
 - `CUSTOMER`: Regular customer with limited access (default)
 - `ADMIN`: Administrator with full access
 
-### Customer Tiers ⭐ **New**
+### Customer Tiers
 - `bronze`: Default tier for new customers (0 discount)
 - `silver`: Mid-tier customer (higher discounts)
 - `gold`: High-value customer (premium discounts)
@@ -732,7 +657,7 @@ Delete a store.
 - `percentage`: Percentage-based discount
 - `flat`: Fixed amount discount
 
-### Price List Types ⭐ **New**
+### Price List Types
 - `product`: Product-specific pricing rules
 - `category`: Category-specific pricing rules
 - `all`: Global pricing rules (applies to all products)
@@ -761,49 +686,6 @@ The API uses standardized error responses:
 - `404`: Not Found
 - `422`: Validation Error
 - `500`: Internal Server Error
-
-## Rate Limiting & Performance
-
-- All requests include a `X-Process-Time` header showing processing time
-- Requests are logged with detailed information for monitoring
-
-## Development Features
-
-In development environment, additional endpoints are available:
-- `/auth/dev/token`: Generate development tokens
-- Enhanced logging and debugging features
-
-## Firebase Integration
-
-The API integrates with Firebase services:
-- **Firebase Auth**: User authentication and authorization
-- **Firestore**: Primary database for all data storage
-- **Custom Claims**: Role-based access control
-
-## ⭐ New Features & Enhancements
-
-### Smart Product Pricing System
-- **Automatic Tier Detection**: Bearer tokens automatically detect user tier for personalized pricing
-- **Bulk Price Calculations**: Efficient pricing for multiple products in a single request
-- **Cursor-Based Pagination**: High-performance pagination using Firebase `startAt`
-- **Global Price Lists**: Enhanced price list control with `is_global` field support
-- **Database-Backed Tiers**: User tiers stored in Firestore with automatic BRONZE default
-
-### Enhanced Product API
-- **Smart Pricing Integration**: Products automatically include tier-based pricing when authenticated
-- **Performance Optimization**: Default limit 20, maximum 100 for optimal performance
-- **Inventory Placeholders**: Future-ready structure for inventory management
-
-### Development Features
-- **Database Management**: Tools for adding test data and managing collections
-- **Token Generation**: Development token creation for testing authentication
-- **Collection Browsing**: Direct database collection viewing and management
-
-### Performance Features
-- **Efficient Queries**: Firestore queries optimized to avoid composite indexes
-- **Memory Optimization**: Bulk processing and reduced database calls
-- **Graceful Fallbacks**: Error-resilient tier detection with automatic defaults
-- **UTC Timezone Handling**: Proper datetime handling for price list validity
 
 ## Response Format
 
