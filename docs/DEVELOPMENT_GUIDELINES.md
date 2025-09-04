@@ -70,7 +70,7 @@ Brief description of what this endpoint does.
 
 ### 2. Data Model Changes
 
-When adding or modifying Pydantic models in `src/models/`:
+When adding or modifying Pydantic models in `src/api/{domain}/models.py`:
 
 #### Update `docs/API_DOCUMENTATION.md`:
 - ✅ Update Data Models section with new model definitions
@@ -165,15 +165,15 @@ When implementing new features from the requirements document:
 
 #### 1. Follow Established Patterns
 ```python
-# ✅ CORRECT: Follow existing router structure
+# ✅ CORRECT: Follow existing modular structure
 from fastapi import APIRouter, Depends, status
 from typing import Annotated, List
-from src.models.{domain}_models import {Schema}
-from src.services.{domain}_service import {Service}
-from src.auth.dependencies import get_current_user, RoleChecker
-from src.shared.constants import UserRole
-from src.core.exceptions import ResourceNotFoundException
-from src.core.responses import success_response
+from src.api.{domain}.models import {Schema}
+from src.api.{domain}.service import {Service}
+from src.dependencies.auth import get_current_user, RoleChecker
+from src.config.constants import UserRole
+from src.shared.exceptions import ResourceNotFoundException
+from src.shared.responses import success_response
 
 {domain}_router = APIRouter(prefix="/{domain}", tags=["{Domain}"])
 {domain}_service = {Service}()
@@ -184,10 +184,11 @@ async def get_all_{domain}():
     return success_response(data)
 ```
 
-#### 2. Consistent File Naming
-- ✅ Models: `{domain}_models.py`
-- ✅ Routers: `{domain}_router.py`
-- ✅ Services: `{domain}_service.py`
+#### 2. Modular Structure Organization
+- ✅ Create domain-specific modules: `src/api/{domain}/`
+- ✅ Models: `src/api/{domain}/models.py`
+- ✅ Routes: `src/api/{domain}/routes.py`
+- ✅ Services: `src/api/{domain}/service.py`
 - ✅ Use snake_case for files and functions
 - ✅ Use PascalCase for classes
 
@@ -389,7 +390,7 @@ if order.status == "pending":
 if discount.type == "percentage":
     pass
 
-# ✅ CORRECT: Use constants from src/shared/constants.py
+# ✅ CORRECT: Use constants from src/config/constants.py
 from src.shared.constants import UserRole, OrderStatus, DiscountType
 
 if user.role == UserRole.ADMIN:
@@ -402,7 +403,7 @@ if discount.type == DiscountType.PERCENTAGE:
 
 #### 2. Adding New Constants
 ```python
-# ✅ CORRECT: Add new constants to src/shared/constants.py
+# ✅ CORRECT: Add new constants to src/config/constants.py
 class PaymentMethod(str, Enum):
     CARD = "card"
     WALLET = "wallet"
@@ -579,7 +580,7 @@ How the fix was tested and validated.
 ### DO's
 - ✅ Follow existing code patterns and structure
 - ✅ Update documentation with every change
-- ✅ Use constants from `src/shared/constants.py` for all string values
+- ✅ Use constants from `src/config/constants.py` for all string values
 - ✅ Use type hints and proper validation
 - ✅ Implement proper error handling
 - ✅ Test changes thoroughly

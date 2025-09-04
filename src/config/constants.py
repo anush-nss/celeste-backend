@@ -1,0 +1,43 @@
+from enum import Enum
+
+
+class UserRole(str, Enum):
+    CUSTOMER = "CUSTOMER"
+    ADMIN = "ADMIN"
+
+
+class DiscountType(str, Enum):
+    PERCENTAGE = "PERCENTAGE"
+    FLAT = "FLAT"
+
+
+class OrderStatus(str, Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    SHIPPED = "shipped"
+    DELIVERED = "delivered"
+    CANCELLED = "cancelled"
+
+
+# Default fallback tier when no default tier is found in database
+DEFAULT_FALLBACK_TIER = "BRONZE"
+
+
+class PriceListType(str, Enum):
+    PRODUCT = "product"
+    CATEGORY = "category"
+    ALL = "all"
+
+
+class Collections(str, Enum):
+    USERS = "users"
+    PRODUCTS = "products"
+    ORDERS = "orders"
+    CATEGORIES = "categories"
+    DISCOUNTS = "discounts"
+    INVENTORY = "inventory"
+    STORES = "stores"
+    PROMOTIONS = "promotions"
+    PRICE_LISTS = "price_lists"
+    PRICE_LIST_LINES = "price_list_lines"
+    CUSTOMER_TIERS = "customer_tiers"

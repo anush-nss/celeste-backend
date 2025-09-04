@@ -259,16 +259,6 @@ Get product by ID with automatic tier-based pricing.
 
 **Headers (Optional):** `Authorization: Bearer <token>` (for tier-based pricing)
 
-#### GET `/products/legacy`
-Get all products in legacy format (backward compatibility).
-
-**Query Parameters:**
-- `limit`: Number of products to return
-- `includeDiscounts`: Include discount information
-- `categoryId`: Filter by category ID
-- `minPrice`: Minimum price filter  
-- `maxPrice`: Maximum price filter
-- `isFeatured`: Filter featured products only
 
 #### POST `/products/` (Admin Only)
 Create a new product.
@@ -417,6 +407,145 @@ Get product price for current authenticated user.
 
 ---
 
+### Customer Tiers (`/tiers`) ⭐ **NEW**
+
+Customer tier management system for automatic tier evaluation, benefits, and progress tracking.
+
+#### GET `/tiers/`
+Get all customer tiers (public endpoint).
+
+**Query Parameters:**
+- `active_only`: Filter to show only active tiers (default: true)
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "string",
+      "name": "Bronze",
+      "tier_code": "bronze",
+      "level": 1,
+      "requirements": {
+        "min_orders": 0,
+        "min_lifetime_value": 0.0,
+        "min_monthly_orders": 0
+      },
+      "benefits": {
+        "price_list_ids": [],
+        "delivery_discount": 0.0,
+        "priority_support": false,
+        "early_access": false
+      },
+      "color": "#CD7F32",
+      "active": true
+    }
+  ]
+}
+```
+
+#### GET `/tiers/{tier_id}`
+Get specific customer tier by ID (public endpoint).
+
+#### POST `/tiers/` (Admin Only)
+Create a new customer tier.
+
+**Request Body:**
+```json
+{
+  "name": "Platinum",
+  "tier_code": "platinum",
+  "level": 4,
+  "requirements": {
+    "min_orders": 50,
+    "min_lifetime_value": 2000.0,
+    "min_monthly_orders": 5
+  },
+  "benefits": {
+    "price_list_ids": ["premium-prices"],
+    "delivery_discount": 15.0,
+    "priority_support": true,
+    "early_access": true
+  },
+  "color": "#E5E4E2"
+}
+```
+
+#### PUT `/tiers/{tier_id}` (Admin Only)
+Update an existing customer tier.
+
+#### DELETE `/tiers/{tier_id}` (Admin Only)
+Delete a customer tier.
+
+#### POST `/tiers/initialize-defaults` (Admin Only)
+Initialize default customer tiers (Bronze, Silver, Gold, Platinum).
+
+#### User Tier Endpoints
+
+##### GET `/tiers/users/me/tier`
+Get current user's complete tier information.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "user_id": "string",
+    "current_tier": "silver",
+    "tier_info": {
+      "name": "Silver",
+      "level": 2,
+      "requirements": {...},
+      "benefits": {...}
+    },
+    "progress": {
+      "current_tier": "silver",
+      "next_tier": "gold",
+      "progress": {
+        "orders": {
+          "current": 8,
+          "required": 20,
+          "progress_percentage": 40
+        }
+      }
+    },
+    "statistics": {
+      "total_orders": 8,
+      "lifetime_value": 150.0,
+      "monthly_orders": 2
+    }
+  }
+}
+```
+
+##### GET `/tiers/users/me/tier-progress`
+Get current user's tier progress towards next level.
+
+##### POST `/tiers/users/me/evaluate-tier`
+Evaluate what tier the current user should be in.
+
+##### POST `/tiers/users/me/auto-update-tier`
+Automatically evaluate and update current user's tier.
+
+#### Admin User Tier Management
+
+##### GET `/tiers/users/{user_id}/tier` (Admin Only)
+Get tier information for specific user.
+
+##### POST `/tiers/users/{user_id}/evaluate-tier` (Admin Only)
+Evaluate tier for specific user.
+
+##### POST `/tiers/users/{user_id}/auto-update-tier` (Admin Only)
+Auto-evaluate and update tier for specific user.
+
+##### PUT `/tiers/users/{user_id}/tier` (Admin Only)
+Manually update a user's tier.
+
+---
+
 ### Development Tools (`/dev`) ⭐ **Development Environment Only**
 
 #### POST `/dev/auth/token`
@@ -540,24 +669,6 @@ Delete an order.
 
 ---
 
-### Discount Management (`/discounts`)
-
-#### GET `/discounts/`
-Get all discounts.
-
-#### GET `/discounts/{id}`
-Get discount by ID.
-
-#### POST `/discounts/` (Admin Only)
-Create a new discount.
-
-#### PUT `/discounts/{id}` (Admin Only)
-Update a discount.
-
-#### DELETE `/discounts/{id}` (Admin Only)
-Delete a discount.
-
----
 
 ### Inventory Management (`/inventory`)
 
@@ -597,15 +708,6 @@ Delete a store.
 
 ---
 
-### Promotions (`/promotions`)
-
-#### GET `/promotions/`
-Get all promotions.
-
-#### POST `/promotions/` (Admin Only)
-Create a new promotion.
-
----
 
 ## Data Models
 
@@ -691,7 +793,6 @@ The API integrates with Firebase services:
 - **Smart Pricing Integration**: Products automatically include tier-based pricing when authenticated
 - **Performance Optimization**: Default limit 20, maximum 100 for optimal performance
 - **Inventory Placeholders**: Future-ready structure for inventory management
-- **Backward Compatibility**: Legacy endpoints maintain existing functionality
 
 ### Development Features
 - **Database Management**: Tools for adding test data and managing collections
