@@ -1,6 +1,8 @@
+import asyncio
 from typing import Optional, List
-from functools import lru_cache
 from src.shared.db_client import db_client
+from src.config.cache_config import cache_config
+from .cache import products_cache
 from src.api.products.models import (
     ProductSchema,
     CreateProductSchema,
@@ -14,12 +16,11 @@ from src.config.constants import Collections
 
 
 class ProductService:
-    """Product service with clean, maintainable code"""
-    
+    """Product service with clean, maintainable code"""    
     def __init__(self):
         self.products_collection = db_client.collection(Collections.PRODUCTS)
 
-    def get_all_products(
+    async def get_all_products(
         self, query_params: ProductQuerySchema
     ) -> list[ProductSchema]:
         """Get products with simple filtering and pagination"""
@@ -39,20 +40,20 @@ class ProductService:
 
         # Handle cursor-based pagination
         if query_params.cursor:
-            cursor_doc = self.products_collection.document(query_params.cursor).get()
+            cursor_doc = await self.products_collection.document(query_params.cursor).get()
             if cursor_doc.exists:
                 query = query.start_after(cursor_doc)
 
         docs = query.stream()
         products = []
-        for doc in docs:
+        async for doc in docs:
             doc_dict = doc.to_dict()
             if doc_dict:
                 products.append(ProductSchema(id=doc.id, **doc_dict))
 
         return products
 
-    def get_products_with_pagination(
+    async def get_products_with_pagination(
         self,
         query_params: ProductQuerySchema,
         customer_tier: Optional[str] = None,
@@ -60,7 +61,7 @@ class ProductService:
     ) -> PaginatedProductsResponse:
         """Get products with optional pricing information"""
         # Get base products
-        base_products = self.get_all_products(query_params)
+        base_products = await self.get_all_products(query_params)
         
         if not base_products:
             return PaginatedProductsResponse(
@@ -82,7 +83,7 @@ class ProductService:
             ]
             
             # Get pricing for all products in one batch
-            pricing_results = pricing_service.calculate_bulk_product_pricing(
+            pricing_results = await pricing_service.calculate_bulk_product_pricing(
                 product_data, customer_tier
             )
             
@@ -123,21 +124,25 @@ class ProductService:
         
         return PaginatedProductsResponse(products=enhanced_products[:limit], pagination=pagination)
 
-    @lru_cache(maxsize=256)
-    def _get_cached_product_by_id(self, product_id: str) -> ProductSchema | None:
-        """Get cached product by ID"""
-        doc = self.products_collection.document(product_id).get()
+    async def get_product_by_id(self, product_id: str) -> ProductSchema | None:
+        """Get a single product by ID with caching"""
+        # Check cache first
+        cached_product = products_cache.get_product(product_id)
+        if cached_product is not None:
+            return ProductSchema(**cached_product)
+        
+        # Fallback to database
+        doc = await self.products_collection.document(product_id).get()
         if doc.exists:
             doc_dict = doc.to_dict()
             if doc_dict:
-                return ProductSchema(id=doc.id, **doc_dict)
+                product = ProductSchema(id=doc.id, **doc_dict)
+                # Cache with configured TTL
+                products_cache.set_product(product_id, product.model_dump())
+                return product
         return None
 
-    def get_product_by_id(self, product_id: str) -> ProductSchema | None:
-        """Get a single product by ID with caching"""
-        return self._get_cached_product_by_id(product_id)
-
-    def get_product_by_id_with_pricing(
+    async def get_product_by_id_with_pricing(
         self, 
         product_id: str, 
         include_pricing: Optional[bool] = True,
@@ -145,14 +150,14 @@ class ProductService:
         pricing_service=None
     ) -> Optional[EnhancedProductSchema]:
         """Get a single product with optional pricing information"""
-        product = self.get_product_by_id(product_id)
+        product = await self.get_product_by_id(product_id)
         if not product:
             return None
         
         enhanced_product = EnhancedProductSchema(**product.model_dump())
         
         if include_pricing is True and customer_tier and pricing_service:
-            pricing_info = pricing_service.calculate_product_pricing(
+            pricing_info = await pricing_service.calculate_product_pricing(
                 product.id, product.price, product.categoryId, customer_tier
             )
             if pricing_info:
@@ -160,56 +165,56 @@ class ProductService:
         
         return enhanced_product
 
-    def create_product(self, product_data: CreateProductSchema) -> ProductSchema:
+    async def create_product(self, product_data: CreateProductSchema) -> ProductSchema:
         """Create a new product"""
         doc_ref = self.products_collection.document()
         product_dict = product_data.model_dump()
-        doc_ref.set(product_dict)
+        await doc_ref.set(product_dict)
         
-        # No need to clear cache for create since new product won't be cached yet
-        return ProductSchema(id=doc_ref.id, **product_dict)
+        # Cache the new product
+        new_product = ProductSchema(id=doc_ref.id, **product_dict)
+        products_cache.set_product(doc_ref.id, new_product.model_dump())
+        
+        return new_product
 
-    def update_product(
+    async def update_product(
         self, product_id: str, product_data: UpdateProductSchema
     ) -> ProductSchema | None:
         """Update an existing product"""
         doc_ref = self.products_collection.document(product_id)
-        if not doc_ref.get().exists:
+        if not (await doc_ref.get()).exists:
             return None
         
         update_dict = product_data.model_dump(exclude_unset=True)
-        doc_ref.update(update_dict)
+        await doc_ref.update(update_dict)
         
-        # Clear cache for this product
-        self._get_cached_product_by_id.cache_clear()
+        # Selective cache invalidation
+        products_cache.invalidate_product_cache(product_id)
         
-        updated_doc = doc_ref.get()
+        updated_doc = await doc_ref.get()
         updated_dict = updated_doc.to_dict()
         if updated_dict:
             return ProductSchema(id=updated_doc.id, **updated_dict)
         return None
 
-    def delete_product(self, product_id: str) -> bool:
+    async def delete_product(self, product_id: str) -> bool:
         """Delete a product"""
         doc_ref = self.products_collection.document(product_id)
-        if not doc_ref.get().exists:
+        if not (await doc_ref.get()).exists:
             return False
         
-        # Clear cache for this product
-        self._get_cached_product_by_id.cache_clear()
+        # Selective cache invalidation
+        products_cache.invalidate_product_cache(product_id)
         
-        doc_ref.delete()
+        await doc_ref.delete()
         return True
 
-    def get_products_by_ids(self, product_ids: List[str]) -> List[ProductSchema]:
+    async def get_products_by_ids(self, product_ids: List[str]) -> List[ProductSchema]:
         """Get multiple products by their IDs using cache"""
         if not product_ids:
             return []
         
-        products = []
-        for product_id in product_ids:
-            product = self.get_product_by_id(product_id)  # Uses cache
-            if product:
-                products.append(product)
+        tasks = [self.get_product_by_id(product_id) for product_id in product_ids]
+        results = await asyncio.gather(*tasks)
         
-        return products
+        return [product for product in results if product]

@@ -60,7 +60,7 @@ async def get_all_products(
         only_discounted=only_discounted,
     )
 
-    result = product_service.get_products_with_pagination(
+    result = await product_service.get_products_with_pagination(
         query_params=query_params,
         customer_tier=user_tier,
         pricing_service=pricing_service if include_pricing else None,
@@ -86,7 +86,7 @@ async def get_product_by_id(
     Get a single product with OPTIMIZED pricing (sub-30ms target)
     Uses new optimized service methods for maximum performance
     """
-    product = product_service.get_product_by_id_with_pricing(
+    product = await product_service.get_product_by_id_with_pricing(
         id, include_pricing, user_tier, pricing_service
     )
     
@@ -104,7 +104,7 @@ async def get_product_by_id(
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
 async def create_product(product_data: CreateProductSchema):
-    new_product = product_service.create_product(product_data)
+    new_product = await product_service.create_product(product_data)
     return success_response(
         new_product.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )
@@ -117,7 +117,7 @@ async def create_product(product_data: CreateProductSchema):
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
 async def update_product(id: str, product_data: UpdateProductSchema):
-    updated_product = product_service.update_product(id, product_data)
+    updated_product = await product_service.update_product(id, product_data)
     if not updated_product:
         raise ResourceNotFoundException(detail=f"Product with ID {id} not found")
     return success_response(updated_product.model_dump(mode="json"))
@@ -129,6 +129,6 @@ async def update_product(id: str, product_data: UpdateProductSchema):
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
 async def delete_product(id: str):
-    if not product_service.delete_product(id):
+    if not await product_service.delete_product(id):
         raise ResourceNotFoundException(detail=f"Product with ID {id} not found")
     return success_response({"id": id, "message": "Product deleted successfully"})
