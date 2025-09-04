@@ -1,6 +1,7 @@
-from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
-from src.shared.database import get_firestore_db
+from datetime import datetime
+from typing import List, Optional, Dict
+from functools import lru_cache
+from src.shared.db_client import db_client
 from src.api.pricing.models import (
     PriceListSchema,
     CreatePriceListSchema,
@@ -9,38 +10,30 @@ from src.api.pricing.models import (
     CreatePriceListLineSchema,
     UpdatePriceListLineSchema,
 )
-from src.config.constants import Collections, PriceListType, DiscountType
+from src.config.constants import Collections, PriceListType, DiscountType, DEFAULT_FALLBACK_TIER
 
 
 class PricingService:
+    """Pricing service with clean, maintainable code"""
+    
     def __init__(self):
-        self.db = get_firestore_db()
-        self.price_lists_collection = self.db.collection(Collections.PRICE_LISTS)
-        self.price_list_lines_collection = self.db.collection(
-            Collections.PRICE_LIST_LINES
-        )
-        self.products_collection = self.db.collection(Collections.PRODUCTS)
-        self.customer_tiers_collection = self.db.collection(Collections.CUSTOMER_TIERS)
+        self.price_lists_collection = db_client.collection(Collections.PRICE_LISTS)
+        self.price_list_lines_collection = db_client.collection(Collections.PRICE_LIST_LINES)
+        self.customer_tiers_collection = db_client.collection(Collections.CUSTOMER_TIERS)
 
     # Price List Management
-    async def create_price_list(
-        self, price_list_data: CreatePriceListSchema
-    ) -> PriceListSchema:
+    def create_price_list(self, price_list_data: CreatePriceListSchema) -> PriceListSchema:
         """Create a new price list"""
         doc_ref = self.price_lists_collection.document()
-
         price_list_dict = price_list_data.model_dump()
-        price_list_dict.update(
-            {"created_at": datetime.now(), "updated_at": datetime.now()}
-        )
-
+        price_list_dict.update({
+            "created_at": datetime.now(),
+            "updated_at": datetime.now()
+        })
         doc_ref.set(price_list_dict)
-
         return PriceListSchema(**price_list_dict, id=doc_ref.id)
 
-    async def get_price_list_by_id(
-        self, price_list_id: str
-    ) -> Optional[PriceListSchema]:
+    def get_price_list_by_id(self, price_list_id: str) -> Optional[PriceListSchema]:
         """Get a price list by ID"""
         doc = self.price_lists_collection.document(price_list_id).get()
         if doc.exists:
@@ -49,16 +42,13 @@ class PricingService:
                 return PriceListSchema(**doc_data, id=doc.id)
         return None
 
-    async def get_all_price_lists(
-        self, active_only: bool = False
-    ) -> List[PriceListSchema]:
-        """Get all price lists, optionally filtered by active status"""
+    @lru_cache(maxsize=32)
+    def _get_cached_price_lists(self, active_only: bool = False) -> tuple:
+        """Get cached price lists - returns tuple for hashability"""
+        query = self.price_lists_collection.order_by("priority")
+        
         if active_only:
-            # Filter by active first, then sort in memory to avoid composite index requirement
-            query = self.price_lists_collection.where("active", "==", True)
-        else:
-            # Get all price lists and sort by priority
-            query = self.price_lists_collection.order_by("priority")
+            query = query.where("active", "==", True)
 
         docs = query.stream()
         price_lists = []
@@ -67,13 +57,13 @@ class PricingService:
             if doc_data:
                 price_lists.append(PriceListSchema(**doc_data, id=doc.id))
 
-        # Sort by priority in memory if we filtered by active
-        if active_only:
-            price_lists.sort(key=lambda x: x.priority)
+        return tuple(price_lists)
+    
+    def get_all_price_lists(self, active_only: bool = False) -> List[PriceListSchema]:
+        """Get all price lists, optionally filtered by active status"""
+        return list(self._get_cached_price_lists(active_only))
 
-        return price_lists
-
-    async def update_price_list(
+    def update_price_list(
         self, price_list_id: str, price_list_data: UpdatePriceListSchema
     ) -> Optional[PriceListSchema]:
         """Update a price list"""
@@ -85,8 +75,10 @@ class PricingService:
 
         update_data = price_list_data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now()
-
         doc_ref.update(update_data)
+
+        # Clear cache
+        self._get_cached_price_lists.cache_clear()
 
         updated_doc = doc_ref.get()
         if updated_doc.exists:
@@ -95,7 +87,7 @@ class PricingService:
                 return PriceListSchema(**updated_data, id=updated_doc.id)
         return None
 
-    async def delete_price_list(self, price_list_id: str) -> bool:
+    def delete_price_list(self, price_list_id: str) -> bool:
         """Delete a price list and its lines"""
         doc_ref = self.price_lists_collection.document(price_list_id)
         doc = doc_ref.get()
@@ -104,56 +96,57 @@ class PricingService:
             return False
 
         # Delete all associated price list lines
-        lines_query = self.price_list_lines_collection.where(
-            "price_list_id", "==", price_list_id
-        )
+        lines_query = self.price_list_lines_collection.where("price_list_id", "==", price_list_id)
         lines_docs = lines_query.stream()
 
         for line_doc in lines_docs:
             line_doc.reference.delete()
 
+        # Clear caches
+        self._get_cached_price_lists.cache_clear()
+        self._get_cached_price_list_lines.cache_clear()
+        
         # Delete the price list
         doc_ref.delete()
         return True
 
     # Price List Lines Management
-    async def create_price_list_line(
+    def create_price_list_line(
         self, price_list_id: str, line_data: CreatePriceListLineSchema
     ) -> PriceListLineSchema:
         """Create a new price list line"""
-        # Validate the line data
         line_data.validate_type_fields()
 
         doc_ref = self.price_list_lines_collection.document()
-
         line_dict = line_data.model_dump()
-        line_dict.update(
-            {
-                "price_list_id": price_list_id,
-                "created_at": datetime.now(),
-                "updated_at": datetime.now(),
-            }
-        )
-
+        line_dict.update({
+            "price_list_id": price_list_id,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+        })
         doc_ref.set(line_dict)
+        
+        # Clear price list lines cache
+        self._get_cached_price_list_lines.cache_clear()
 
         return PriceListLineSchema(**line_dict, id=doc_ref.id)
 
-    async def get_price_list_lines(
-        self, price_list_id: str
-    ) -> List[PriceListLineSchema]:
-        """Get all lines for a price list"""
-        docs = self.price_list_lines_collection.where(
-            "price_list_id", "==", price_list_id
-        ).stream()
+    @lru_cache(maxsize=128)
+    def _get_cached_price_list_lines(self, price_list_id: str) -> tuple:
+        """Get cached price list lines - returns tuple for hashability"""
+        docs = self.price_list_lines_collection.where("price_list_id", "==", price_list_id).stream()
         lines = []
         for doc in docs:
             doc_data = doc.to_dict()
             if doc_data:
                 lines.append(PriceListLineSchema(**doc_data, id=doc.id))
-        return lines
+        return tuple(lines)
+    
+    def get_price_list_lines(self, price_list_id: str) -> List[PriceListLineSchema]:
+        """Get all lines for a price list"""
+        return list(self._get_cached_price_list_lines(price_list_id))
 
-    async def update_price_list_line(
+    def update_price_list_line(
         self, line_id: str, line_data: UpdatePriceListLineSchema
     ) -> Optional[PriceListLineSchema]:
         """Update a price list line"""
@@ -165,7 +158,6 @@ class PricingService:
 
         update_data = line_data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now()
-
         doc_ref.update(update_data)
 
         updated_doc = doc_ref.get()
@@ -175,7 +167,7 @@ class PricingService:
                 return PriceListLineSchema(**updated_data, id=updated_doc.id)
         return None
 
-    async def delete_price_list_line(self, line_id: str) -> bool:
+    def delete_price_list_line(self, line_id: str) -> bool:
         """Delete a price list line"""
         doc_ref = self.price_list_lines_collection.document(line_id)
         doc = doc_ref.get()
@@ -187,258 +179,218 @@ class PricingService:
         return True
 
     # Price Calculation
-    async def get_product_base_price(self, product_id: str) -> float:
-        """Get the base price of a product"""
-        doc = self.products_collection.document(product_id).get()
-        if doc.exists:
-            product_data = doc.to_dict()
-            if product_data:
-                return product_data.get("price", 0.0)
-        return 0.0
-
-    async def get_tier_price_lists(self, customer_tier: str) -> List[str]:
-        """Get price list IDs associated with a customer tier"""
-        # Get customer tier document
-        tier_docs = (
-            self.customer_tiers_collection.where("tier_code", "==", customer_tier)
-            .limit(1)
-            .stream()
-        )
-        tier_doc = next(tier_docs, None)
-
-        if tier_doc:
-            tier_data = tier_doc.to_dict()
-            if tier_data:
-                benefits = tier_data.get("benefits", {})
-                if benefits:
-                    return benefits.get("price_list_ids", [])
-
-        return []
-
-    async def get_global_price_lists(self) -> List[str]:
-        """Get global price lists (those not assigned to specific tiers)"""
-        now = datetime.now()
-
-        # First get all active price lists to avoid composite index
-        query = self.price_lists_collection.where("active", "==", True)
-        docs = query.stream()
-
-        global_lists = []
-        has_is_global_field = False
-
-        for doc in docs:
-            data = doc.to_dict()
-            if not data:
-                continue
-
-            # Check date validity in memory to avoid composite index
-            valid_from = data.get("valid_from")
-            valid_until = data.get("valid_until")
-
-            # Compare datetime objects directly (Firestore returns datetime objects)
-            try:
-                if valid_from and valid_from > now:
-                    continue
-
-                if valid_until and valid_until < now:
-                    continue
-            except TypeError:
-                # If comparison fails, skip this price list to be safe
-                continue
-
-            # Enhanced logic: Check for is_global field
-            is_global = data.get("is_global")
-
-            if is_global is not None:
-                has_is_global_field = True
-                if is_global is True:
-                    global_lists.append(doc.id)
-            else:
-                # Fallback: If no is_global field exists, include all active price lists
-                if not has_is_global_field:
-                    global_lists.append(doc.id)
-
-        return global_lists
-
-    async def get_applicable_price_lines(
+    def calculate_product_pricing(
         self,
-        price_list_id: str,
-        product_id: str,
-        category_ids: List[str],
-        quantity: int,
-    ) -> List[PriceListLineSchema]:
-        """Get applicable price list lines for a product"""
-        lines = []
+        product_id: Optional[str],
+        base_price: float,
+        category_id: Optional[str],
+        customer_tier: str,
+        quantity: int = 1
+    ) -> Optional[Dict]:
+        """Calculate pricing for a single product"""
+        if not customer_tier:
+            customer_tier = DEFAULT_FALLBACK_TIER
 
-        # Get product-specific lines - simplified query to avoid index issues
-        product_lines_query = (
-            self.price_list_lines_collection.where("price_list_id", "==", price_list_id)
-            .where("type", "==", PriceListType.PRODUCT.value)
-            .where("product_id", "==", product_id)
-        )
+        # Get active price lists
+        active_price_lists = self.get_all_price_lists(active_only=True)
+        
+        if not active_price_lists:
+            return self._create_base_pricing_result(base_price, customer_tier)
 
-        for doc in product_lines_query.stream():
-            line_data = doc.to_dict()
-            if line_data:
-                # Check quantity constraints in memory
-                min_qty = line_data.get("min_product_qty", 0)
-                max_qty = line_data.get("max_product_qty")
+        final_price = base_price
+        applied_price_lists = []
+        best_discount = 0.0
 
-                if quantity >= min_qty and (max_qty is None or quantity <= max_qty):
-                    lines.append(PriceListLineSchema(**line_data, id=doc.id))
+        # Apply discounts from each price list in priority order
+        for price_list in active_price_lists:
+            # Check if price list is valid (date range)
+            if not self._is_price_list_valid(price_list):
+                continue
 
-        # Get category-specific lines
-        for category_id in category_ids:
-            category_lines_query = (
-                self.price_list_lines_collection.where(
-                    "price_list_id", "==", price_list_id
-                )
-                .where("type", "==", PriceListType.CATEGORY.value)
-                .where("category_id", "==", category_id)
+            # Skip if price list has no ID
+            if not price_list.id:
+                continue
+
+            # Get applicable lines for this product
+            applicable_lines = self._get_applicable_lines(
+                price_list.id, product_id, category_id, quantity
             )
 
-            for doc in category_lines_query.stream():
-                line_data = doc.to_dict()
-                if line_data:
-                    # Check quantity constraints in memory
-                    min_qty = line_data.get("min_product_qty", 0)
-                    max_qty = line_data.get("max_product_qty")
-
-                    if quantity >= min_qty and (max_qty is None or quantity <= max_qty):
-                        lines.append(PriceListLineSchema(**line_data, id=doc.id))
-
-        # Get global lines (type='all')
-        global_lines_query = self.price_list_lines_collection.where(
-            "price_list_id", "==", price_list_id
-        ).where("type", "==", PriceListType.ALL.value)
-
-        for doc in global_lines_query.stream():
-            line_data = doc.to_dict()
-            if line_data:
-                # Check quantity constraints in memory
-                min_qty = line_data.get("min_product_qty", 0)
-                max_qty = line_data.get("max_product_qty")
-
-                if quantity >= min_qty and (max_qty is None or quantity <= max_qty):
-                    lines.append(PriceListLineSchema(**line_data, id=doc.id))
-
-        return lines
-
-    def apply_discount(
-        self, base_price: float, price_line: PriceListLineSchema
-    ) -> float:
-        """Apply a discount from a price list line"""
-        if price_line.discount_type == DiscountType.PERCENTAGE:
-            discount_amount = base_price * (price_line.amount / 100)
-            return max(0, base_price - discount_amount)
-        elif price_line.discount_type == DiscountType.FLAT:
-            return max(0, base_price - price_line.amount)
-        return base_price
-
-
-    async def calculate_bulk_product_pricing(
-        self,
-        products: List,
-        customer_tier: Optional[str] = None,
-        quantity: int = 1,
-    ) -> List[Dict]:
-        """
-        Efficiently calculate pricing for multiple products
-        Optimized for product listing scenarios
-        Returns only pricing information for each product
-        """
-        if not products:
-            return []
-
-        # If no tier, return base pricing information only
-        if not customer_tier:
-            return [
-                {
-                    "base_price": product.get("price", 0.0),
-                    "final_price": product.get("price", 0.0),
-                    "discount_applied": 0.0,
-                    "discount_percentage": 0.0,
-                    "applied_price_lists": [],
-                    "customer_tier": None,
-                }
-                for product in products
-            ]
-
-        # Get applicable price lists once for the tier
-        tier_price_lists = await self.get_tier_price_lists(customer_tier)
-        global_price_lists = await self.get_global_price_lists()
-        all_price_list_ids = tier_price_lists + global_price_lists
-
-        if not all_price_list_ids:
-            # No price lists available, return base pricing information only
-            return [
-                {
-                    "base_price": product.get("price", 0.0),
-                    "final_price": product.get("price", 0.0),
-                    "discount_applied": 0.0,
-                    "discount_percentage": 0.0,
-                    "applied_price_lists": [],
-                    "customer_tier": customer_tier if customer_tier else None,
-                }
-                for product in products
-            ]
-
-        # Get all price lists and sort by priority
-        price_lists = []
-        for price_list_id in all_price_list_ids:
-            price_list = await self.get_price_list_by_id(price_list_id)
-            if price_list and price_list.active:
-                now = datetime.now(timezone.utc)
-                if price_list.valid_from <= now and (
-                    price_list.valid_until is None or price_list.valid_until >= now
-                ):
-                    price_lists.append(price_list)
-
-        # Sort by priority (lower number = higher priority)
-        price_lists.sort(key=lambda x: x.priority)
-
-        # Process each product and return only pricing information
-        pricing_results = []
-        for product in products:
-            base_price = product.get("price", 0.0)
-            final_price = base_price
-            applied_price_lists = []
-
-            product_id = product.get("id")
-            category_ids = product.get("category_ids", [])
-
-            if product_id:
-                # Apply discounts from applicable price lists
-                for price_list in price_lists:
-                    applicable_lines = await self.get_applicable_price_lines(
-                        price_list.id, product_id, category_ids, quantity
-                    )
-
-                    # Apply the best discount from this price list
-                    best_price = final_price
-                    for line in applicable_lines:
-                        discounted_price = self.apply_discount(final_price, line)
-                        if discounted_price < best_price:
-                            best_price = discounted_price
-
-                    if best_price < final_price:
-                        final_price = best_price
+            # Find best discount from this price list
+            for line in applicable_lines:
+                discount = self._calculate_discount(base_price, line)
+                if discount > best_discount:
+                    best_discount = discount
+                    final_price = base_price - discount
+                    if price_list.name not in applied_price_lists:
                         applied_price_lists.append(price_list.name)
 
-            discount_applied = base_price - final_price
-            discount_percentage = (
-                (discount_applied / base_price * 100) if base_price > 0 else 0
-            )
+        discount_percentage = (best_discount / base_price * 100) if base_price > 0 else 0
 
-            pricing_results.append(
-                {
-                    "base_price": base_price,
-                    "final_price": final_price,
-                    "discount_applied": discount_applied,
-                    "discount_percentage": discount_percentage,
-                    "applied_price_lists": applied_price_lists,
-                    "customer_tier": customer_tier if customer_tier else None,
-                }
-            )
+        return {
+            "base_price": base_price,
+            "final_price": final_price,
+            "discount_applied": best_discount,
+            "discount_percentage": discount_percentage,
+            "applied_price_lists": applied_price_lists,
+            "customer_tier": customer_tier
+        }
 
-        return pricing_results
+    def calculate_bulk_product_pricing(
+        self,
+        products: List[Dict],
+        customer_tier: str,
+        quantity: int = 1,
+    ) -> List[Dict]:
+        """Calculate pricing for multiple products efficiently"""
+        if not products or not customer_tier:
+            return [self._create_base_pricing_result(p.get("price", 0.0), customer_tier) for p in products]
+
+        # Get all active price lists once
+        active_price_lists = self.get_all_price_lists(active_only=True)
+        
+        if not active_price_lists:
+            return [self._create_base_pricing_result(p.get("price", 0.0), customer_tier) for p in products]
+
+        # Filter valid price lists once
+        valid_price_lists = [pl for pl in active_price_lists if self._is_price_list_valid(pl)]
+        
+        if not valid_price_lists:
+            return [self._create_base_pricing_result(p.get("price", 0.0), customer_tier) for p in products]
+
+        # Get all price list lines for all valid price lists at once
+        all_price_lines = {}
+        for price_list in valid_price_lists:
+            if price_list.id:  # Skip if no ID
+                lines = self.get_price_list_lines(price_list.id)
+                all_price_lines[price_list.id] = lines
+
+        # Calculate pricing for each product using cached data
+        results = []
+        for product in products:
+            base_price = product.get("price", 0.0)
+            product_id = product.get("id")
+            category_id = product.get("categoryId")
+            
+            # Skip products without required data
+            if not product_id:
+                results.append(self._create_base_pricing_result(base_price, customer_tier))
+                continue
+            
+            final_price = base_price
+            applied_price_lists = []
+            best_discount = 0.0
+
+            # Apply discounts from each price list in priority order
+            for price_list in valid_price_lists:
+                if not price_list.id:  # Skip if no ID
+                    continue
+                lines = all_price_lines.get(price_list.id, [])
+                
+                # Find applicable lines for this product
+                for line in lines:
+                    if self._line_applies_to_product(line, product_id, category_id, quantity):
+                        discount = self._calculate_discount(base_price, line)
+                        if discount > best_discount:
+                            best_discount = discount
+                            final_price = base_price - discount
+                            if price_list.name not in applied_price_lists:
+                                applied_price_lists.append(price_list.name)
+
+            discount_percentage = (best_discount / base_price * 100) if base_price > 0 else 0
+
+            results.append({
+                "base_price": base_price,
+                "final_price": final_price,
+                "discount_applied": best_discount,
+                "discount_percentage": discount_percentage,
+                "applied_price_lists": applied_price_lists,
+                "customer_tier": customer_tier
+            })
+
+        return results
+
+    # Helper methods
+    def _is_price_list_valid(self, price_list: PriceListSchema) -> bool:
+        """Check if price list is within valid date range"""
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        
+        # Convert to timezone-aware if needed
+        valid_from = price_list.valid_from
+        if valid_from and valid_from.tzinfo is None:
+            valid_from = valid_from.replace(tzinfo=timezone.utc)
+        
+        valid_until = price_list.valid_until
+        if valid_until and valid_until.tzinfo is None:
+            valid_until = valid_until.replace(tzinfo=timezone.utc)
+        
+        if valid_from and valid_from > now:
+            return False
+        
+        if valid_until and valid_until < now:
+            return False
+        
+        return True
+
+    def _get_applicable_lines(
+        self,
+        price_list_id: str,
+        product_id: Optional[str],
+        category_id: Optional[str],
+        quantity: int
+    ) -> List[PriceListLineSchema]:
+        """Get price list lines that apply to this product"""
+        lines = self.get_price_list_lines(price_list_id)
+        applicable_lines = []
+
+        for line in lines:
+            if self._line_applies_to_product(line, product_id, category_id, quantity):
+                applicable_lines.append(line)
+
+        return applicable_lines
+
+    def _line_applies_to_product(
+        self,
+        line: PriceListLineSchema,
+        product_id: Optional[str],
+        category_id: Optional[str],
+        quantity: int
+    ) -> bool:
+        """Check if a price list line applies to a product"""
+        # Check type-specific conditions
+        if line.type == PriceListType.PRODUCT:
+            if not product_id or line.product_id != product_id:
+                return False
+        elif line.type == PriceListType.CATEGORY:
+            if not category_id or line.category_id != category_id:
+                return False
+        # PriceListType.ALL applies to all products
+
+        # Check quantity constraints
+        if quantity < line.min_product_qty:
+            return False
+        
+        if line.max_product_qty and quantity > line.max_product_qty:
+            return False
+
+        return True
+
+    def _calculate_discount(self, base_price: float, line: PriceListLineSchema) -> float:
+        """Calculate discount amount from a price list line"""
+        if line.discount_type == DiscountType.PERCENTAGE:
+            return base_price * (line.amount / 100)
+        elif line.discount_type == DiscountType.FLAT:
+            return min(line.amount, base_price)  # Don't exceed base price
+        return 0.0
+
+    def _create_base_pricing_result(self, base_price: float, customer_tier: str) -> Dict:
+        """Create base pricing result with no discounts"""
+        return {
+            "base_price": base_price,
+            "final_price": base_price,
+            "discount_applied": 0.0,
+            "discount_percentage": 0.0,
+            "applied_price_lists": [],
+            "customer_tier": customer_tier
+        }

@@ -28,7 +28,7 @@ async def get_all_price_lists(active_only: bool = False):
 
     - **active_only**: Filter to show only active price lists
     """
-    price_lists = await pricing_service.get_all_price_lists(active_only=active_only)
+    price_lists = pricing_service.get_all_price_lists(active_only=active_only)
     return success_response([pl.model_dump(mode="json") for pl in price_lists])
 
 
@@ -39,7 +39,7 @@ async def get_all_price_lists(active_only: bool = False):
 )
 async def get_price_list_by_id(price_list_id: str):
     """Get a specific price list by ID"""
-    price_list = await pricing_service.get_price_list_by_id(price_list_id)
+    price_list = pricing_service.get_price_list_by_id(price_list_id)
     if not price_list:
         raise ResourceNotFoundException(
             detail=f"Price list with ID {price_list_id} not found"
@@ -63,7 +63,7 @@ async def create_price_list(price_list_data: CreatePriceListSchema):
     - **valid_from**: When this price list becomes valid
     - **valid_until**: When this price list expires (optional)
     """
-    new_price_list = await pricing_service.create_price_list(price_list_data)
+    new_price_list = pricing_service.create_price_list(price_list_data)
     return success_response(
         new_price_list.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )
@@ -76,7 +76,7 @@ async def create_price_list(price_list_data: CreatePriceListSchema):
 )
 async def update_price_list(price_list_id: str, price_list_data: UpdatePriceListSchema):
     """Update an existing price list"""
-    updated_price_list = await pricing_service.update_price_list(
+    updated_price_list = pricing_service.update_price_list(
         price_list_id, price_list_data
     )
     if not updated_price_list:
@@ -92,7 +92,7 @@ async def update_price_list(price_list_id: str, price_list_data: UpdatePriceList
 )
 async def delete_price_list(price_list_id: str):
     """Delete a price list and all its lines"""
-    success = await pricing_service.delete_price_list(price_list_id)
+    success = pricing_service.delete_price_list(price_list_id)
     if not success:
         raise ResourceNotFoundException(
             detail=f"Price list with ID {price_list_id} not found"
@@ -111,13 +111,13 @@ async def delete_price_list(price_list_id: str):
 async def get_price_list_lines(price_list_id: str):
     """Get all lines for a specific price list"""
     # Verify price list exists
-    price_list = await pricing_service.get_price_list_by_id(price_list_id)
+    price_list = pricing_service.get_price_list_by_id(price_list_id)
     if not price_list:
         raise ResourceNotFoundException(
             detail=f"Price list with ID {price_list_id} not found"
         )
 
-    lines = await pricing_service.get_price_list_lines(price_list_id)
+    lines = pricing_service.get_price_list_lines(price_list_id)
     return success_response([line.model_dump(mode="json") for line in lines])
 
 
@@ -142,14 +142,14 @@ async def create_price_list_line(
     - **max_product_qty**: Maximum quantity allowed (optional)
     """
     # Verify price list exists
-    price_list = await pricing_service.get_price_list_by_id(price_list_id)
+    price_list = pricing_service.get_price_list_by_id(price_list_id)
     if not price_list:
         raise ResourceNotFoundException(
             detail=f"Price list with ID {price_list_id} not found"
         )
 
     try:
-        new_line = await pricing_service.create_price_list_line(
+        new_line = pricing_service.create_price_list_line(
             price_list_id, line_data
         )
         return success_response(
@@ -166,7 +166,7 @@ async def create_price_list_line(
 )
 async def update_price_list_line(line_id: str, line_data: UpdatePriceListLineSchema):
     """Update an existing price list line"""
-    updated_line = await pricing_service.update_price_list_line(line_id, line_data)
+    updated_line = pricing_service.update_price_list_line(line_id, line_data)
     if not updated_line:
         raise ResourceNotFoundException(
             detail=f"Price list line with ID {line_id} not found"
@@ -180,7 +180,7 @@ async def update_price_list_line(line_id: str, line_data: UpdatePriceListLineSch
 )
 async def delete_price_list_line(line_id: str):
     """Delete a price list line"""
-    success = await pricing_service.delete_price_list_line(line_id)
+    success = pricing_service.delete_price_list_line(line_id)
     if not success:
         raise ResourceNotFoundException(
             detail=f"Price list line with ID {line_id} not found"

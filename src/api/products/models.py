@@ -45,9 +45,6 @@ class PricingInfoSchema(BaseModel):
     applied_price_lists: List[str] = Field(
         default=[], description="IDs of price lists that contributed to the discount"
     )
-    customer_tier: Optional[str] = Field(
-        None, description="Customer tier used for pricing calculation"
-    )
 
 
 class InventoryInfoSchema(BaseModel):
@@ -96,7 +93,9 @@ class ProductQuerySchema(BaseModel):
     categoryId: Optional[str] = None
     minPrice: Optional[float] = None
     maxPrice: Optional[float] = None
-    isFeatured: Optional[bool] = None
+    only_discounted: Optional[bool] = Field(
+        default=False, description="Return only products with discounts applied"
+    )
 
 
 class PaginatedProductsResponse(BaseModel):

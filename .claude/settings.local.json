@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(/C:\\Users\\Anushanga\\Desktop\\Projects\\celeste/**)",
+      "Read(/C:\\Users\\Anushanga\\Desktop\\Projects\\celeste/**)",
+      "Read(/C:\\Users\\Anushanga\\Desktop\\Projects\\celeste\\docs/**)",
+      "Read(/C:\\Users\\Anushanga\\Desktop\\Projects\\celeste\\docs/**)",
+      "Read(/C:\\Users\\Anushanga\\Desktop\\Projects\\celeste\\docs/**)",
+      "Read(/C:\\Users\\Anushanga\\Desktop\\Projects\\celeste/**)",
+      "Read(/C:\\Users\\Anushanga\\Desktop\\Projects\\celeste\\src\\config/**)",
+      "Read(/C:\\Users\\Anushanga\\Desktop\\Projects\\celeste/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

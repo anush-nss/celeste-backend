@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
-from src.shared.database import get_firestore_db
+from functools import lru_cache
+from src.shared.db_client import db_client
 from src.shared.utils import get_logger
 from src.api.tiers.models import (
     CustomerTierSchema,
@@ -17,10 +18,9 @@ from src.config.constants import Collections, DEFAULT_FALLBACK_TIER
 
 class TierService:
     def __init__(self):
-        self.db = get_firestore_db()
-        self.customer_tiers_collection = self.db.collection(Collections.CUSTOMER_TIERS)
-        self.users_collection = self.db.collection(Collections.USERS)
-        self.orders_collection = self.db.collection(Collections.ORDERS)
+        self.customer_tiers_collection = db_client.collection(Collections.CUSTOMER_TIERS)
+        self.users_collection = db_client.collection(Collections.USERS)
+        self.orders_collection = db_client.collection(Collections.ORDERS)
         self.logger = get_logger(__name__)
 
     # Customer Tier Management
@@ -48,10 +48,9 @@ class TierService:
                 return CustomerTierSchema(**tier_data, id=doc.id)
         return None
 
-    async def get_customer_tier_by_code(
-        self, tier_code: str
-    ) -> Optional[CustomerTierSchema]:
-        """Get a customer tier by tier code"""
+    @lru_cache(maxsize=32)
+    def _get_cached_tier_by_code(self, tier_code: str) -> Optional[CustomerTierSchema]:
+        """Get cached customer tier by code"""
         try:
             docs = (
                 self.customer_tiers_collection.where("tier_code", "==", tier_code)
@@ -64,20 +63,22 @@ class TierService:
                 if tier_data:
                     return CustomerTierSchema(**tier_data, id=doc.id)
         except Exception as e:
-            self.logger.error(f"Error in get_customer_tier_by_code: {e}")
+            self.logger.error(f"Error in _get_cached_tier_by_code: {e}")
             pass
         return None
 
-    async def get_all_customer_tiers(
-        self, active_only: bool = False
-    ) -> List[CustomerTierSchema]:
-        """Get all customer tiers, optionally filtered by active status"""
+    async def get_customer_tier_by_code(
+        self, tier_code: str
+    ) -> Optional[CustomerTierSchema]:
+        """Get a customer tier by tier code with caching"""
+        return self._get_cached_tier_by_code(tier_code)
+
+    @lru_cache(maxsize=16)
+    def _get_cached_all_tiers(self, active_only: bool = False) -> tuple:
+        """Get cached customer tiers - returns tuple for hashability"""
         try:
             if active_only:
-                # Use separate query for active filter to avoid composite index requirement
-                docs = self.customer_tiers_collection.where(
-                    "active", "==", True
-                ).stream()
+                docs = self.customer_tiers_collection.where("active", "==", True).stream()
             else:
                 docs = self.customer_tiers_collection.stream()
 
@@ -87,14 +88,18 @@ class TierService:
                 if tier_data:
                     tiers.append(CustomerTierSchema(**tier_data, id=doc.id))
 
-            # Sort in Python instead of Firestore to avoid index requirement
             tiers.sort(key=lambda x: x.level)
-            return tiers
+            return tuple(tiers)
 
         except Exception as e:
-            # If collection doesn't exist or there's an error, return empty list
-            self.logger.error(f"Error in get_all_customer_tiers: {e}")
-            return []
+            self.logger.error(f"Error in _get_cached_all_tiers: {e}")
+            return tuple()
+
+    async def get_all_customer_tiers(
+        self, active_only: bool = False
+    ) -> List[CustomerTierSchema]:
+        """Get all customer tiers with caching"""
+        return list(self._get_cached_all_tiers(active_only))
 
     async def update_customer_tier(
         self, tier_id: str, tier_data: UpdateCustomerTierSchema
@@ -111,6 +116,11 @@ class TierService:
 
         doc_ref.update(update_data)
 
+        # Clear caches
+        self._get_cached_tier_by_code.cache_clear()
+        self._get_cached_all_tiers.cache_clear()
+        self._get_cached_default_tier.cache_clear()
+
         updated_doc = doc_ref.get()
         if updated_doc.exists:
             updated_data = updated_doc.to_dict()
@@ -126,11 +136,17 @@ class TierService:
         if not doc.exists:
             return False
 
+        # Clear caches
+        self._get_cached_tier_by_code.cache_clear()
+        self._get_cached_all_tiers.cache_clear()
+        self._get_cached_default_tier.cache_clear()
+
         doc_ref.delete()
         return True
 
-    async def get_default_tier(self) -> str:
-        """Get the default tier from database, fallback to constant if not found"""
+    @lru_cache(maxsize=1)
+    def _get_cached_default_tier(self) -> str:
+        """Get cached default tier"""
         try:
             docs = (
                 self.customer_tiers_collection.where("is_default", "==", True)
@@ -144,9 +160,13 @@ class TierService:
                 if tier_data:
                     return tier_data.get("tier_code", DEFAULT_FALLBACK_TIER)
         except Exception as e:
-            self.logger.error(f"Error in get_default_tier: {e}")
+            self.logger.error(f"Error in _get_cached_default_tier: {e}")
 
         return DEFAULT_FALLBACK_TIER
+
+    async def get_default_tier(self) -> str:
+        """Get the default tier with caching"""
+        return self._get_cached_default_tier()
 
     # User Tier Operations
     async def get_user_tier(self, user_id: str) -> Optional[str]:
