@@ -7,6 +7,7 @@ class ProductSchema(BaseModel):
     id: Optional[str] = None
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
+    brand: str = Field(..., min_length=1)
     price: float = Field(..., ge=0)
     unit: str
     categoryId: str
@@ -18,6 +19,7 @@ class ProductSchema(BaseModel):
 class CreateProductSchema(BaseModel):
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
+    brand: str = Field(..., min_length=1)
     price: float = Field(..., ge=0)
     unit: str
     categoryId: str
@@ -27,6 +29,7 @@ class CreateProductSchema(BaseModel):
 class UpdateProductSchema(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    brand: Optional[str] = Field(None, min_length=1)
     price: Optional[float] = Field(None, ge=0)
     unit: Optional[str] = None
     categoryId: Optional[str] = None
@@ -64,6 +67,7 @@ class EnhancedProductSchema(BaseModel):
     id: Optional[str] = None
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
+    brand: str = Field(..., min_length=1)
     price: float = Field(..., ge=0, description="Base price of the product")
     unit: str
     categoryId: str
