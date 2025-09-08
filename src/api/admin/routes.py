@@ -150,7 +150,7 @@ async def get_collection_data(collection: str, limit: int = 100):
             if doc_data:
                 # Convert DatetimeWithNanoseconds to ISO format strings
                 for key, value in doc_data.items():
-                    if hasattr(value, 'timestamp'):  # DatetimeWithNanoseconds object
+                    if hasattr(value, "timestamp"):  # DatetimeWithNanoseconds object
                         doc_data[key] = value.isoformat()
                 documents.append({"id": doc.id, "data": doc_data})
 

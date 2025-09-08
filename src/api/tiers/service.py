@@ -25,10 +25,10 @@ class TierService:
 
     async def get_customer_tiers_collection(self):
         return await get_async_collection(Collections.CUSTOMER_TIERS)
-    
+
     async def get_users_collection(self):
         return await get_async_collection(Collections.USERS)
-    
+
     async def get_orders_collection(self):
         return await get_async_collection(Collections.ORDERS)
 
@@ -43,11 +43,11 @@ class TierService:
         tier_dict.update({"created_at": datetime.now(), "updated_at": datetime.now()})
 
         await doc_ref.set(tier_dict)
-        
+
         new_tier = CustomerTierSchema(**tier_dict, id=doc_ref.id)
         tiers_cache.set_tier(doc_ref.id, new_tier.model_dump())
         tiers_cache.set_tier_by_code(new_tier.tier_code, new_tier.model_dump())
-        
+
         tiers_cache.invalidate_tier_cache()
 
         return new_tier
@@ -81,7 +81,9 @@ class TierService:
         try:
             customer_tiers_collection = await self.get_customer_tiers_collection()
             docs = (
-                customer_tiers_collection.where(filter=FieldFilter("tier_code", "==", tier_code))
+                customer_tiers_collection.where(
+                    filter=FieldFilter("tier_code", "==", tier_code)
+                )
                 .limit(1)
                 .stream()
             )
@@ -93,7 +95,7 @@ class TierService:
                     return tier
         except Exception as e:
             self.logger.error(f"Error in get_customer_tier_by_code: {e}")
-        
+
         return None
 
     async def get_all_customer_tiers(
@@ -103,7 +105,9 @@ class TierService:
         cached_tiers = tiers_cache.get_all_tiers()
         if cached_tiers:
             if active_only:
-                return [CustomerTierSchema(**t) for t in cached_tiers if t.get("active")]
+                return [
+                    CustomerTierSchema(**t) for t in cached_tiers if t.get("active")
+                ]
             return [CustomerTierSchema(**t) for t in cached_tiers]
 
         try:
@@ -118,12 +122,12 @@ class TierService:
                     tiers.append(CustomerTierSchema(**tier_data, id=doc.id))
 
             tiers.sort(key=lambda x: x.level)
-            
+
             tiers_cache.set_all_tiers([t.model_dump() for t in tiers])
 
             if active_only:
                 return [tier for tier in tiers if tier.active]
-            
+
             return tiers
 
         except Exception as e:
@@ -151,7 +155,9 @@ class TierService:
             updated_data = updated_doc.to_dict()
             if updated_data:
                 updated_tier = CustomerTierSchema(**updated_data, id=updated_doc.id)
-                tiers_cache.invalidate_tier_cache(tier_id=tier_id, tier_code=updated_tier.tier_code)
+                tiers_cache.invalidate_tier_cache(
+                    tier_id=tier_id, tier_code=updated_tier.tier_code
+                )
                 return updated_tier
         return None
 
@@ -163,13 +169,15 @@ class TierService:
 
         if not doc.exists:
             return False
-        
+
         tier_data = doc.to_dict()
         if not tier_data:
             return False
 
         await doc_ref.delete()
-        tiers_cache.invalidate_tier_cache(tier_id=tier_id, tier_code=tier_data.get("tier_code"))
+        tiers_cache.invalidate_tier_cache(
+            tier_id=tier_id, tier_code=tier_data.get("tier_code")
+        )
         return True
 
     async def get_default_tier(self) -> str:
@@ -181,7 +189,9 @@ class TierService:
         try:
             customer_tiers_collection = await self.get_customer_tiers_collection()
             docs = (
-                customer_tiers_collection.where(filter=FieldFilter("is_default", "==", True))
+                customer_tiers_collection.where(
+                    filter=FieldFilter("is_default", "==", True)
+                )
                 .where(filter=FieldFilter("active", "==", True))
                 .limit(1)
                 .stream()
@@ -253,22 +263,26 @@ class TierService:
     async def evaluate_user_tier(self, user_id: str) -> TierEvaluationSchema:
         """Evaluate what tier a user should be in based on their activity"""
         stats = await self.get_user_statistics(user_id)
-        current_tier_code = await self.get_user_tier(user_id) or await self.get_default_tier()
+        current_tier_code = (
+            await self.get_user_tier(user_id) or await self.get_default_tier()
+        )
         tiers = await self.get_all_customer_tiers(active_only=True)
 
         eligible_tiers = []
         for tier in tiers:
             requirements = tier.requirements
             if (
-                stats.get("total_orders", 0) >= requirements.min_orders and
-                stats.get("lifetime_value", 0.0) >= requirements.min_lifetime_value and
-                stats.get("monthly_orders", 0) >= requirements.min_monthly_orders
+                stats.get("total_orders", 0) >= requirements.min_orders
+                and stats.get("lifetime_value", 0.0) >= requirements.min_lifetime_value
+                and stats.get("monthly_orders", 0) >= requirements.min_monthly_orders
             ):
                 eligible_tiers.append(tier.tier_code)
 
         recommended_tier = DEFAULT_FALLBACK_TIER
         if eligible_tiers:
-            eligible_tier_objects = [tier for tier in tiers if tier.tier_code in eligible_tiers]
+            eligible_tier_objects = [
+                tier for tier in tiers if tier.tier_code in eligible_tiers
+            ]
             eligible_tier_objects.sort(key=lambda x: x.level, reverse=True)
             recommended_tier = eligible_tier_objects[0].tier_code
 
@@ -323,24 +337,48 @@ class TierService:
                     "current": stats.get("total_orders", 0),
                     "required": next_requirements.min_orders,
                     "progress_percentage": (
-                        min(100, (stats.get("total_orders", 0) / next_requirements.min_orders * 100))
-                        if next_requirements.min_orders > 0 else 100
+                        min(
+                            100,
+                            (
+                                stats.get("total_orders", 0)
+                                / next_requirements.min_orders
+                                * 100
+                            ),
+                        )
+                        if next_requirements.min_orders > 0
+                        else 100
                     ),
                 },
                 "lifetime_value": {
                     "current": stats.get("lifetime_value", 0.0),
                     "required": next_requirements.min_lifetime_value,
                     "progress_percentage": (
-                        min(100, (stats.get("lifetime_value", 0.0) / next_requirements.min_lifetime_value * 100))
-                        if next_requirements.min_lifetime_value > 0 else 100
+                        min(
+                            100,
+                            (
+                                stats.get("lifetime_value", 0.0)
+                                / next_requirements.min_lifetime_value
+                                * 100
+                            ),
+                        )
+                        if next_requirements.min_lifetime_value > 0
+                        else 100
                     ),
                 },
                 "monthly_orders": {
                     "current": stats.get("monthly_orders", 0),
                     "required": next_requirements.min_monthly_orders,
                     "progress_percentage": (
-                        min(100, (stats.get("monthly_orders", 0) / next_requirements.min_monthly_orders * 100))
-                        if next_requirements.min_monthly_orders > 0 else 100
+                        min(
+                            100,
+                            (
+                                stats.get("monthly_orders", 0)
+                                / next_requirements.min_monthly_orders
+                                * 100
+                            ),
+                        )
+                        if next_requirements.min_monthly_orders > 0
+                        else 100
                     ),
                 },
             }
@@ -383,32 +421,84 @@ class TierService:
 
         default_tiers_data = [
             {
-                "name": "Bronze", "tier_code": "BRONZE", "level": 1,
-                "requirements": {"min_orders": 0, "min_lifetime_value": 0.0, "min_monthly_orders": 0},
-                "benefits": {"price_list_ids": [], "delivery_discount": 0.0, "priority_support": False, "early_access": False},
-                "icon_url": None, "color": "#CD7F32", "is_default": True,
+                "name": "Bronze",
+                "tier_code": "BRONZE",
+                "level": 1,
+                "requirements": {
+                    "min_orders": 0,
+                    "min_lifetime_value": 0.0,
+                    "min_monthly_orders": 0,
+                },
+                "benefits": {
+                    "price_list_ids": [],
+                    "delivery_discount": 0.0,
+                    "priority_support": False,
+                    "early_access": False,
+                },
+                "icon_url": None,
+                "color": "#CD7F32",
+                "is_default": True,
             },
             {
-                "name": "Silver", "tier_code": "SILVER", "level": 2,
-                "requirements": {"min_orders": 5, "min_lifetime_value": 100.0, "min_monthly_orders": 1},
-                "benefits": {"price_list_ids": [], "delivery_discount": 5.0, "priority_support": False, "early_access": False},
-                "icon_url": None, "color": "#C0C0C0",
+                "name": "Silver",
+                "tier_code": "SILVER",
+                "level": 2,
+                "requirements": {
+                    "min_orders": 5,
+                    "min_lifetime_value": 100.0,
+                    "min_monthly_orders": 1,
+                },
+                "benefits": {
+                    "price_list_ids": [],
+                    "delivery_discount": 5.0,
+                    "priority_support": False,
+                    "early_access": False,
+                },
+                "icon_url": None,
+                "color": "#C0C0C0",
             },
             {
-                "name": "Gold", "tier_code": "GOLD", "level": 3,
-                "requirements": {"min_orders": 20, "min_lifetime_value": 500.0, "min_monthly_orders": 2},
-                "benefits": {"price_list_ids": [], "delivery_discount": 10.0, "priority_support": True, "early_access": False},
-                "icon_url": None, "color": "#FFD700",
+                "name": "Gold",
+                "tier_code": "GOLD",
+                "level": 3,
+                "requirements": {
+                    "min_orders": 20,
+                    "min_lifetime_value": 500.0,
+                    "min_monthly_orders": 2,
+                },
+                "benefits": {
+                    "price_list_ids": [],
+                    "delivery_discount": 10.0,
+                    "priority_support": True,
+                    "early_access": False,
+                },
+                "icon_url": None,
+                "color": "#FFD700",
             },
             {
-                "name": "Platinum", "tier_code": "PLATINUM", "level": 4,
-                "requirements": {"min_orders": 50, "min_lifetime_value": 2000.0, "min_monthly_orders": 5},
-                "benefits": {"price_list_ids": [], "delivery_discount": 15.0, "priority_support": True, "early_access": True},
-                "icon_url": None, "color": "#E5E4E2",
+                "name": "Platinum",
+                "tier_code": "PLATINUM",
+                "level": 4,
+                "requirements": {
+                    "min_orders": 50,
+                    "min_lifetime_value": 2000.0,
+                    "min_monthly_orders": 5,
+                },
+                "benefits": {
+                    "price_list_ids": [],
+                    "delivery_discount": 15.0,
+                    "priority_support": True,
+                    "early_access": True,
+                },
+                "icon_url": None,
+                "color": "#E5E4E2",
             },
         ]
 
-        tasks = [self.create_customer_tier(CreateCustomerTierSchema(**data)) for data in default_tiers_data]
+        tasks = [
+            self.create_customer_tier(CreateCustomerTierSchema(**data))
+            for data in default_tiers_data
+        ]
         created_tiers = await asyncio.gather(*tasks)
 
         return created_tiers
