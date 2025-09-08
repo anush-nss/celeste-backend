@@ -1,5 +1,5 @@
 from typing import Optional
-from src.shared.database import get_firestore_db
+from src.shared.database import get_async_db, get_async_collection
 from src.api.inventory.models import (
     InventorySchema,
     CreateInventorySchema,
@@ -9,13 +9,16 @@ from src.api.inventory.models import (
 
 class InventoryService:
     def __init__(self):
-        self.db = get_firestore_db()
-        self.inventory_collection = self.db.collection("inventory")
+        pass
+
+    async def get_inventory_collection(self):
+        return await get_async_collection("inventory")
 
     async def get_all_inventory(
         self, product_id: Optional[str] = None, store_id: Optional[str] = None
     ) -> list[InventorySchema]:
-        inventory_ref = self.inventory_collection
+        inventory_collection = await self.get_inventory_collection()
+        inventory_ref = inventory_collection
         if product_id is not None:
             inventory_ref = inventory_ref.where("productId", "==", product_id)
         if store_id is not None:
@@ -29,7 +32,8 @@ class InventoryService:
         return result
 
     async def get_inventory_by_id(self, inventory_id: str) -> InventorySchema | None:
-        doc = self.inventory_collection.document(inventory_id).get()
+        inventory_collection = await self.get_inventory_collection()
+        doc = inventory_collection.document(inventory_id).get()
         if doc.exists:
             doc_dict = doc.to_dict()
             if doc_dict:  # Ensure doc_dict is not None
@@ -39,7 +43,8 @@ class InventoryService:
     async def create_inventory(
         self, inventory_data: CreateInventorySchema
     ) -> InventorySchema:
-        doc_ref = self.inventory_collection.document()
+        inventory_collection = await self.get_inventory_collection()
+        doc_ref = inventory_collection.document()
         inventory_dict = inventory_data.model_dump()
         doc_ref.set(inventory_dict)
         created_inventory = doc_ref.get()
@@ -53,7 +58,8 @@ class InventoryService:
     async def update_inventory(
         self, inventory_id: str, inventory_data: UpdateInventorySchema
     ) -> InventorySchema | None:
-        doc_ref = self.inventory_collection.document(inventory_id)
+        inventory_collection = await self.get_inventory_collection()
+        doc_ref = inventory_collection.document(inventory_id)
         if not doc_ref.get().exists:
             return None
         inventory_dict = inventory_data.model_dump(exclude_unset=True)
@@ -71,7 +77,8 @@ class InventoryService:
         return None
 
     async def delete_inventory(self, inventory_id: str) -> bool:
-        doc_ref = self.inventory_collection.document(inventory_id)
+        inventory_collection = await self.get_inventory_collection()
+        doc_ref = inventory_collection.document(inventory_id)
         if not doc_ref.get().exists:
             return False
         doc_ref.delete()

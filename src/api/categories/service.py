@@ -1,5 +1,5 @@
 import asyncio
-from src.shared.db_client import db_client
+from src.shared.database import get_async_db, get_async_collection
 from src.config.cache_config import cache_config
 from .cache import categories_cache
 from src.api.categories.models import (
@@ -14,7 +14,10 @@ class CategoryService:
     """Category service with caching for improved performance"""
     
     def __init__(self):
-        self.categories_collection = db_client.collection(Collections.CATEGORIES)
+        pass
+
+    async def get_categories_collection(self):
+        return await get_async_collection(Collections.CATEGORIES)
 
     async def get_all_categories(self) -> list[CategorySchema]:
         """Get all categories with caching"""
@@ -22,7 +25,8 @@ class CategoryService:
         if cached_categories is not None:
             return [CategorySchema(**c) for c in cached_categories]
         
-        docs = self.categories_collection.order_by(field_path="order").stream()
+        categories_collection = await self.get_categories_collection()
+        docs = categories_collection.order_by(field_path="order").stream()
         categories = []
         async for doc in docs:
             doc_dict = doc.to_dict()
@@ -40,7 +44,8 @@ class CategoryService:
         if cached_category is not None:
             return CategorySchema(**cached_category)
         
-        doc = await self.categories_collection.document(category_id).get()
+        categories_collection = await self.get_categories_collection()
+        doc = await categories_collection.document(category_id).get()
         if doc.exists:
             doc_dict = doc.to_dict()
             if doc_dict:
@@ -51,7 +56,8 @@ class CategoryService:
 
     async def create_category(self, category_data: CreateCategorySchema) -> CategorySchema:
         """Create a new category"""
-        doc_ref = self.categories_collection.document()
+        categories_collection = await self.get_categories_collection()
+        doc_ref = categories_collection.document()
         category_dict = category_data.model_dump()
         await doc_ref.set(category_dict)
         
@@ -66,7 +72,8 @@ class CategoryService:
         self, category_id: str, category_data: UpdateCategorySchema
     ) -> CategorySchema | None:
         """Update an existing category"""
-        doc_ref = self.categories_collection.document(category_id)
+        categories_collection = await self.get_categories_collection()
+        doc_ref = categories_collection.document(category_id)
         if not (await doc_ref.get()).exists:
             return None
         
@@ -83,7 +90,8 @@ class CategoryService:
 
     async def delete_category(self, category_id: str) -> bool:
         """Delete a category"""
-        doc_ref = self.categories_collection.document(category_id)
+        categories_collection = await self.get_categories_collection()
+        doc_ref = categories_collection.document(category_id)
         if not (await doc_ref.get()).exists:
             return False
         

@@ -1,16 +1,18 @@
 from typing import Optional
-from src.shared.database import get_firestore_db
+from src.shared.database import get_async_db, get_async_collection
 from src.api.orders.models import OrderSchema, CreateOrderSchema, UpdateOrderSchema
 from src.config.constants import OrderStatus
 
 
 class OrderService:
     def __init__(self):
-        self.db = get_firestore_db()
-        self.orders_collection = self.db.collection("orders")
+        pass
+
+    async def get_orders_collection(self):
+        return await get_async_collection("orders")
 
     async def get_all_orders(self, user_id: Optional[str] = None) -> list[OrderSchema]:
-        orders_ref = self.orders_collection
+        orders_ref = await self.get_orders_collection()
         if user_id:
             orders_ref = orders_ref.where("userId", "==", user_id)
         docs = orders_ref.stream()
@@ -22,7 +24,8 @@ class OrderService:
         return result
 
     async def get_order_by_id(self, order_id: str) -> OrderSchema | None:
-        doc = self.orders_collection.document(order_id).get()
+        orders_collection = await self.get_orders_collection()
+        doc = orders_collection.document(order_id).get()
         if doc.exists:
             doc_dict = doc.to_dict()
             if doc_dict:  # Ensure doc_dict is not None
@@ -32,7 +35,8 @@ class OrderService:
     async def create_order(
         self, order_data: CreateOrderSchema, user_id: str
     ) -> OrderSchema:
-        doc_ref = self.orders_collection.document()
+        orders_collection = await self.get_orders_collection()
+        doc_ref = orders_collection.document()
         order_dict = order_data.model_dump()
         order_dict["userId"] = user_id
         doc_ref.set(order_dict)
@@ -47,7 +51,8 @@ class OrderService:
     async def update_order(
         self, order_id: str, order_data: UpdateOrderSchema
     ) -> OrderSchema | None:
-        doc_ref = self.orders_collection.document(order_id)
+        orders_collection = await self.get_orders_collection()
+        doc_ref = orders_collection.document(order_id)
         if not doc_ref.get().exists:
             return None
         order_dict = order_data.model_dump(exclude_unset=True)
@@ -59,7 +64,8 @@ class OrderService:
         return None
 
     async def delete_order(self, order_id: str) -> bool:
-        doc_ref = self.orders_collection.document(order_id)
+        orders_collection = await self.get_orders_collection()
+        doc_ref = orders_collection.document(order_id)
         if not doc_ref.get().exists:
             return False
         doc_ref.delete()

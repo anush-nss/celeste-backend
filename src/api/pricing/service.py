@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 from typing import List, Optional, Dict
 from google.cloud.firestore_v1.base_query import FieldFilter
-from src.shared.db_client import db_client
+from src.shared.database import get_async_db, get_async_collection
 from src.shared.utils import get_logger
 from src.config.cache_config import cache_config
 from .cache import pricing_cache
@@ -23,13 +23,21 @@ class PricingService:
     """Pricing service with optimized caching and pre-loading"""
     
     def __init__(self):
-        self.price_lists_collection = db_client.collection(Collections.PRICE_LISTS)
-        self.price_list_lines_collection = db_client.collection(Collections.PRICE_LIST_LINES)
-        self.customer_tiers_collection = db_client.collection(Collections.CUSTOMER_TIERS)
+        pass
+
+    async def get_price_lists_collection(self):
+        return await get_async_collection(Collections.PRICE_LISTS)
+    
+    async def get_price_list_lines_collection(self):
+        return await get_async_collection(Collections.PRICE_LIST_LINES)
+    
+    async def get_customer_tiers_collection(self):
+        return await get_async_collection(Collections.CUSTOMER_TIERS)
 
     async def create_price_list(self, price_list_data: CreatePriceListSchema) -> PriceListSchema:
         """Create a new price list"""
-        doc_ref = self.price_lists_collection.document()
+        price_lists_collection = await self.get_price_lists_collection()
+        doc_ref = price_lists_collection.document()
         price_list_dict = price_list_data.model_dump()
         price_list_dict.update({
             "created_at": datetime.now(),
@@ -43,7 +51,8 @@ class PricingService:
 
     async def get_price_list_by_id(self, price_list_id: str) -> Optional[PriceListSchema]:
         """Get a price list by ID"""
-        doc = await self.price_lists_collection.document(price_list_id).get()
+        price_lists_collection = await self.get_price_lists_collection()
+        doc = await price_lists_collection.document(price_list_id).get()
         if doc.exists:
             doc_data = doc.to_dict()
             if doc_data:
@@ -56,7 +65,8 @@ class PricingService:
         if cached_lists is not None:
             return cached_lists
         
-        query = self.price_lists_collection.order_by(field_path="priority")
+        price_lists_collection = await self.get_price_lists_collection()
+        query = price_lists_collection.order_by(field_path="priority")
         if active_only:
             query = query.where(filter=FieldFilter("active", "==", True))
 
@@ -76,7 +86,8 @@ class PricingService:
         self, price_list_id: str, price_list_data: UpdatePriceListSchema
     ) -> Optional[PriceListSchema]:
         """Update a price list"""
-        doc_ref = self.price_lists_collection.document(price_list_id)
+        price_lists_collection = await self.get_price_lists_collection()
+        doc_ref = price_lists_collection.document(price_list_id)
         doc = await doc_ref.get()
 
         if not doc.exists:
@@ -97,13 +108,15 @@ class PricingService:
 
     async def delete_price_list(self, price_list_id: str) -> bool:
         """Delete a price list and its lines"""
-        doc_ref = self.price_lists_collection.document(price_list_id)
+        price_lists_collection = await self.get_price_lists_collection()
+        doc_ref = price_lists_collection.document(price_list_id)
         doc = await doc_ref.get()
 
         if not doc.exists:
             return False
 
-        lines_query = self.price_list_lines_collection.where(filter=FieldFilter("price_list_id", "==", price_list_id))
+        price_list_lines_collection = await self.get_price_list_lines_collection()
+        lines_query = price_list_lines_collection.where(filter=FieldFilter("price_list_id", "==", price_list_id))
         lines_docs = lines_query.stream()
 
         async for line_doc in lines_docs:
@@ -120,7 +133,8 @@ class PricingService:
         """Create a new price list line"""
         line_data.validate_type_fields()
 
-        doc_ref = self.price_list_lines_collection.document()
+        price_list_lines_collection = await self.get_price_list_lines_collection()
+        doc_ref = price_list_lines_collection.document()
         line_dict = line_data.model_dump()
         line_dict.update({
             "price_list_id": price_list_id,
@@ -139,7 +153,8 @@ class PricingService:
         if cached_lines is not None:
             return cached_lines
         
-        docs = self.price_list_lines_collection.where(filter=FieldFilter("price_list_id", "==", price_list_id)).stream()
+        price_list_lines_collection = await self.get_price_list_lines_collection()
+        docs = price_list_lines_collection.where(filter=FieldFilter("price_list_id", "==", price_list_id)).stream()
         lines = []
         async for doc in docs:
             doc_data = doc.to_dict()
@@ -155,7 +170,8 @@ class PricingService:
         self, line_id: str, line_data: UpdatePriceListLineSchema
     ) -> Optional[PriceListLineSchema]:
         """Update a price list line"""
-        doc_ref = self.price_list_lines_collection.document(line_id)
+        price_list_lines_collection = await self.get_price_list_lines_collection()
+        doc_ref = price_list_lines_collection.document(line_id)
         doc = await doc_ref.get()
 
         if not doc.exists:
@@ -176,7 +192,8 @@ class PricingService:
 
     async def delete_price_list_line(self, line_id: str) -> bool:
         """Delete a price list line"""
-        doc_ref = self.price_list_lines_collection.document(line_id)
+        price_list_lines_collection = await self.get_price_list_lines_collection()
+        doc_ref = price_list_lines_collection.document(line_id)
         doc = await doc_ref.get()
 
         if not doc.exists:

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, status
 from typing import Dict, List, Union, Any
-from src.shared.database import get_firestore_db
+from src.shared.database import get_async_db, get_async_collection
 from src.shared.responses import success_response
 from src.api.auth.service import AuthService
 from google.cloud.firestore import SERVER_TIMESTAMP

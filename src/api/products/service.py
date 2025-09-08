@@ -1,7 +1,7 @@
 import asyncio
 from typing import Optional, List
 from google.cloud.firestore_v1.base_query import FieldFilter
-from src.shared.db_client import db_client
+from src.shared.database import get_async_db, get_async_collection
 from src.config.cache_config import cache_config
 from .cache import products_cache
 from src.api.products.models import (
@@ -19,13 +19,17 @@ from src.config.constants import Collections
 class ProductService:
     """Product service with clean, maintainable code"""    
     def __init__(self):
-        self.products_collection = db_client.collection(Collections.PRODUCTS)
+        pass
+
+    async def get_products_collection(self):
+        return await get_async_collection(Collections.PRODUCTS)
 
     async def get_all_products(
         self, query_params: ProductQuerySchema
     ) -> list[ProductSchema]:
         """Get products with simple filtering and pagination"""
-        query = self.products_collection
+        products_collection = await self.get_products_collection()
+        query = products_collection
 
         # Apply filters
         if query_params.categoryId:
@@ -41,7 +45,8 @@ class ProductService:
 
         # Handle cursor-based pagination
         if query_params.cursor:
-            cursor_doc = await self.products_collection.document(query_params.cursor).get()
+            products_collection = await self.get_products_collection()
+            cursor_doc = await products_collection.document(query_params.cursor).get()
             if cursor_doc.exists:
                 query = query.start_after(cursor_doc)
 
@@ -133,7 +138,8 @@ class ProductService:
             return ProductSchema(**cached_product)
         
         # Fallback to database
-        doc = await self.products_collection.document(product_id).get()
+        products_collection = await self.get_products_collection()
+        doc = await products_collection.document(product_id).get()
         if doc.exists:
             doc_dict = doc.to_dict()
             if doc_dict:
@@ -168,7 +174,8 @@ class ProductService:
 
     async def create_product(self, product_data: CreateProductSchema) -> ProductSchema:
         """Create a new product"""
-        doc_ref = self.products_collection.document()
+        products_collection = await self.get_products_collection()
+        doc_ref = products_collection.document()
         product_dict = product_data.model_dump()
         await doc_ref.set(product_dict)
         
@@ -182,7 +189,8 @@ class ProductService:
         self, product_id: str, product_data: UpdateProductSchema
     ) -> ProductSchema | None:
         """Update an existing product"""
-        doc_ref = self.products_collection.document(product_id)
+        products_collection = await self.get_products_collection()
+        doc_ref = products_collection.document(product_id)
         if not (await doc_ref.get()).exists:
             return None
         
@@ -200,7 +208,8 @@ class ProductService:
 
     async def delete_product(self, product_id: str) -> bool:
         """Delete a product"""
-        doc_ref = self.products_collection.document(product_id)
+        products_collection = await self.get_products_collection()
+        doc_ref = products_collection.document(product_id)
         if not (await doc_ref.get()).exists:
             return False
         

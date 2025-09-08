@@ -1,4 +1,4 @@
-from src.shared.database import get_firestore_db
+from src.shared.database import get_async_db, get_async_collection
 from src.api.users.models import CreateUserSchema, UserSchema, CartItemSchema
 from src.config.constants import UserRole, DEFAULT_FALLBACK_TIER
 from src.api.tiers.service import TierService
@@ -6,9 +6,10 @@ from src.api.tiers.service import TierService
 
 class UserService:
     def __init__(self):
-        self.db = get_firestore_db()
-        self.users_collection = self.db.collection("users")
         self.tier_service = TierService()
+
+    async def get_users_collection(self):
+        return await get_async_collection("users")
 
     async def create_user(self, user_data: CreateUserSchema, uid: str) -> UserSchema:
         user_dict = user_data.model_dump()
@@ -25,8 +26,9 @@ class UserService:
         default_tier = await self.tier_service.get_default_tier()
         user_dict["customer_tier"] = default_tier
 
-        self.users_collection.document(uid).set(user_dict)
-        created_user_doc = self.users_collection.document(uid).get()
+        users_collection = await self.get_users_collection()
+        await users_collection.document(uid).set(user_dict)
+        created_user_doc = await users_collection.document(uid).get()
         created_dict = created_user_doc.to_dict()
         if created_dict:  # Ensure created_dict is not None
             return UserSchema(**created_dict)
@@ -35,7 +37,8 @@ class UserService:
             raise Exception("Failed to create user")
 
     async def get_user_by_id(self, user_id: str) -> UserSchema | None:
-        user_doc = self.users_collection.document(user_id).get()
+        users_collection = await self.get_users_collection()
+        user_doc = await users_collection.document(user_id).get()
         if user_doc.exists:
             user_dict = user_doc.to_dict()
             if user_dict:  # Ensure user_dict is not None
@@ -43,8 +46,9 @@ class UserService:
         return None
 
     async def update_user(self, user_id: str, user_data: dict) -> UserSchema | None:
-        self.users_collection.document(user_id).update(user_data)
-        updated_user_doc = self.users_collection.document(user_id).get()
+        users_collection = await self.get_users_collection()
+        await users_collection.document(user_id).update(user_data)
+        updated_user_doc = await users_collection.document(user_id).get()
         if updated_user_doc.exists:
             updated_dict = updated_user_doc.to_dict()
             if updated_dict:
@@ -78,7 +82,8 @@ class UserService:
 
         # Update user in database
         user_dict = user.model_dump()
-        self.users_collection.document(user_id).update({"cart": user_dict["cart"]})
+        users_collection = await self.get_users_collection()
+        await users_collection.document(user_id).update({"cart": user_dict["cart"]})
 
         return cart_item.model_dump()
 
@@ -103,7 +108,8 @@ class UserService:
 
         # Update user in database
         user_dict = user.model_dump()
-        self.users_collection.document(user_id).update({"cart": user_dict["cart"]})
+        users_collection = await self.get_users_collection()
+        await users_collection.document(user_id).update({"cart": user_dict["cart"]})
 
         return cart_item.model_dump()
 
@@ -118,7 +124,8 @@ class UserService:
 
         # Update user in database
         user_dict = user.model_dump()
-        self.users_collection.document(user_id).update({"cart": user_dict["cart"]})
+        users_collection = await self.get_users_collection()
+        await users_collection.document(user_id).update({"cart": user_dict["cart"]})
 
         return True
 
@@ -155,7 +162,8 @@ class UserService:
 
         # Update user in database
         user_dict = user.model_dump()
-        self.users_collection.document(user_id).update(
+        users_collection = await self.get_users_collection()
+        await users_collection.document(user_id).update(
             {"wishlist": user_dict["wishlist"]}
         )
 
@@ -173,7 +181,8 @@ class UserService:
 
         # Update user in database
         user_dict = user.model_dump()
-        self.users_collection.document(user_id).update(
+        users_collection = await self.get_users_collection()
+        await users_collection.document(user_id).update(
             {"wishlist": user_dict["wishlist"]}
         )
 

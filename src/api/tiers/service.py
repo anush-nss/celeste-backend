@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
 from google.cloud.firestore_v1.base_query import FieldFilter
-from src.shared.db_client import db_client
+from src.shared.database import get_async_db, get_async_collection
 from src.shared.utils import get_logger
 from src.config.cache_config import cache_config
 from .cache import tiers_cache
@@ -21,16 +21,23 @@ from src.config.constants import Collections, DEFAULT_FALLBACK_TIER
 
 class TierService:
     def __init__(self):
-        self.customer_tiers_collection = db_client.collection(Collections.CUSTOMER_TIERS)
-        self.users_collection = db_client.collection(Collections.USERS)
-        self.orders_collection = db_client.collection(Collections.ORDERS)
         self.logger = get_logger(__name__)
+
+    async def get_customer_tiers_collection(self):
+        return await get_async_collection(Collections.CUSTOMER_TIERS)
+    
+    async def get_users_collection(self):
+        return await get_async_collection(Collections.USERS)
+    
+    async def get_orders_collection(self):
+        return await get_async_collection(Collections.ORDERS)
 
     async def create_customer_tier(
         self, tier_data: CreateCustomerTierSchema
     ) -> CustomerTierSchema:
         """Create a new customer tier"""
-        doc_ref = self.customer_tiers_collection.document()
+        customer_tiers_collection = await self.get_customer_tiers_collection()
+        doc_ref = customer_tiers_collection.document()
 
         tier_dict = tier_data.model_dump()
         tier_dict.update({"created_at": datetime.now(), "updated_at": datetime.now()})
@@ -53,7 +60,8 @@ class TierService:
         if cached_tier:
             return CustomerTierSchema(**cached_tier)
 
-        doc = await self.customer_tiers_collection.document(tier_id).get()
+        customer_tiers_collection = await self.get_customer_tiers_collection()
+        doc = await customer_tiers_collection.document(tier_id).get()
         if doc.exists:
             tier_data = doc.to_dict()
             if tier_data:
@@ -71,8 +79,9 @@ class TierService:
             return CustomerTierSchema(**cached_tier)
 
         try:
+            customer_tiers_collection = await self.get_customer_tiers_collection()
             docs = (
-                self.customer_tiers_collection.where(filter=FieldFilter("tier_code", "==", tier_code))
+                customer_tiers_collection.where(filter=FieldFilter("tier_code", "==", tier_code))
                 .limit(1)
                 .stream()
             )
@@ -98,7 +107,7 @@ class TierService:
             return [CustomerTierSchema(**t) for t in cached_tiers]
 
         try:
-            query = self.customer_tiers_collection
+            query = await self.get_customer_tiers_collection()
             if active_only:
                 query = query.where(filter=FieldFilter("active", "==", True))
             docs = query.stream()
@@ -125,7 +134,8 @@ class TierService:
         self, tier_id: str, tier_data: UpdateCustomerTierSchema
     ) -> Optional[CustomerTierSchema]:
         """Update a customer tier"""
-        doc_ref = self.customer_tiers_collection.document(tier_id)
+        customer_tiers_collection = await self.get_customer_tiers_collection()
+        doc_ref = customer_tiers_collection.document(tier_id)
         doc = await doc_ref.get()
 
         if not doc.exists:
@@ -147,7 +157,8 @@ class TierService:
 
     async def delete_customer_tier(self, tier_id: str) -> bool:
         """Delete a customer tier"""
-        doc_ref = self.customer_tiers_collection.document(tier_id)
+        customer_tiers_collection = await self.get_customer_tiers_collection()
+        doc_ref = customer_tiers_collection.document(tier_id)
         doc = await doc_ref.get()
 
         if not doc.exists:
@@ -168,8 +179,9 @@ class TierService:
             return cached_tier_code
 
         try:
+            customer_tiers_collection = await self.get_customer_tiers_collection()
             docs = (
-                self.customer_tiers_collection.where(filter=FieldFilter("is_default", "==", True))
+                customer_tiers_collection.where(filter=FieldFilter("is_default", "==", True))
                 .where(filter=FieldFilter("active", "==", True))
                 .limit(1)
                 .stream()
@@ -187,7 +199,8 @@ class TierService:
 
     async def get_user_tier(self, user_id: str) -> Optional[str]:
         """Get a user's current tier"""
-        user_doc = await self.users_collection.document(user_id).get()
+        users_collection = await self.get_users_collection()
+        user_doc = await users_collection.document(user_id).get()
         if user_doc.exists:
             user_data = user_doc.to_dict()
             if user_data and user_data.get("customer_tier"):
@@ -196,7 +209,8 @@ class TierService:
 
     async def update_user_tier(self, user_id: str, new_tier: str) -> bool:
         """Update a user's tier"""
-        doc_ref = self.users_collection.document(user_id)
+        users_collection = await self.get_users_collection()
+        doc_ref = users_collection.document(user_id)
         doc = await doc_ref.get()
 
         if not doc.exists:
@@ -207,7 +221,8 @@ class TierService:
 
     async def get_user_statistics(self, user_id: str) -> Dict:
         """Get user statistics for tier evaluation"""
-        user_doc = await self.users_collection.document(user_id).get()
+        users_collection = await self.get_users_collection()
+        user_doc = await users_collection.document(user_id).get()
         if not user_doc.exists:
             return {}
 
@@ -219,7 +234,8 @@ class TierService:
         lifetime_value = user_data.get("lifetime_value", 0.0)
 
         thirty_days_ago = datetime.now() - timedelta(days=30)
-        recent_orders_query = self.orders_collection.where(
+        orders_collection = await self.get_orders_collection()
+        recent_orders_query = orders_collection.where(
             filter=FieldFilter("user_id", "==", user_id)
         ).where(filter=FieldFilter("createdAt", ">=", thirty_days_ago))
 
