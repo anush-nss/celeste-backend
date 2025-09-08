@@ -46,7 +46,7 @@ async def add_data_to_collection(
     - **data**: Single document (dict) or list of documents to add
     """
     try:
-        db = get_firestore_db()
+        db = await get_async_db()
         collection_ref = db.collection(collection)
 
         added_documents = []
@@ -59,7 +59,7 @@ async def add_data_to_collection(
             doc_data.update(
                 {"created_at": SERVER_TIMESTAMP, "updated_at": SERVER_TIMESTAMP}
             )
-            doc_ref.set(doc_data)
+            await doc_ref.set(doc_data)
             added_documents.append(
                 {
                     "id": doc_ref.id,
@@ -76,7 +76,7 @@ async def add_data_to_collection(
                     doc_data.update(
                         {"created_at": SERVER_TIMESTAMP, "updated_at": SERVER_TIMESTAMP}
                     )
-                    doc_ref.set(doc_data)
+                    await doc_ref.set(doc_data)
                     added_documents.append(
                         {
                             "id": doc_ref.id,
@@ -116,9 +116,9 @@ async def list_collections():
     List all collections in the database.
     """
     try:
-        db = get_firestore_db()
+        db = await get_async_db()
         collections = db.collections()
-        collection_names = [collection.id for collection in collections]
+        collection_names = [collection.id async for collection in collections]
 
         return success_response(
             {"collections": collection_names, "count": len(collection_names)}
@@ -140,12 +140,12 @@ async def get_collection_data(collection: str, limit: int = 100):
     - **limit**: Maximum number of documents to return (default: 100)
     """
     try:
-        db = get_firestore_db()
+        db = await get_async_db()
         collection_ref = db.collection(collection)
         docs = collection_ref.limit(limit).stream()
 
         documents = []
-        for doc in docs:
+        async for doc in docs:
             doc_data = doc.to_dict()
             if doc_data:
                 # Convert DatetimeWithNanoseconds to ISO format strings
@@ -174,13 +174,13 @@ async def clear_collection(collection: str):
     - **collection**: Name of the collection to clear
     """
     try:
-        db = get_firestore_db()
+        db = await get_async_db()
         collection_ref = db.collection(collection)
         docs = collection_ref.stream()
 
         deleted_count = 0
-        for doc in docs:
-            doc.reference.delete()
+        async for doc in docs:
+            await doc.reference.delete()
             deleted_count += 1
 
         return success_response(
