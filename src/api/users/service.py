@@ -23,7 +23,7 @@ class UserService:
             user_dict["role"] = user_dict["role"].value
         elif "role" not in user_dict or user_dict["role"] is None:
             user_dict["role"] = UserRole.CUSTOMER.value
-        
+
         # Set default customer tier when creating user
         default_tier = await self.tier_service.get_default_tier()
         user_dict["customer_tier"] = default_tier

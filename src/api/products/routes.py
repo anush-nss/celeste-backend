@@ -40,7 +40,9 @@ async def get_all_products(
     categoryId: Optional[str] = Query(None, description="Filter by category ID"),
     minPrice: Optional[float] = Query(None, description="Filter by minimum price"),
     maxPrice: Optional[float] = Query(None, description="Filter by maximum price"),
-    only_discounted: Optional[bool] = Query(False, description="Return only products with discounts applied"),
+    only_discounted: Optional[bool] = Query(
+        False, description="Return only products with discounts applied"
+    ),
     user_tier: Optional[str] = Depends(get_user_tier),
 ):
     """
@@ -89,7 +91,7 @@ async def get_product_by_id(
     product = await product_service.get_product_by_id_with_pricing(
         id, include_pricing, user_tier, pricing_service
     )
-    
+
     if not product:
         raise ResourceNotFoundException(detail=f"Product with ID {id} not found")
 
