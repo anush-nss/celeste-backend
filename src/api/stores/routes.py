@@ -28,8 +28,20 @@ stores_router = APIRouter(prefix="/stores", tags=["Stores"])
 store_service = StoreService()
 
 
-@stores_router.get("/", summary="Get all stores", response_model=StoreLocationResponse)
+@stores_router.get("/", summary="Get all stores with optional location filtering", response_model=StoreLocationResponse)
 async def get_all_stores(
+    latitude: Optional[float] = Query(
+        None, ge=MIN_LATITUDE, le=MAX_LATITUDE, description="User latitude for distance calculations"
+    ),
+    longitude: Optional[float] = Query(
+        None, ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="User longitude for distance calculations"
+    ),
+    radius: Optional[float] = Query(
+        None,
+        ge=0.1,
+        le=MAX_SEARCH_RADIUS_KM,
+        description="Search radius in km for filtering (optional, requires lat/lon)",
+    ),
     limit: Optional[int] = Query(
         DEFAULT_STORES_LIMIT,
         ge=1,
@@ -40,35 +52,52 @@ async def get_all_stores(
     features: Optional[List[StoreFeatures]] = Query(
         None, description="Filter by store features"
     ),
+    includeDistance: Optional[bool] = Query(
+        True, description="Include distance calculations (requires lat/lon)"
+    ),
     includeOpenStatus: Optional[bool] = Query(
         False, description="Include open/closed status"
     ),
 ):
     """
-    Get all stores without location-based filtering.
+    Get all stores with optional location-based filtering and distance calculations.
 
-    - **Returns all stores** (with caching)
-    - **No distance calculations** - use /stores/nearby for location-based search
-    - **Filtering available**: By features, active status, etc.
-    - **Performance optimized**: Cached results
-
-    For location-based searches with distances, use the /stores/nearby endpoint.
+    - **Flexible**: Works with or without location parameters
+    - **Multi-filter**: Combine location, features, status
+    - **Configurable**: Control what data is included in response
+    - **Performance optimized**: Cached results for non-location queries
+    
+    If latitude/longitude provided, acts like nearby search with radius filtering.
+    If no location provided, returns all stores (cached for performance).
     """
+
+    # Validate location parameters if provided
+    if (latitude is not None) != (longitude is not None):
+        raise HTTPException(
+            status_code=400,
+            detail="Both latitude and longitude must be provided together",
+        )
 
     # Build query parameters
     query_params = StoreQuerySchema(
-        latitude=None,
-        longitude=None,
-        radius=None,
+        latitude=latitude,
+        longitude=longitude,
+        radius=radius,
         limit=limit,
         isActive=isActive,
         features=features,
-        includeDistance=False,  # No distances in get_all_stores
+        includeDistance=includeDistance if (latitude is not None and longitude is not None) else False,
         includeOpenStatus=includeOpenStatus,
     )
 
     try:
-        result = await store_service.get_all_stores(query_params)
+        # If location AND radius provided, use location-based search for filtering
+        # If only location provided, use get_all_stores with distance calculations
+        if latitude is not None and longitude is not None and radius is not None:
+            result = await store_service.get_stores_by_location(query_params)
+        else:
+            result = await store_service.get_all_stores(query_params)
+        
         return success_response(
             result.model_dump(mode="json"), status_code=status.HTTP_200_OK
         )
@@ -114,9 +143,8 @@ async def get_nearby_stores(
     Optimized endpoint for finding nearby stores.
 
     - **Required**: latitude, longitude
-    - **Efficient**: Uses geohash neighbors for optimal coverage
+    - **Efficient**: Uses bounding box filtering for optimal coverage
     - **Sorted**: Results ordered by distance
-    - **Cached**: Results cached for performance
     """
     query_params = StoreQuerySchema(
         latitude=latitude,
@@ -131,73 +159,6 @@ async def get_nearby_stores(
 
     try:
         result = await store_service.get_stores_by_location(query_params)
-        return success_response(
-            result.model_dump(mode="json"), status_code=status.HTTP_200_OK
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@stores_router.get(
-    "/search", summary="Advanced store search", response_model=StoreLocationResponse
-)
-async def search_stores(
-    latitude: Optional[float] = Query(
-        None, ge=MIN_LATITUDE, le=MAX_LATITUDE, description="User latitude"
-    ),
-    longitude: Optional[float] = Query(
-        None, ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="User longitude"
-    ),
-    radius: Optional[float] = Query(
-        DEFAULT_SEARCH_RADIUS_KM,
-        ge=0.1,
-        le=MAX_SEARCH_RADIUS_KM,
-        description="Search radius in km",
-    ),
-    limit: Optional[int] = Query(
-        DEFAULT_STORES_LIMIT,
-        ge=1,
-        le=MAX_STORES_LIMIT,
-        description="Max stores to return",
-    ),
-    isActive: Optional[bool] = Query(None, description="Filter by active status"),
-    features: Optional[List[StoreFeatures]] = Query(
-        None, description="Required store features"
-    ),
-    includeDistance: Optional[bool] = Query(
-        True, description="Include distance calculations"
-    ),
-    includeOpenStatus: Optional[bool] = Query(
-        False, description="Include business hours status"
-    ),
-):
-    """
-    Advanced search with multiple filter combinations.
-
-    - **Flexible**: Works with or without location
-    - **Multi-filter**: Combine location, features, status
-    - **Configurable**: Control what data is included in response
-    """
-    # Validate location parameters if provided
-    if (latitude is not None) != (longitude is not None):
-        raise HTTPException(
-            status_code=400,
-            detail="Both latitude and longitude must be provided together",
-        )
-
-    query_params = StoreQuerySchema(
-        latitude=latitude,
-        longitude=longitude,
-        radius=radius,
-        limit=limit,
-        isActive=isActive,
-        features=features,
-        includeDistance=includeDistance,
-        includeOpenStatus=includeOpenStatus,
-    )
-
-    try:
-        result = await store_service.get_all_stores(query_params)
         return success_response(
             result.model_dump(mode="json"), status_code=status.HTTP_200_OK
         )
@@ -250,7 +211,7 @@ async def get_store_distance(
 
     from src.shared.geo_utils import GeoUtils
 
-    distance = GeoUtils.haversine_distance(
+    distance = GeoUtils.calculate_distance(
         latitude, longitude, store.location.latitude, store.location.longitude
     )
 
@@ -280,8 +241,7 @@ async def create_store(store_data: CreateStoreSchema):
     """
     Create a new store (Admin only).
 
-    - **Geohash generation**: Automatically generates geohash for location indexing
-    - **Cache invalidation**: Clears relevant caches
+    - **Location storage**: Stores latitude and longitude coordinates
     - **Validation**: Full input validation with location bounds checking
     """
     try:
@@ -303,8 +263,7 @@ async def update_store(store_id: str, store_data: UpdateStoreSchema):
     """
     Update an existing store (Admin only).
 
-    - **Geohash update**: Regenerates geohash if location changes
-    - **Cache invalidation**: Clears store-specific and general caches
+    - **Location update**: Updates latitude and longitude coordinates if location changes
     - **Partial updates**: Only updates provided fields
     """
     try:
@@ -329,7 +288,6 @@ async def delete_store(store_id: str):
     """
     Delete a store (Admin only).
 
-    - **Cache cleanup**: Removes all related cache entries
     - **Soft validation**: Checks if store exists before deletion
     """
     if not await store_service.delete_store(store_id):
