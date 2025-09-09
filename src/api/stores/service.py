@@ -3,7 +3,6 @@ from typing import Optional, List, Dict, Any
 from google.cloud.firestore_v1.base_query import FieldFilter
 from src.shared.database import get_async_db, get_async_collection
 from src.shared.geo_utils import GeoUtils
-from src.config.cache_config import cache_config
 from .cache import stores_cache
 from src.api.stores.models import (
     StoreSchema,
@@ -41,28 +40,50 @@ class StoreService:
         cached_stores = stores_cache.get_all_stores(active_only=active_only)
         if cached_stores is not None:
             stores = [StoreSchema(**store_data) for store_data in cached_stores]
+            # Apply features filtering to cached data
+            if query_params and query_params.features:
+                feature_values = [f.value for f in query_params.features]
+                stores = [
+                    store
+                    for store in stores
+                    if store.features and all(
+                        feature in store.features for feature in feature_values
+                    )
+                ]
+            # Apply limit to cached data
+            if query_params and query_params.limit:
+                stores = stores[:query_params.limit]
+            
+            # Apply dynamic fields to cached data
+            if query_params:
+                for store in stores:
+                    # Add distance calculations if location provided
+                    if (query_params.includeDistance and 
+                        query_params.latitude is not None and 
+                        query_params.longitude is not None):
+                        distance = GeoUtils.calculate_distance(
+                            query_params.latitude,
+                            query_params.longitude,
+                            store.location.latitude,
+                            store.location.longitude,
+                        )
+                        store.distance = round(distance, 1)
+                    
+                    if query_params.includeOpenStatus:
+                        store.is_open_now, store.next_change = self._calculate_store_status(store)
+            
             return self._build_location_response(stores, query_params)
 
-        # Query database
+        # Query database - get ALL stores (no features filtering in DB)
         stores_collection = await self.get_stores_collection()
         query = stores_collection
 
-        # Apply filters
+        # Apply only basic filters (not features - we'll do that in memory)
         if query_params:
             if query_params.isActive is not None:
                 query = query.where(
                     filter=FieldFilter("isActive", "==", query_params.isActive)
                 )
-
-            if query_params.features:
-                # Filter by features (stores must have all specified features)
-                for feature in query_params.features:
-                    query = query.where(
-                        filter=FieldFilter("features", "array_contains", feature.value)
-                    )
-
-            if query_params.limit:
-                query = query.limit(query_params.limit)
 
         docs = query.stream()
         stores = []
@@ -71,16 +92,49 @@ class StoreService:
             if doc_data:
                 stores.append(StoreSchema(**doc_data, id=doc.id))
 
-        # Cache results
+        # Cache ALL results before filtering (cache raw data)
         stores_data = [store.model_dump() for store in stores]
         stores_cache.set_all_stores(stores_data, active_only=active_only)
+
+        # Apply features filtering in memory (after caching)
+        if query_params and query_params.features:
+            feature_values = [f.value for f in query_params.features]
+            stores = [
+                store
+                for store in stores
+                if store.features and all(
+                    feature in store.features for feature in feature_values
+                )
+            ]
+
+        # Apply limit after filtering
+        if query_params and query_params.limit:
+            stores = stores[:query_params.limit]
+
+        # Apply dynamic fields based on query parameters
+        if query_params:
+            for store in stores:
+                # Add distance calculations if location provided
+                if (query_params.includeDistance and 
+                    query_params.latitude is not None and 
+                    query_params.longitude is not None):
+                    distance = GeoUtils.calculate_distance(
+                        query_params.latitude,
+                        query_params.longitude,
+                        store.location.latitude,
+                        store.location.longitude,
+                    )
+                    store.distance = round(distance, 1)
+                
+                if query_params.includeOpenStatus:
+                    store.is_open_now, store.next_change = self._calculate_store_status(store)
 
         return self._build_location_response(stores, query_params)
 
     async def get_stores_by_location(
         self, query_params: StoreQuerySchema
     ) -> StoreLocationResponse:
-        """Get stores within radius of specified location using geohash optimization"""
+        """Get stores within radius of specified location using lat/lon filtering"""
         if not query_params.latitude or not query_params.longitude:
             raise ValueError(
                 "Latitude and longitude are required for location-based search"
@@ -95,60 +149,25 @@ class StoreService:
         radius = query_params.radius or DEFAULT_SEARCH_RADIUS_KM
         radius = min(radius, MAX_SEARCH_RADIUS_KM)
 
-        # Check cache first
-        features_list = (
-            [f.value for f in query_params.features] if query_params.features else None
-        )
-        cached_stores = stores_cache.get_location_search(
-            query_params.latitude,
-            query_params.longitude,
-            radius,
-            query_params.isActive if query_params.isActive is not None else True,
-            features_list,
-        )
-
-        if cached_stores is not None:
-            stores = [StoreSchema(**store_data) for store_data in cached_stores]
-            return self._build_location_response(stores, query_params)
-
-        # Use geohash prefixes for efficient querying
-        geohash_prefixes = GeoUtils.get_geohash_prefixes_for_radius(
-            query_params.latitude, query_params.longitude, radius
-        )
-
         stores_collection = await self.get_stores_collection()
-        all_stores = []
+        query = stores_collection
 
-        # Query using geohash prefixes for efficiency
-        for prefix in geohash_prefixes:
-            query = stores_collection
-
-            # Filter by geohash prefix
-            query = query.where(filter=FieldFilter("location.geohash", ">=", prefix))
+        # Apply active filter
+        if query_params.isActive is not None:
             query = query.where(
-                filter=FieldFilter("location.geohash", "<", prefix + "\uf8ff")
+                filter=FieldFilter("isActive", "==", query_params.isActive)
             )
 
-            # Apply other filters
-            if query_params.isActive is not None:
-                query = query.where(
-                    filter=FieldFilter("isActive", "==", query_params.isActive)
-                )
-
-            docs = query.stream()
-            async for doc in docs:
-                doc_data = doc.to_dict()
-                if doc_data:
-                    all_stores.append({**doc_data, "id": doc.id})
-
-        # Remove duplicates (stores might appear in multiple geohash prefixes)
-        unique_stores = {}
-        for store in all_stores:
-            unique_stores[store["id"]] = store
+        docs = query.stream()
+        all_stores = []
+        async for doc in docs:
+            doc_data = doc.to_dict()
+            if doc_data:
+                all_stores.append({**doc_data, "id": doc.id})
 
         # Filter by actual distance and features
         filtered_stores = GeoUtils.filter_by_radius(
-            list(unique_stores.values()),
+            all_stores,
             query_params.latitude,
             query_params.longitude,
             radius,
@@ -188,17 +207,6 @@ class StoreService:
                 )
 
             stores.append(store)
-
-        # Cache results
-        stores_data = [store.model_dump() for store in stores]
-        stores_cache.set_location_search(
-            query_params.latitude,
-            query_params.longitude,
-            radius,
-            stores_data,
-            query_params.isActive if query_params.isActive is not None else True,
-            features_list,
-        )
 
         return self._build_location_response(stores, query_params, len(filtered_stores))
 
@@ -283,13 +291,6 @@ class StoreService:
         doc_ref = stores_collection.document()
         store_dict = store_data.model_dump()
 
-        # Generate geohash for location
-        if store_data.location:
-            geohash = GeoUtils.generate_geohash(
-                store_data.location.latitude, store_data.location.longitude
-            )
-            store_dict["location"]["geohash"] = geohash
-
         store_dict.update({"created_at": datetime.now(), "updated_at": datetime.now()})
 
         await doc_ref.set(store_dict)
@@ -307,15 +308,6 @@ class StoreService:
         store_dict = store_data.model_dump(exclude_unset=True)
 
         if store_dict:
-            # Update geohash if location changed
-            if "location" in store_dict and store_dict["location"]:
-                location = store_dict["location"]
-                if "latitude" in location and "longitude" in location:
-                    geohash = GeoUtils.generate_geohash(
-                        location["latitude"], location["longitude"]
-                    )
-                    store_dict["location"]["geohash"] = geohash
-
             store_dict["updated_at"] = datetime.now()
             await doc_ref.update(store_dict)
 

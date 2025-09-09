@@ -23,6 +23,7 @@ Celeste is a FastAPI-based e-commerce backend API that provides comprehensive fu
 - **Python-dotenv**: Environment variable management
 - **Email-validator**: Email validation utilities
 - **Requests**: HTTP library for external API calls
+- **Geopy**: Geospatial library for distance calculations and geocoding
 
 ## Project Structure
 
@@ -69,10 +70,11 @@ celeste/
 │   │   │   ├── service.py          # Enhanced product service with pagination
 │   │   │   ├── cache.py            # Product caching
 │   │   │   └── __init__.py
-│   │   ├── stores/                 # Store management
-│   │   │   ├── routes.py           # Store routes
-│   │   │   ├── models.py           # Store models
-│   │   │   ├── service.py          # Store services
+│   │   ├── stores/                 # Store management with geospatial features
+│   │   │   ├── routes.py           # Store routes with location-based search
+│   │   │   ├── models.py           # Store models with location schemas
+│   │   │   ├── service.py          # Store services with geopy integration
+│   │   │   ├── cache.py            # Store caching (non-location queries only)
 │   │   │   └── __init__.py
 │   │   ├── tiers/                  # Customer tier management
 │   │   │   ├── routes.py           # Tier management routes (admin + user)
@@ -100,6 +102,7 @@ celeste/
 │       ├── db_client.py            # Firestore client initialization
 │       ├── core_cache.py           # Core Redis cache connection
 │       ├── cache_invalidation.py   # Cross-domain cache invalidation manager
+│       ├── geo_utils.py            # Geospatial utilities with geopy integration
 │       ├── exceptions.py           # Custom exceptions
 │       └── responses.py            # Response formatting
 ├── main.py                         # Application entry point
@@ -139,6 +142,13 @@ To ensure high performance and reduce database load, the application uses a Redi
 
 Each route module handles a specific domain of functionality. All route handlers are `async` and `await` calls to the service layer.
 
+#### Store Routes with Geospatial Features
+The stores module includes advanced geospatial functionality:
+- **Unified Endpoint**: `/stores` handles both simple queries and location-based searches
+- **Distance Calculations**: Uses geopy for precise geodesic distance calculations (in kilometers)
+- **Smart Caching**: Caches non-location queries while calculating distances in real-time
+- **Feature Filtering**: Supports multiple store feature filtering (wifi, parking, etc.)
+
 ### 5. Data Models (Domain-Specific `src/api/{domain}/models.py`)
 
 Pydantic models are used for data validation, serialization, and documentation. They are organized by domain and define the shape of the API data.
@@ -152,6 +162,7 @@ FastAPI's dependency injection system is used for:
 ### 7. Shared Components (`src/shared/`)
 
 - **`db_client.py`**: Initializes the asynchronous Firestore client.
+- **`geo_utils.py`**: Geospatial utilities using geopy for distance calculations, geocoding, and reverse geocoding.
 - **`exceptions.py`**: Defines custom exception classes.
 - **`responses.py`**: Standardizes API response formats.
 

@@ -1,12 +1,11 @@
 """
-Geospatial utilities for location-based operations
+Geospatial utilities for location-based operations using geopy
 """
 
-import math
-from typing import Tuple, List
+from typing import Tuple, List, Optional, Union, Any
+from geopy.distance import geodesic
+from geopy.geocoders import Nominatim
 from src.config.constants import (
-    EARTH_RADIUS_KM,
-    GEOHASH_PRECISION,
     MIN_LATITUDE,
     MAX_LATITUDE,
     MIN_LONGITUDE,
@@ -15,13 +14,15 @@ from src.config.constants import (
 
 
 class GeoUtils:
-    """Utility class for geospatial operations"""
+    """Utility class for geospatial operations using geopy"""
+
+    # Initialize geocoder with a user agent for geopy
+    _geolocator = Nominatim(user_agent="celeste_ecommerce_app")
 
     @staticmethod
-    def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """
-        Calculate the great circle distance between two points on Earth
-        using the Haversine formula
+        Calculate the geodesic distance between two points on Earth using geopy
 
         Args:
             lat1, lon1: Latitude and longitude of first point in degrees
@@ -30,29 +31,14 @@ class GeoUtils:
         Returns:
             Distance in kilometers
         """
-        # Convert latitude and longitude from degrees to radians
-        lat1_rad = math.radians(lat1)
-        lon1_rad = math.radians(lon1)
-        lat2_rad = math.radians(lat2)
-        lon2_rad = math.radians(lon2)
-
-        # Haversine formula
-        dlat = lat2_rad - lat1_rad
-        dlon = lon2_rad - lon1_rad
-
-        a = (
-            math.sin(dlat / 2) ** 2
-            + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2) ** 2
-        )
-        c = 2 * math.asin(math.sqrt(a))
-        print(EARTH_RADIUS_KM * c)
-
-        return EARTH_RADIUS_KM * c
+        point1 = (lat1, lon1)
+        point2 = (lat2, lon2)
+        return geodesic(point1, point2).kilometers
 
     @staticmethod
     def precise_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """
-        Calculate precise distance between two points using Haversine formula
+        Calculate precise distance between two points using geodesic calculation
         Sufficient accuracy for store location queries
 
         Args:
@@ -62,69 +48,63 @@ class GeoUtils:
         Returns:
             Distance in kilometers
         """
-        return GeoUtils.haversine_distance(lat1, lon1, lat2, lon2)
+        return GeoUtils.calculate_distance(lat1, lon1, lat2, lon2)
 
     @staticmethod
-    def generate_geohash(
-        latitude: float, longitude: float, precision: int = GEOHASH_PRECISION
-    ) -> str:
+    def geocode_address(address: str) -> Tuple[float, float]:
         """
-        Generate a geohash for the given coordinates
+        Convert an address to latitude and longitude coordinates
+
+        Args:
+            address: Address string to geocode
+
+        Returns:
+            Tuple of (latitude, longitude)
+
+        Raises:
+            ValueError: If geocoding fails
+        """
+        try:
+            # Use Any type to avoid async/coroutine type issues
+            location: Any = GeoUtils._geolocator.geocode(address)
+            if location is not None and hasattr(location, 'latitude') and hasattr(location, 'longitude'):
+                return float(location.latitude), float(location.longitude)
+            else:
+                raise ValueError(f"Could not geocode address: {address}")
+        except Exception as e:
+            raise ValueError(f"Geocoding failed: {str(e)}")
+
+    @staticmethod
+    def reverse_geocode(latitude: float, longitude: float) -> str:
+        """
+        Convert latitude and longitude to an address
 
         Args:
             latitude: Latitude in degrees
             longitude: Longitude in degrees
-            precision: Number of characters in geohash (default: 9)
 
         Returns:
-            Geohash string
+            Address string
+
+        Raises:
+            ValueError: If reverse geocoding fails
         """
-        base32 = "0123456789bcdefghjkmnpqrstuvwxyz"
-
-        lat_range = [-90.0, 90.0]
-        lon_range = [-180.0, 180.0]
-
-        geohash = []
-        bits = 0
-        bit = 0
-        even_bit = True
-
-        while len(geohash) < precision:
-            if even_bit:
-                # Process longitude
-                mid = (lon_range[0] + lon_range[1]) / 2
-                if longitude > mid:
-                    bit = (bit << 1) + 1
-                    lon_range[0] = mid
-                else:
-                    bit = bit << 1
-                    lon_range[1] = mid
+        try:
+            # Use Any type to avoid async/coroutine type issues
+            location: Any = GeoUtils._geolocator.reverse(f"{latitude}, {longitude}")
+            if location is not None and hasattr(location, 'address'):
+                return str(location.address)
             else:
-                # Process latitude
-                mid = (lat_range[0] + lat_range[1]) / 2
-                if latitude > mid:
-                    bit = (bit << 1) + 1
-                    lat_range[0] = mid
-                else:
-                    bit = bit << 1
-                    lat_range[1] = mid
-
-            even_bit = not even_bit
-            bits += 1
-
-            if bits == 5:
-                geohash.append(base32[bit])
-                bits = 0
-                bit = 0
-
-        return "".join(geohash)
+                raise ValueError(f"Could not reverse geocode coordinates: {latitude}, {longitude}")
+        except Exception as e:
+            raise ValueError(f"Reverse geocoding failed: {str(e)}")
 
     @staticmethod
     def get_bounding_box(
         latitude: float, longitude: float, radius_km: float
     ) -> Tuple[float, float, float, float]:
         """
-        Calculate bounding box for a point and radius
+        Calculate bounding box for a point and radius using geopy
 
         Args:
             latitude: Center latitude
@@ -134,17 +114,21 @@ class GeoUtils:
         Returns:
             Tuple of (min_lat, max_lat, min_lon, max_lon)
         """
-        # Approximate degree distances
-        lat_degree_km = 111.0  # 1 degree latitude ≈ 111 km
-        lon_degree_km = 111.0 * math.cos(math.radians(latitude))  # Varies by latitude
-
-        lat_delta = radius_km / lat_degree_km
-        lon_delta = radius_km / lon_degree_km
-
-        min_lat = latitude - lat_delta
-        max_lat = latitude + lat_delta
-        min_lon = longitude - lon_delta
-        max_lon = longitude + lon_delta
+        from geopy import Point
+        from geopy.distance import distance
+        
+        center = Point(latitude, longitude)
+        
+        # Calculate boundary points
+        north = distance(kilometers=radius_km).destination(center, bearing=0)
+        south = distance(kilometers=radius_km).destination(center, bearing=180)
+        east = distance(kilometers=radius_km).destination(center, bearing=90)
+        west = distance(kilometers=radius_km).destination(center, bearing=270)
+        
+        min_lat = south.latitude
+        max_lat = north.latitude
+        min_lon = west.longitude
+        max_lon = east.longitude
 
         # Ensure bounds are within valid ranges
         min_lat = max(min_lat, MIN_LATITUDE)
@@ -170,68 +154,6 @@ class GeoUtils:
             MIN_LONGITUDE <= longitude <= MAX_LONGITUDE
         )
 
-    @staticmethod
-    def get_geohash_neighbors(geohash: str) -> List[str]:
-        """
-        Get neighboring geohashes for improved area coverage in radius searches
-
-        Args:
-            geohash: Base geohash string
-
-        Returns:
-            List of neighboring geohash strings including the original
-        """
-        base32 = "0123456789bcdefghjkmnpqrstuvwxyz"
-        neighbors = [geohash]  # Include original
-
-        if len(geohash) > 1:
-            prefix = geohash[:-1]
-            last_char = geohash[-1]
-
-            if last_char in base32:
-                idx = base32.index(last_char)
-                # Add adjacent geohashes in all directions (simplified approach)
-                for offset in range(-2, 3):  # -2, -1, 0, 1, 2
-                    if offset != 0:  # Skip original (already added)
-                        new_idx = (idx + offset) % len(base32)
-                        neighbors.append(prefix + base32[new_idx])
-
-        return neighbors
-
-    @staticmethod
-    def get_geohash_prefixes_for_radius(
-        latitude: float, longitude: float, radius_km: float
-    ) -> List[str]:
-        """
-        Get geohash prefixes that cover the search radius efficiently
-        Used for optimizing Firestore queries
-
-        Args:
-            latitude: Center latitude
-            longitude: Center longitude
-            radius_km: Search radius in kilometers
-
-        Returns:
-            List of geohash prefixes to query
-        """
-        # Generate base geohash
-        base_geohash = GeoUtils.generate_geohash(latitude, longitude)
-
-        # For small radius, use longer prefix; for large radius, use shorter prefix
-        if radius_km <= 1:
-            prefix_length = GEOHASH_PRECISION
-        elif radius_km <= 5:
-            prefix_length = GEOHASH_PRECISION - 1
-        elif radius_km <= 20:
-            prefix_length = GEOHASH_PRECISION - 2
-        else:
-            prefix_length = GEOHASH_PRECISION - 3
-
-        prefix = base_geohash[:prefix_length]
-
-        # Get neighbor prefixes for better coverage
-        neighbors = GeoUtils.get_geohash_neighbors(prefix)
-        return list(set(neighbors))  # Remove duplicates
 
     @staticmethod
     def filter_by_radius(
@@ -242,7 +164,6 @@ class GeoUtils:
     ) -> List[dict]:
         """
         Filter stores by actual distance within radius
-        Used after geohash-based pre-filtering
 
         Args:
             stores_with_locations: List of store dicts with location info
@@ -256,13 +177,12 @@ class GeoUtils:
         filtered_stores = []
 
         for store in stores_with_locations:
-            print(store)
             if (
                 "location" in store
                 and "latitude" in store["location"]
                 and "longitude" in store["location"]
             ):
-                distance = GeoUtils.haversine_distance(
+                distance = GeoUtils.calculate_distance(
                     center_lat,
                     center_lon,
                     store["location"]["latitude"],

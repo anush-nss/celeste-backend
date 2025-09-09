@@ -18,9 +18,6 @@ class LocationSchema(BaseModel):
     longitude: float = Field(
         ..., ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="Longitude in degrees"
     )
-    geohash: Optional[str] = Field(
-        None, description="Geohash for efficient geo queries"
-    )
 
 
 class ContactSchema(BaseModel):

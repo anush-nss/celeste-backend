@@ -64,15 +64,7 @@ MAX_SEARCH_RADIUS_KM = 50.0
 DEFAULT_STORES_LIMIT = 20
 MAX_STORES_LIMIT = 100
 
-# Geospatial constants
-GEOHASH_PRECISION = 9
-EARTH_RADIUS_KM = 6371.0
-
-# Cache optimization constants
-CACHE_GEOCODE_PRECISION = (
-    4  # Geohash precision for cache keys (4 = ~20km, 5 = ~2.4km, 6 = ~610m)
-)
-CACHE_RADIUS_PRECISION = 1  # Decimal places for radius in cache keys
+# Geospatial constants (removed geohash functionality)
 
 # Coordinate validation
 MIN_LATITUDE = -90.0
@@ -86,5 +78,3 @@ DISTANCE_PRECISION = 0.1
 # Business hours format
 HOUR_FORMAT = "%H:%M"
 
-# Default cache TTL for stores (in seconds)
-STORES_CACHE_TTL = 300  # 5 minutes

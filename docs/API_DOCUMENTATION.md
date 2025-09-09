@@ -46,6 +46,7 @@ The following data is cached:
 -   Categories
 -   Price Lists and Price List Lines
 -   Customer Tiers
+-   Stores (non-location based queries only)
 
 ## API Endpoints
 
@@ -614,22 +615,214 @@ Delete inventory record.
 
 ---
 
-### Store Management (`/stores`)
+### Store Management (`/stores`) ⭐ **Enhanced with Geospatial Features**
 
-#### GET `/stores/`
-Get all stores.
+The store management system provides comprehensive functionality for managing physical store locations with advanced geospatial capabilities using geopy for precise distance calculations.
+
+#### GET `/stores/` ⭐ **Unified Store Endpoint**
+Get all stores with optional location-based filtering and distance calculations.
+
+**Query Parameters:**
+- `latitude`: User latitude for distance calculations (optional)
+- `longitude`: User longitude for distance calculations (optional)  
+- `radius`: Search radius in km for filtering (optional, requires lat/lon)
+- `limit`: Maximum number of stores to return (default: 20, max: 100)
+- `isActive`: Filter by store status (default: true)
+- `features`: Filter by store features (can specify multiple)
+- `includeDistance`: Include distance calculations in km (default: true when lat/lon provided)
+- `includeOpenStatus`: Include open/closed status (default: false)
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "stores": [
+      {
+        "id": "string",
+        "name": "Downtown Store",
+        "description": "Main downtown location",
+        "address": "123 Main St, City, State 12345",
+        "location": {
+          "latitude": 40.7128,
+          "longitude": -74.0060
+        },
+        "contact": {
+          "phone": "+1234567890",
+          "email": "store@example.com"
+        },
+        "hours": {
+          "monday": {
+            "open": "09:00",
+            "close": "18:00",
+            "closed": false
+          }
+        },
+        "features": ["wifi", "parking", "wheelchair_accessible"],
+        "isActive": true,
+        "created_at": "datetime",
+        "updated_at": "datetime",
+        "distance": 2.3,
+        "is_open_now": true,
+        "next_change": "18:00"
+      }
+    ],
+    "user_location": {
+      "latitude": 40.7128,
+      "longitude": -74.0060
+    },
+    "search_radius": null,
+    "total_found": 15,
+    "returned": 15
+  }
+}
+```
+
+**Usage Examples:**
+```bash
+# Get all stores (cached, no distances)
+GET /stores
+
+# Get all stores with distances (no radius filtering)
+GET /stores?latitude=40.7128&longitude=-74.0060&includeDistance=true
+
+# Get stores with features filtering
+GET /stores?features=wifi&features=parking&limit=10
+
+# Get nearby stores within radius
+GET /stores?latitude=40.7128&longitude=-74.0060&radius=5&includeDistance=true
+
+# Get stores with business hours status
+GET /stores?includeOpenStatus=true
+```
+
+#### GET `/stores/nearby` ⭐ **Optimized Nearby Search**
+Specialized endpoint for location-based store searches (requires coordinates).
+
+**Query Parameters (Required):**
+- `latitude`: User latitude (required)
+- `longitude`: User longitude (required)
+
+**Query Parameters (Optional):**
+- `radius`: Search radius in km (default: 10, max: 50)
+- `limit`: Maximum stores to return (default: 20, max: 100)
+- `features`: Required store features
+- `includeDistance`: Include distance calculations (default: true)
+- `includeOpenStatus`: Include business hours status (default: true)
+
+**Response:** Same format as `/stores` but sorted by distance.
 
 #### GET `/stores/{id}`
-Get store by ID.
+Get detailed information about a specific store.
+
+**Query Parameters:**
+- `includeInventory`: Include store inventory (default: false)
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "string",
+    "name": "Downtown Store",
+    "description": "Main downtown location",
+    "address": "123 Main St, City, State 12345",
+    "location": {
+      "latitude": 40.7128,
+      "longitude": -74.0060
+    },
+    "contact": {
+      "phone": "+1234567890",
+      "email": "store@example.com"
+    },
+    "hours": {
+      "monday": {"open": "09:00", "close": "18:00", "closed": false},
+      "tuesday": {"open": "09:00", "close": "18:00", "closed": false},
+      "sunday": {"closed": true}
+    },
+    "features": ["wifi", "parking", "wheelchair_accessible", "drive_through"],
+    "isActive": true,
+    "created_at": "datetime",
+    "updated_at": "datetime"
+  }
+}
+```
+
+#### GET `/stores/{store_id}/distance`
+Calculate distance from user location to specific store.
+
+**Query Parameters (Required):**
+- `latitude`: User latitude
+- `longitude`: User longitude
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "store_id": "string",
+    "store_name": "Downtown Store",
+    "user_location": {
+      "latitude": 40.7128,
+      "longitude": -74.0060
+    },
+    "store_location": {
+      "latitude": 40.7580,
+      "longitude": -73.9855
+    },
+    "distance_km": 5.2,
+    "store_address": "123 Main St, City, State 12345"
+  }
+}
+```
 
 #### POST `/stores/` (Admin Only)
-Create a new store.
+Create a new store with location coordinates.
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Request Body:**
+```json
+{
+  "name": "New Store Location",
+  "description": "Store description",
+  "address": "456 Oak Ave, City, State 12345",
+  "location": {
+    "latitude": 40.7580,
+    "longitude": -73.9855
+  },
+  "contact": {
+    "phone": "+1234567890",
+    "email": "newstore@example.com"
+  },
+  "hours": {
+    "monday": {"open": "09:00", "close": "18:00", "closed": false}
+  },
+  "features": ["wifi", "parking"],
+  "isActive": true
+}
+```
 
 #### PUT `/stores/{id}` (Admin Only)
-Update a store.
+Update an existing store.
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Request Body:** Same as POST but all fields optional
 
 #### DELETE `/stores/{id}` (Admin Only)
 Delete a store.
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+#### Store Features
+Available store features for filtering:
+- `parking`: Parking available
+- `wifi`: Free WiFi
+- `wheelchair_accessible`: Wheelchair accessible
+- `drive_through`: Drive-through service
+- `pickup_available`: Curbside pickup
+- `delivery_available`: Local delivery service
 
 ---
 
