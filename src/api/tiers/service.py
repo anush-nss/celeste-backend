@@ -17,6 +17,7 @@ from src.api.tiers.models import (
     TierBenefitsSchema,
 )
 from src.config.constants import Collections, DEFAULT_FALLBACK_TIER
+from src.shared.cache_invalidation import cache_invalidation_manager
 
 
 class TierService:
@@ -48,7 +49,7 @@ class TierService:
         tiers_cache.set_tier(doc_ref.id, new_tier.model_dump())
         tiers_cache.set_tier_by_code(new_tier.tier_code, new_tier.model_dump())
 
-        tiers_cache.invalidate_tier_cache()
+        cache_invalidation_manager.invalidate_tier()
 
         return new_tier
 
@@ -155,9 +156,7 @@ class TierService:
             updated_data = updated_doc.to_dict()
             if updated_data:
                 updated_tier = CustomerTierSchema(**updated_data, id=updated_doc.id)
-                tiers_cache.invalidate_tier_cache(
-                    tier_id=tier_id, tier_code=updated_tier.tier_code
-                )
+                cache_invalidation_manager.invalidate_tier(tier_id)
                 return updated_tier
         return None
 
@@ -175,9 +174,7 @@ class TierService:
             return False
 
         await doc_ref.delete()
-        tiers_cache.invalidate_tier_cache(
-            tier_id=tier_id, tier_code=tier_data.get("tier_code")
-        )
+        cache_invalidation_manager.invalidate_tier(tier_id)
         return True
 
     async def get_default_tier(self) -> str:

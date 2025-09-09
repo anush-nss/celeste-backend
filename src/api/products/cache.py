@@ -16,7 +16,7 @@ class ProductsCache:
 
     def __init__(self):
         self.cache = core_cache
-        self.prefix = "products"
+        self.prefix = cache_config.PREFIXES.get("products", "products")
 
     # Cache key generators
     def get_product_key(self, product_id: str) -> str:
@@ -46,16 +46,9 @@ class ProductsCache:
             if self.cache.delete(product_key):
                 deleted += 1
 
-            # Also invalidate cross-domain dependencies
-            deleted += cache_invalidation_manager.invalidate_cross_domain_dependencies(
-                "products", product_id
-            )
         else:
             # Invalidate all products and related pricing
             deleted += self.cache.delete_pattern(f"{self.prefix}:*")
-            deleted += cache_invalidation_manager.invalidate_cross_domain_dependencies(
-                "products"
-            )
 
         if deleted > 0:
             logger.info(
@@ -69,4 +62,5 @@ class ProductsCache:
 products_cache = ProductsCache()
 
 # Register with invalidation manager
-cache_invalidation_manager.register_domain_cache("products", products_cache)
+from src.config.constants import Collections
+cache_invalidation_manager.register_domain_cache(Collections.PRODUCTS, products_cache)

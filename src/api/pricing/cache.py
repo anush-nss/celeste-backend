@@ -16,7 +16,7 @@ class PricingCache:
 
     def __init__(self):
         self.cache = core_cache
-        self.prefix = "pricing"
+        self.prefix = cache_config.PREFIXES.get("price_lists", "pricing")
 
     # Cache key generators
     def get_product_pricing_key(
@@ -47,7 +47,7 @@ class PricingCache:
     def get_price_lists_key(self, active_only: bool = False) -> str:
         """Generate cache key for price lists"""
         return self.cache.generate_key(
-            f"{self.prefix}_lists", "active" if active_only else "all"
+            f"{self.prefix}_lists", "active" if active_only else cache_config.INVALIDATION_SCOPE_ALL
         )
 
     def get_price_list_lines_key(self, price_list_id: str) -> str:
@@ -123,16 +123,20 @@ class PricingCache:
         return self.cache.set(key, lines, ttl_seconds=ttl)
 
     # Cache invalidation methods
-    def invalidate_pricing_cache(self, scope: str = "pricing") -> int:
+    def invalidate_pricing_cache(self, scope: str = None) -> int:
         """Invalidate pricing-related caches with selective scope"""
+        # Default scope if not provided
+        if scope is None:
+            scope = self.prefix
+            
         patterns = {
-            "all": [
+            cache_config.INVALIDATION_SCOPE_ALL: [
                 f"{self.prefix}_product:*",
                 f"{self.prefix}_bulk:*",
                 f"{self.prefix}_lists:*",
                 f"{self.prefix}_lines:*",
             ],
-            "pricing": [f"{self.prefix}_product:*", f"{self.prefix}_bulk:*"],
+            self.prefix: [f"{self.prefix}_product:*", f"{self.prefix}_bulk:*"],
             "price_lists": [f"{self.prefix}_lists:*"],
             "price_list_lines": [f"{self.prefix}_lines:*"],
         }
@@ -176,5 +180,6 @@ pricing_cache = PricingCache()
 
 # Register with invalidation manager
 from src.shared.cache_invalidation import cache_invalidation_manager
+from src.config.constants import Collections
 
-cache_invalidation_manager.register_domain_cache("pricing", pricing_cache)
+cache_invalidation_manager.register_domain_cache(Collections.PRICE_LISTS, pricing_cache)

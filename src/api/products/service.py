@@ -3,7 +3,6 @@ from typing import Optional, List
 from google.cloud.firestore_v1.base_query import FieldFilter
 from src.shared.database import get_async_db, get_async_collection
 from src.config.cache_config import cache_config
-from .cache import products_cache
 from src.api.products.models import (
     ProductSchema,
     CreateProductSchema,
@@ -14,6 +13,7 @@ from src.api.products.models import (
     PricingInfoSchema,
 )
 from src.config.constants import Collections
+from src.shared.cache_invalidation import cache_invalidation_manager
 
 
 class ProductService:
@@ -210,8 +210,8 @@ class ProductService:
         update_dict = product_data.model_dump(exclude_unset=True)
         await doc_ref.update(update_dict)
 
-        # Selective cache invalidation
-        products_cache.invalidate_product_cache(product_id)
+        # Centralized cache invalidation
+        cache_invalidation_manager.invalidate_product(product_id)
 
         updated_doc = await doc_ref.get()
         updated_dict = updated_doc.to_dict()
@@ -226,8 +226,8 @@ class ProductService:
         if not (await doc_ref.get()).exists:
             return False
 
-        # Selective cache invalidation
-        products_cache.invalidate_product_cache(product_id)
+        # Centralized cache invalidation
+        cache_invalidation_manager.invalidate_product(product_id)
 
         await doc_ref.delete()
         return True

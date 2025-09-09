@@ -16,7 +16,7 @@ class TiersCache:
 
     def __init__(self):
         self.cache = core_cache
-        self.prefix = "tiers"
+        self.prefix = cache_config.PREFIXES.get("customer_tiers", "customer_tiers")
 
     # Cache key generators
     def get_tier_key(self, tier_id: str) -> str:
@@ -101,11 +101,6 @@ class TiersCache:
             # Invalidate all tiers
             deleted += self.cache.delete_pattern(f"{self.prefix}:*")
 
-        # Tier changes affect all pricing calculations
-        if tier_id:
-            deleted += cache_invalidation_manager.invalidate_cross_domain_dependencies(
-                "tiers", tier_id
-            )
 
         if deleted > 0:
             logger.info(
@@ -119,4 +114,5 @@ class TiersCache:
 tiers_cache = TiersCache()
 
 # Register with invalidation manager
-cache_invalidation_manager.register_domain_cache("tiers", tiers_cache)
+from src.config.constants import Collections
+cache_invalidation_manager.register_domain_cache(Collections.CUSTOMER_TIERS, tiers_cache)

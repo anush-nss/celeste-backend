@@ -20,6 +20,7 @@ from src.config.constants import (
     DiscountType,
     DEFAULT_FALLBACK_TIER,
 )
+from src.shared.cache_invalidation import cache_invalidation_manager
 
 logger = get_logger(__name__)
 
@@ -51,7 +52,7 @@ class PricingService:
         )
         await doc_ref.set(price_list_dict)
 
-        pricing_cache.invalidate_price_list_cache()
+        cache_invalidation_manager.invalidate_price_list()
 
         return PriceListSchema(**price_list_dict, id=doc_ref.id)
 
@@ -107,7 +108,7 @@ class PricingService:
         update_data["updated_at"] = datetime.now()
         await doc_ref.update(update_data)
 
-        pricing_cache.invalidate_price_list_cache(price_list_id)
+        cache_invalidation_manager.invalidate_price_list(price_list_id)
 
         updated_doc = await doc_ref.get()
         if updated_doc.exists:
@@ -134,7 +135,7 @@ class PricingService:
         async for line_doc in lines_docs:
             await line_doc.reference.delete()
 
-        pricing_cache.invalidate_price_list_cache(price_list_id)
+        cache_invalidation_manager.invalidate_price_list(price_list_id)
 
         await doc_ref.delete()
         return True
@@ -157,7 +158,7 @@ class PricingService:
         )
         await doc_ref.set(line_dict)
 
-        pricing_cache.invalidate_price_list_cache(price_list_id)
+        cache_invalidation_manager.invalidate_price_list(price_list_id)
 
         return PriceListLineSchema(**line_dict, id=doc_ref.id)
 
@@ -199,7 +200,7 @@ class PricingService:
         update_data["updated_at"] = datetime.now()
         await doc_ref.update(update_data)
 
-        pricing_cache.invalidate_price_list_cache()
+        cache_invalidation_manager.invalidate_price_list()
 
         updated_doc = await doc_ref.get()
         if updated_doc.exists:
@@ -217,7 +218,7 @@ class PricingService:
         if not doc.exists:
             return False
 
-        pricing_cache.invalidate_price_list_cache()
+        cache_invalidation_manager.invalidate_price_list()
 
         await doc_ref.delete()
         return True

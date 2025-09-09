@@ -78,3 +78,11 @@ DISTANCE_PRECISION = 0.1
 # Business hours format
 HOUR_FORMAT = "%H:%M"
 
+
+# Cache invalidation scope constants
+class CacheScopes(str, Enum):
+    SPECIFIC = "specific"
+    DOMAIN = "domain"
+    CROSS_DOMAIN = "cross_domain"
+    GLOBAL = "global"
+

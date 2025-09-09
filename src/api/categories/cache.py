@@ -16,7 +16,7 @@ class CategoriesCache:
 
     def __init__(self):
         self.cache = core_cache
-        self.prefix = "categories"
+        self.prefix = cache_config.PREFIXES.get("categories", "categories")
 
     # Cache key generators
     def get_category_key(self, category_id: str) -> str:
@@ -64,11 +64,6 @@ class CategoriesCache:
             # Invalidate all categories
             deleted += self.cache.delete_pattern(f"{self.prefix}:*")
 
-        # Categories might affect pricing, so invalidate cross-domain dependencies
-        if category_id:
-            deleted += cache_invalidation_manager.invalidate_cross_domain_dependencies(
-                "categories", category_id
-            )
 
         if deleted > 0:
             logger.info(
@@ -82,4 +77,5 @@ class CategoriesCache:
 categories_cache = CategoriesCache()
 
 # Register with invalidation manager
-cache_invalidation_manager.register_domain_cache("categories", categories_cache)
+from src.config.constants import Collections
+cache_invalidation_manager.register_domain_cache(Collections.CATEGORIES, categories_cache)

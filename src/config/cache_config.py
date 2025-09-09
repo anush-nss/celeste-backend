@@ -39,6 +39,7 @@ class CacheConfig:
     LRU_USERS_SIZE = int(os.getenv("LRU_USERS_SIZE", "128"))
     LRU_CATEGORIES_SIZE = int(os.getenv("LRU_CATEGORIES_SIZE", "64"))
     LRU_TIERS_SIZE = int(os.getenv("LRU_TIERS_SIZE", "32"))
+    LRU_DEFAULT_SIZE = int(os.getenv("LRU_DEFAULT_SIZE", "64"))
 
     # Cache prefixes for organization
     PREFIXES = {
@@ -51,7 +52,11 @@ class CacheConfig:
         "categories": "categories",
         "orders": "orders",
         "inventory": "inventory",
+        "customer_tiers": "customer_tiers",
     }
+    
+    # Cache invalidation scope constants
+    INVALIDATION_SCOPE_ALL = "all"
 
     @classmethod
     def get_ttl(cls, cache_type: str) -> int:
@@ -77,9 +82,9 @@ class CacheConfig:
             "products": cls.LRU_PRODUCTS_SIZE,
             "users": cls.LRU_USERS_SIZE,
             "categories": cls.LRU_CATEGORIES_SIZE,
-            "tiers": cls.LRU_TIERS_SIZE,
+            "customer_tiers": cls.LRU_TIERS_SIZE,
         }
-        return size_mapping.get(cache_type, 64)  # Default size
+        return size_mapping.get(cache_type, cls.LRU_DEFAULT_SIZE)
 
     @classmethod
     def get_all_settings(cls) -> Dict[str, Any]:

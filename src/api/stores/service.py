@@ -19,6 +19,7 @@ from src.config.constants import (
     MAX_STORES_LIMIT,
     StoreFeatures,
 )
+from src.shared.cache_invalidation import cache_invalidation_manager
 
 
 class StoreService:
@@ -296,7 +297,7 @@ class StoreService:
         await doc_ref.set(store_dict)
 
         # Invalidate cache
-        stores_cache.invalidate_stores_cache()
+        cache_invalidation_manager.invalidate_store()
 
         return StoreSchema(**store_dict, id=doc_ref.id)
 
@@ -316,7 +317,7 @@ class StoreService:
                 updated_data = updated_doc.to_dict()
                 if updated_data:
                     # Invalidate cache
-                    stores_cache.invalidate_store_cache(store_id)
+                    cache_invalidation_manager.invalidate_store(store_id)
 
                     return StoreSchema(**updated_data, id=updated_doc.id)
         return None
@@ -329,7 +330,7 @@ class StoreService:
             await doc_ref.delete()
 
             # Invalidate cache
-            stores_cache.invalidate_store_cache(store_id)
+            cache_invalidation_manager.invalidate_store(store_id)
 
             return True
         return False

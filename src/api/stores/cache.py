@@ -76,3 +76,8 @@ class StoresCache:
 
 # Global cache instance
 stores_cache = StoresCache()
+
+# Register with invalidation manager
+from src.shared.cache_invalidation import cache_invalidation_manager
+from src.config.constants import Collections
+cache_invalidation_manager.register_domain_cache(Collections.STORES, stores_cache)

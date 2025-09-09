@@ -8,6 +8,7 @@ from src.api.categories.models import (
     UpdateCategorySchema,
 )
 from src.config.constants import Collections
+from src.shared.cache_invalidation import cache_invalidation_manager
 
 
 class CategoryService:
@@ -66,7 +67,7 @@ class CategoryService:
         new_category = CategorySchema(id=doc_ref.id, **category_dict)
         categories_cache.set_category(doc_ref.id, new_category.model_dump())
 
-        categories_cache.invalidate_category_cache()
+        cache_invalidation_manager.invalidate_category()
 
         return new_category
 
@@ -82,7 +83,7 @@ class CategoryService:
         update_dict = category_data.model_dump(exclude_unset=True)
         await doc_ref.update(update_dict)
 
-        categories_cache.invalidate_category_cache(category_id)
+        cache_invalidation_manager.invalidate_category(category_id)
 
         updated_doc = await doc_ref.get()
         updated_dict = updated_doc.to_dict()
@@ -97,7 +98,7 @@ class CategoryService:
         if not (await doc_ref.get()).exists:
             return False
 
-        categories_cache.invalidate_category_cache(category_id)
+        cache_invalidation_manager.invalidate_category(category_id)
 
         await doc_ref.delete()
         return True
