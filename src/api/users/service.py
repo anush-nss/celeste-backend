@@ -1,7 +1,9 @@
+from typing import Optional
 from src.shared.database import get_async_db, get_async_collection
 from src.api.users.models import CreateUserSchema, UserSchema, CartItemSchema
 from src.config.constants import UserRole, DEFAULT_FALLBACK_TIER
 from src.api.tiers.service import TierService
+from src.shared.exceptions import ResourceNotFoundException
 
 
 class UserService:
@@ -104,7 +106,7 @@ class UserService:
                     break
 
         if not cart_item:
-            raise Exception(f"Product {product_id} not found in user's cart")
+            raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
 
         # Update user in database
         user_dict = user.model_dump()
@@ -113,21 +115,57 @@ class UserService:
 
         return cart_item.model_dump()
 
-    async def remove_from_cart(self, user_id: str, product_id: str) -> bool:
+    async def remove_from_cart(self, user_id: str, product_id: str, quantity: Optional[int] = None) -> dict:
         user = await self.get_user_by_id(user_id)
         if not user:
-            raise Exception(f"User with ID {user_id} not found")
+            raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
 
-        # Remove item from cart
+        # Find the cart item
+        cart_item = None
+        item_index = None
+        
         if user.cart:
-            user.cart = [item for item in user.cart if item.productId != product_id]
+            for i, item in enumerate(user.cart):
+                if item.productId == product_id:
+                    cart_item = item
+                    item_index = i
+                    break
+        
+        if not cart_item or item_index is None:
+            raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
+
+        result = {"action": "", "previous_quantity": cart_item.quantity}
+        
+        # Ensure user.cart exists before modifying
+        if not user.cart:
+            raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
+        
+        if quantity is None:
+            # Complete removal - remove product entirely
+            user.cart.pop(item_index)
+            result["action"] = "removed_completely"
+            result["new_quantity"] = 0
+        else:
+            # Partial removal - reduce quantity
+            if quantity >= cart_item.quantity:
+                # If requested quantity >= current quantity, remove completely
+                user.cart.pop(item_index)
+                result["action"] = "removed_completely" 
+                result["new_quantity"] = 0
+                result["note"] = f"Requested quantity ({quantity}) >= available quantity ({cart_item.quantity}), removed completely"
+            else:
+                # Reduce quantity
+                cart_item.quantity -= quantity
+                result["action"] = "quantity_reduced"
+                result["new_quantity"] = cart_item.quantity
+                result["quantity_removed"] = quantity
 
         # Update user in database
         user_dict = user.model_dump()
         users_collection = await self.get_users_collection()
         await users_collection.document(user_id).update({"cart": user_dict["cart"]})
 
-        return True
+        return result
 
     async def get_cart(self, user_id: str) -> list:
         user = await self.get_user_by_id(user_id)

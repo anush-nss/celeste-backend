@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, status, HTTPException
-from typing import Annotated, List
+from fastapi import APIRouter, Depends, status, HTTPException, Query
+from typing import Annotated, List, Optional
 from datetime import datetime
 
 from src.api.users.models import (
@@ -194,17 +194,21 @@ async def update_cart_item(
     "/me/cart/{productId}", summary="Remove an item from the user's cart"
 )
 async def remove_from_cart(
-    productId: str, current_user: Annotated[DecodedToken, Depends(get_current_user)]
+    productId: str, 
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+    quantity: Optional[int] = Query(None, ge=1, description="Quantity to remove (if not specified, removes product completely)")
 ):
     user_id = current_user.uid
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found in token")
 
-    result = await user_service.remove_from_cart(user_id, productId)
-    if not result:
-        raise HTTPException(status_code=500, detail="Failed to remove item from cart")
-
-    return success_response({"userId": user_id, "productId": productId})
+    result = await user_service.remove_from_cart(user_id, productId, quantity)
+    
+    return success_response({
+        "userId": user_id, 
+        "productId": productId,
+        **result
+    })
 
 
 @users_router.get("/me/cart", summary="Get the user's cart")
