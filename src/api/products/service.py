@@ -14,6 +14,7 @@ from src.api.products.models import (
 )
 from src.config.constants import Collections
 from src.shared.cache_invalidation import cache_invalidation_manager
+from src.api.products.cache import products_cache
 
 
 class ProductService:

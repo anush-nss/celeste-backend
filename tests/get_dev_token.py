@@ -1,4 +1,4 @@
-import requests
+import httpx
 import json
 import os
 
@@ -14,7 +14,7 @@ def get_base_url() -> str:
     """Returns the base URL for the API."""
     return BASE_URL
 
-def get_dev_token(uid: str | None = None) -> str:
+async def get_dev_token(uid: str | None = None) -> str:
     """Generates a development ID token for the given UID."""
     url = f"{BASE_URL}{DEV_TOKEN_ENDPOINT}"
     headers = {"Content-Type": "application/json"} # Still need this header for FastAPI
@@ -25,22 +25,24 @@ def get_dev_token(uid: str | None = None) -> str:
     params = {"uid": uid}
 
     try:
-        response = requests.post(url, headers=headers, params=params) # Use params instead of data
-        response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
-        
-        response_json = response.json()
-        token = response_json["data"]["id_token"]
-        return token
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(url, headers=headers, params=params) # Use params instead of data
+            response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
+            
+            response_json = response.json()
+            token = response_json["data"]["id_token"]
+            return token
 
-    except requests.exceptions.RequestException as e:
+    except httpx.RequestError as e:
         print(f"Error generating token: {e}")
         if hasattr(e, 'response') and e.response is not None:
             print(f"Response content: {e.response.text}")
         raise
 
 if __name__ == "__main__":
+    import asyncio
     try:
-        token = get_dev_token(UID_TO_GENERATE_TOKEN_FOR)
+        token = asyncio.run(get_dev_token(UID_TO_GENERATE_TOKEN_FOR))
         print(token) # Print the token to stdout for the load test script to capture
     except Exception as e:
         print(f"Failed to get dev token: {e}")

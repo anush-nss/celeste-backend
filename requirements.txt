@@ -7,3 +7,5 @@ email-validator
 requests
 black
 geopy
+pytest
+pytest-asyncio
