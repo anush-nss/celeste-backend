@@ -3,23 +3,16 @@ import json
 import os
 
 # --- Configuration ---
-BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 DEV_TOKEN_ENDPOINT = "/dev/auth/token"
 
-# IMPORTANT: Hardcode the UID for which to generate the token
-# This user must already exist in Firebase Auth
-UID_TO_GENERATE_TOKEN_FOR = "nXhOA9apOdfY915h35yz1XvHBQE2" 
-
-def get_base_url() -> str:
-    """Returns the base URL for the API."""
-    return BASE_URL
+from tests.constants import BASE_URL, CUSTOMER_UID
 
 async def get_dev_token(uid: str | None = None) -> str:
     """Generates a development ID token for the given UID."""
     url = f"{BASE_URL}{DEV_TOKEN_ENDPOINT}"
     headers = {"Content-Type": "application/json"} # Still need this header for FastAPI
     if not uid:
-        uid = UID_TO_GENERATE_TOKEN_FOR
+        uid = CUSTOMER_UID
     
     # Change: Send UID as a query parameter
     params = {"uid": uid}
@@ -35,14 +28,14 @@ async def get_dev_token(uid: str | None = None) -> str:
 
     except httpx.RequestError as e:
         print(f"Error generating token: {e}")
-        if hasattr(e, 'response') and e.response is not None:
-            print(f"Response content: {e.response.text}")
+        if hasattr(e, 'response') and e is not None:
+            print(f"Response content: {e}")
         raise
 
 if __name__ == "__main__":
     import asyncio
     try:
-        token = asyncio.run(get_dev_token(UID_TO_GENERATE_TOKEN_FOR))
+        token = asyncio.run(get_dev_token(CUSTOMER_UID))
         print(token) # Print the token to stdout for the load test script to capture
     except Exception as e:
         print(f"Failed to get dev token: {e}")
