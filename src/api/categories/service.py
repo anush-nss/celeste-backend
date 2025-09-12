@@ -1,5 +1,8 @@
 import asyncio
-from src.shared.database import get_async_db, get_async_collection
+from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload, joinedload
+from src.database.connection import AsyncSessionLocal
+from src.database.models.category import Category
 from src.config.cache_config import cache_config
 from .cache import categories_cache
 from src.api.categories.models import (
@@ -9,6 +12,8 @@ from src.api.categories.models import (
 )
 from src.config.constants import Collections
 from src.shared.cache_invalidation import cache_invalidation_manager
+from src.shared.exceptions import ResourceNotFoundException
+from src.shared.sqlalchemy_utils import safe_model_validate, safe_model_validate_list
 
 
 class CategoryService:
@@ -17,100 +22,157 @@ class CategoryService:
     def __init__(self):
         pass
 
-    async def get_categories_collection(self):
-        return await get_async_collection(Collections.CATEGORIES)
-
     async def get_all_categories(self) -> list[CategorySchema]:
         """Get all categories with caching"""
         cached_categories = categories_cache.get_all_categories()
         if cached_categories is not None:
-            return [CategorySchema(**c) for c in cached_categories]
+            return [CategorySchema.model_validate(c) for c in cached_categories]
 
-        categories_collection = await self.get_categories_collection()
-        docs = categories_collection.order_by(field_path="order").stream()
-        categories = []
-        async for doc in docs:
-            doc_dict = doc.to_dict()
-            if doc_dict:
-                categories.append(CategorySchema(id=doc.id, **doc_dict))
+        async with AsyncSessionLocal() as session:
+            # Load all categories with their subcategories eagerly
+            stmt = select(Category).options(
+                selectinload(Category.subcategories)
+            ).order_by(Category.sort_order)
+            result = await session.execute(stmt)
+            categories = result.scalars().unique().all()
 
-        if categories:
-            categories_cache.set_all_categories([c.model_dump() for c in categories])
+            if categories:
+                # Convert SQLAlchemy models to Pydantic schemas using safe converter
+                pydantic_categories = safe_model_validate_list(
+                    CategorySchema, 
+                    categories,
+                    include_relationships={'subcategories'}
+                )
+                # Cache the dict representations
+                category_dicts = [cat.model_dump(mode="json") for cat in pydantic_categories]
+                categories_cache.set_all_categories(category_dicts)
+                return pydantic_categories
 
-        return categories
+            return []
 
-    async def get_category_by_id(self, category_id: str) -> CategorySchema | None:
+    async def get_category_by_id(self, category_id: int) -> CategorySchema | None:
         """Get category by ID with caching"""
         cached_category = categories_cache.get_category(category_id)
         if cached_category is not None:
-            return CategorySchema(**cached_category)
+            return CategorySchema.model_validate(cached_category)
 
-        categories_collection = await self.get_categories_collection()
-        doc = await categories_collection.document(category_id).get()
-        if doc.exists:
-            doc_dict = doc.to_dict()
-            if doc_dict:
-                category = CategorySchema(id=doc.id, **doc_dict)
-                categories_cache.set_category(category_id, category.model_dump())
-                return category
+        async with AsyncSessionLocal() as session:
+            stmt = select(Category).options(
+                selectinload(Category.subcategories)
+            ).filter(Category.id == category_id)
+            result = await session.execute(stmt)
+            category = result.scalars().first()
+            if category:
+                # Convert SQLAlchemy model to Pydantic schema using safe converter
+                pydantic_category = safe_model_validate(
+                    CategorySchema, 
+                    category,
+                    include_relationships={'subcategories'}
+                )
+                if pydantic_category.id:
+                    categories_cache.set_category(pydantic_category.id, pydantic_category.model_dump(mode="json"))
+                return pydantic_category
         return None
 
     async def create_category(
         self, category_data: CreateCategorySchema
     ) -> CategorySchema:
         """Create a new category"""
-        categories_collection = await self.get_categories_collection()
-        doc_ref = categories_collection.document()
-        category_dict = category_data.model_dump()
-        await doc_ref.set(category_dict)
+        async with AsyncSessionLocal() as session:
+            new_category = Category(
+                name=category_data.name,
+                description=category_data.description,
+                sort_order=category_data.sort_order,
+                image_url=category_data.image_url,
+                parent_category_id=category_data.parent_category_id
+            )
+            session.add(new_category)
+            await session.commit()
+            await session.refresh(new_category)
+            
+            # Explicitly load subcategories after refresh
+            await session.refresh(new_category, ["subcategories"])
 
-        new_category = CategorySchema(id=doc_ref.id, **category_dict)
-        categories_cache.set_category(doc_ref.id, new_category.model_dump())
+            # Convert SQLAlchemy model to Pydantic schema using safe converter
+            pydantic_category = safe_model_validate(
+                CategorySchema, 
+                new_category,
+                include_relationships={'subcategories'}
+            )
+            # After commit and refresh, the ID should always be present
+            assert pydantic_category.id is not None, "Category ID should be present after database commit"
+            categories_cache.set_category(pydantic_category.id, pydantic_category.model_dump(mode="json"))
+            cache_invalidation_manager.invalidate_category() # Invalidate all categories cache
 
-        cache_invalidation_manager.invalidate_category()
-
-        return new_category
+            return pydantic_category
 
     async def update_category(
-        self, category_id: str, category_data: UpdateCategorySchema
+        self, category_id: int, category_data: UpdateCategorySchema
     ) -> CategorySchema | None:
         """Update an existing category"""
-        categories_collection = await self.get_categories_collection()
-        doc_ref = categories_collection.document(category_id)
-        if not (await doc_ref.get()).exists:
-            return None
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Category).filter(Category.id == category_id))
+            category = result.scalars().first()
 
-        update_dict = category_data.model_dump(exclude_unset=True)
-        await doc_ref.update(update_dict)
+            if not category:
+                return None
 
-        cache_invalidation_manager.invalidate_category(category_id)
+            update_dict = category_data.model_dump(exclude_unset=True)
+            for field, value in update_dict.items():
+                setattr(category, field, value)
 
-        updated_doc = await doc_ref.get()
-        updated_dict = updated_doc.to_dict()
-        if updated_dict:
-            return CategorySchema(id=updated_doc.id, **updated_dict)
-        return None
+            await session.commit()
+            await session.refresh(category)
+            
+            # Explicitly load subcategories after refresh
+            await session.refresh(category, ["subcategories"])
 
-    async def delete_category(self, category_id: str) -> bool:
-        """Delete a category"""
-        categories_collection = await self.get_categories_collection()
-        doc_ref = categories_collection.document(category_id)
-        if not (await doc_ref.get()).exists:
-            return False
+            # Convert SQLAlchemy model to Pydantic schema using safe converter
+            pydantic_category = safe_model_validate(
+                CategorySchema, 
+                category,
+                include_relationships={'subcategories'}
+            )
+            # After commit and refresh, the ID should always be present
+            assert pydantic_category.id is not None, "Category ID should be present after database commit"
+            categories_cache.set_category(pydantic_category.id, pydantic_category.model_dump(mode="json"))
+            cache_invalidation_manager.invalidate_category(pydantic_category.id) # Invalidate specific category cache
 
-        cache_invalidation_manager.invalidate_category(category_id)
+            return pydantic_category
 
-        await doc_ref.delete()
-        return True
+    async def delete_category(self, category_id: int) -> bool:
+        """Delete a category""" 
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Category).filter(Category.id == category_id))
+            category = result.scalars().first()
+
+            if not category:
+                return False
+
+            await session.delete(category)
+            await session.commit()
+
+            categories_cache.invalidate_category_cache(category_id) # Invalidate specific category cache
+            cache_invalidation_manager.invalidate_category() # Invalidate all categories cache
+
+            return True
 
     async def get_categories_by_ids(
-        self, category_ids: list[str]
+        self, category_ids: list[int]
     ) -> list[CategorySchema]:
         """Get multiple categories by their IDs efficiently"""
         if not category_ids:
             return []
 
-        tasks = [self.get_category_by_id(category_id) for category_id in category_ids]
-        results = await asyncio.gather(*tasks)
+        async with AsyncSessionLocal() as session:
+            stmt = select(Category).options(
+                selectinload(Category.subcategories)
+            ).filter(Category.id.in_(category_ids))
+            result = await session.execute(stmt)
+            categories = result.scalars().unique().all()
 
-        return [category for category in results if category]
+            return safe_model_validate_list(
+                CategorySchema, 
+                categories,
+                include_relationships={'subcategories'}
+            )

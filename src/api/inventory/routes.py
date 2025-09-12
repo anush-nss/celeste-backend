@@ -31,7 +31,7 @@ async def get_all_inventory(
     if storeId is not None:
         query_params["store_id"] = storeId
     inventory_items = await inventory_service.get_all_inventory(**query_params)
-    return success_response([item.model_dump() for item in inventory_items])
+    return success_response([item.model_dump(mode="json") for item in inventory_items])
 
 
 @inventory_router.get(
@@ -44,7 +44,7 @@ async def get_inventory_by_id(id: str):
     inventory_item = await inventory_service.get_inventory_by_id(id)
     if not inventory_item:
         raise ResourceNotFoundException(detail=f"Inventory item with ID {id} not found")
-    return success_response(inventory_item.model_dump())
+    return success_response(inventory_item.model_dump(mode="json"))
 
 
 @inventory_router.post(
@@ -57,7 +57,7 @@ async def get_inventory_by_id(id: str):
 async def create_inventory(inventory_data: CreateInventorySchema):
     new_inventory = await inventory_service.create_inventory(inventory_data)
     return success_response(
-        new_inventory.model_dump(), status_code=status.HTTP_201_CREATED
+        new_inventory.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )
 
 
@@ -71,7 +71,7 @@ async def update_inventory(id: str, inventory_data: UpdateInventorySchema):
     updated_inventory = await inventory_service.update_inventory(id, inventory_data)
     if not updated_inventory:
         raise ResourceNotFoundException(detail=f"Inventory item with ID {id} not found")
-    return success_response(updated_inventory.model_dump())
+    return success_response(updated_inventory.model_dump(mode="json"))
 
 
 @inventory_router.delete(

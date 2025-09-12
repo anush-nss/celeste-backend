@@ -22,7 +22,7 @@ async def get_orders(current_user: Annotated[dict, Depends(get_current_user)]):
         orders = await order_service.get_all_orders(
             user_id=user_id
         )  # Customers see only their own
-    return success_response([o.model_dump() for o in orders])
+    return success_response([o.model_dump(mode="json") for o in orders])
 
 
 @orders_router.get(
@@ -42,7 +42,7 @@ async def get_order_by_id(
     if current_user.get("role") != UserRole.ADMIN.value and order.userId != user_id:
         raise ForbiddenException("You do not have permission to access this order.")
 
-    return success_response(order.model_dump())
+    return success_response(order.model_dump(mode="json"))
 
 
 @orders_router.post(
@@ -59,7 +59,7 @@ async def create_order(
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found in token")
     new_order = await order_service.create_order(order_data, user_id)
-    return success_response(new_order.model_dump(), status_code=status.HTTP_201_CREATED)
+    return success_response(new_order.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
 
 
 @orders_router.put(
@@ -72,7 +72,7 @@ async def update_order(id: str, order_data: UpdateOrderSchema):
     updated_order = await order_service.update_order(id, order_data)
     if not updated_order:
         raise ResourceNotFoundException(detail=f"Order with ID {id} not found")
-    return success_response(updated_order.model_dump())
+    return success_response(updated_order.model_dump(mode="json"))
 
 
 @orders_router.delete(

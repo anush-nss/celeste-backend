@@ -36,7 +36,7 @@ class AuthService:
             # Add custom claim for user role
             auth.set_custom_user_claims(uid, {"role": UserRole.CUSTOMER.value})
 
-            # Create user in Firestore - tier will be set by UserService from database
+            # Create user in PostgreSQL database
             create_user_data = CreateUserSchema(
                 name=user_registration.name,
                 phone=phone_number,
@@ -47,9 +47,9 @@ class AuthService:
             return {
                 "message": "Registration successful",
                 "user": {
-                    "uid": new_user.id,
+                    "uid": new_user.firebase_uid, # Corrected to firebase_uid
                     "role": new_user.role,
-                    "customer_tier": new_user.customer_tier,
+                    "tier_id": new_user.tier_id,
                 },
             }
         except Exception as e:
@@ -173,7 +173,7 @@ class AuthService:
 
     async def get_user_profile(self, uid: str) -> Optional[UserSchema]:
         """
-        Get user profile from Firestore by UID.
+        Get user profile from PostgreSQL by UID.
 
         Args:
             uid: User UID

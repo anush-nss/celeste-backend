@@ -20,17 +20,17 @@ category_service = CategoryService()
 )
 async def get_all_categories():
     categories = await category_service.get_all_categories()
-    return success_response([c.model_dump(mode="json") for c in categories])
+    return success_response([c.model_dump(mode="json") for c in categories]) # Removed mode="json"
 
 
 @categories_router.get(
     "/{id}", summary="Get a category by ID", response_model=CategorySchema
 )
-async def get_category_by_id(id: str):
+async def get_category_by_id(id: int): # Changed id type to int
     category = await category_service.get_category_by_id(id)
     if not category:
         raise ResourceNotFoundException(detail=f"Category with ID {id} not found")
-    return success_response(category.model_dump())
+    return success_response(category.model_dump(mode="json"))
 
 
 @categories_router.post(
@@ -49,7 +49,7 @@ async def get_category_by_id(id: str):
 async def create_category(category_data: CreateCategorySchema):
     new_category = await category_service.create_category(category_data)
     return success_response(
-        new_category.model_dump(), status_code=status.HTTP_201_CREATED
+        new_category.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )
 
 
@@ -59,11 +59,11 @@ async def create_category(category_data: CreateCategorySchema):
     response_model=CategorySchema,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def update_category(id: str, category_data: UpdateCategorySchema):
+async def update_category(id: int, category_data: UpdateCategorySchema): # Changed id type to int
     updated_category = await category_service.update_category(id, category_data)
     if not updated_category:
         raise ResourceNotFoundException(detail=f"Category with ID {id} not found")
-    return success_response(updated_category.model_dump())
+    return success_response(updated_category.model_dump(mode="json"))
 
 
 @categories_router.delete(
@@ -71,7 +71,7 @@ async def update_category(id: str, category_data: UpdateCategorySchema):
     summary="Delete a category",
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def delete_category(id: str):
+async def delete_category(id: int): # Changed id type to int
     if not await category_service.delete_category(id):
         raise ResourceNotFoundException(detail=f"Category with ID {id} not found")
     return success_response({"id": id, "message": "Category deleted successfully"})

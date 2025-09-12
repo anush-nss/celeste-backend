@@ -11,6 +11,7 @@ class Settings:
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
     # Database
+    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@host:port/dbname")
     FIREBASE_SERVICE_ACCOUNT_PATH = os.getenv(
         "FIREBASE_SERVICE_ACCOUNT_PATH", "service-account.json"
     )

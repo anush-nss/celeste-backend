@@ -37,23 +37,23 @@ async def promote_user(uid: str):
         auth_service.get_user_by_uid(uid)
         print(f"User {uid} found in Firebase Auth.")
 
-        # 2. Check if user exists in Firestore
+        # 2. Check if user exists in PostgreSQL database
         user = await user_service.get_user_by_id(uid)
         if not user:
-            print(f"User {uid} not found in Firestore. Cannot promote.")
+            print(f"User {uid} not found in PostgreSQL database. Cannot promote.")
             return
 
-        print(f"User {uid} found in Firestore. Current role: {user.role}")
+        print(f"User {uid} found in PostgreSQL database. Current role: {user.role}")
 
         # 3. Set custom claim in Firebase Auth
         print("Setting custom claim to ADMIN in Firebase Auth...")
         auth_service.set_user_role(uid, UserRole.ADMIN)
         print("Custom claim set successfully.")
 
-        # 4. Update role in Firestore
-        print("Updating user role to ADMIN in Firestore...")
+        # 4. Update role in PostgreSQL
+        print("Updating user role to ADMIN in PostgreSQL...")
         await user_service.update_user(uid, {"role": UserRole.ADMIN.value})
-        print("User role updated successfully in Firestore.")
+        print("User role updated successfully in PostgreSQL.")
 
         # 5. Verify the change
         updated_user = await user_service.get_user_by_id(uid)
@@ -63,7 +63,7 @@ async def promote_user(uid: str):
         
         if updated_user and updated_user.role == UserRole.ADMIN and firebase_user.custom_claims.get('role') == UserRole.ADMIN.value:
             print(f"\nSuccessfully promoted user {uid} to ADMIN.")
-            print(f"Verified Firestore role: {updated_user.role}")
+            print(f"Verified PostgreSQL role: {updated_user.role}")
             print(f"Verified Firebase Auth role claim: {firebase_user.custom_claims.get('role')}")
         else:
             print("\nError: Promotion verification failed.")

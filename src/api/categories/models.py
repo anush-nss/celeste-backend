@@ -1,27 +1,31 @@
-from typing import Optional
-from pydantic import BaseModel, Field, HttpUrl
+from typing import Optional, List
+from pydantic import BaseModel, Field, HttpUrl, ConfigDict # Added ConfigDict
 
 
 class CategorySchema(BaseModel):
-    id: Optional[str] = None
+    id: Optional[int] = None # Changed to int
     name: str = Field(..., min_length=1)
-    order: int
+    sort_order: int # Changed from order
     description: Optional[str] = None
-    imageUrl: Optional[HttpUrl] = None
-    parentCategoryId: Optional[str] = None
+    image_url: Optional[str] = None # Changed from imageUrl and HttpUrl
+    parent_category_id: Optional[int] = None # Changed from parentCategoryId and str
+
+    subcategories: Optional[List["CategorySchema"]] = None # Added for nested representation
+
+    model_config = ConfigDict(from_attributes=True) # Added for ORM mode
 
 
 class CreateCategorySchema(BaseModel):
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
-    imageUrl: Optional[HttpUrl] = None
-    parentCategoryId: Optional[str] = None
-    order: int
+    image_url: Optional[str] = None # Changed from imageUrl
+    parent_category_id: Optional[int] = None # Changed from parentCategoryId
+    sort_order: int # Changed from order
 
 
 class UpdateCategorySchema(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    imageUrl: Optional[HttpUrl] = None
-    parentCategoryId: Optional[str] = None
-    order: Optional[int] = None
+    image_url: Optional[str] = None # Changed from imageUrl
+    parent_category_id: Optional[int] = None # Changed from parentCategoryId
+    sort_order: Optional[int] = None # Changed from order
