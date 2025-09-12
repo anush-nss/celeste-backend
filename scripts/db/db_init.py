@@ -2,12 +2,17 @@ import asyncio
 import argparse
 from src.database.base import Base
 from src.database.connection import engine
-from src.database.models.user import User # Import User model to ensure it's registered with Base.metadata
-from src.database.models.address import Address # Added import
-from src.database.models.cart import Cart # Added import
-from src.database.models.category import Category # Added import
-from src.database.models.product import Product, Tag, ProductTag # Added product models
-from src.database.models.associations import product_categories # Import association table
+from src.database.models.user import User  # Import User model to ensure it's registered with Base.metadata
+from src.database.models.address import Address  # Added import
+from src.database.models.cart import Cart  # Added import
+from src.database.models.category import Category  # Added import
+from src.database.models.product import Product, Tag, ProductTag  # Added product models
+from src.database.models.associations import product_categories  # Import association table
+from src.database.models.tier import Tier
+from src.database.models.tier_benefit import TierBenefit
+from src.database.models.price_list import PriceList
+from src.database.models.price_list_line import PriceListLine
+from src.database.models.tier_price_list import TierPriceList
 
 async def init_db(drop_tables: bool = False):
     async with engine.begin() as conn:

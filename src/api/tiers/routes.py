@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, status, HTTPException
 from typing import Annotated, List
 from src.api.tiers.models import (
-    CustomerTierSchema,
-    CreateCustomerTierSchema,
-    UpdateCustomerTierSchema,
+    TierSchema,
+    CreateTierSchema,
+    UpdateTierSchema,
     UserTierProgressSchema,
     UserTierInfoSchema,
     TierEvaluationSchema,
@@ -21,24 +21,24 @@ tier_service = TierService()
 
 # Public Endpoints (No authentication required)
 @router.get(
-    "/", summary="Get all customer tiers", response_model=List[CustomerTierSchema]
+    "/", summary="Get all customer tiers", response_model=List[TierSchema]
 )
-async def get_all_customer_tiers(active_only: bool = True):
+async def get_all_tiers(active_only: bool = True):
     """
     Get all customer tiers (public endpoint for displaying tier information).
 
     - **active_only**: Filter to show only active tiers
     """
-    tiers = await tier_service.get_all_customer_tiers(active_only=active_only)
+    tiers = await tier_service.get_all_tiers(active_only=active_only)
     return success_response([tier.model_dump(mode="json") for tier in tiers])
 
 
 @router.get(
-    "/{tier_id}", summary="Get customer tier by ID", response_model=CustomerTierSchema
+    "/{tier_id}", summary="Get customer tier by ID", response_model=TierSchema
 )
-async def get_customer_tier_by_id(tier_id: str):
+async def get_tier_by_id(tier_id: int):
     """Get a specific customer tier by ID (public endpoint)"""
-    tier = await tier_service.get_customer_tier_by_id(tier_id)
+    tier = await tier_service.get_tier_by_id(tier_id)
     if not tier:
         raise ResourceNotFoundException(
             detail=f"Customer tier with ID {tier_id} not found"
@@ -50,24 +50,23 @@ async def get_customer_tier_by_id(tier_id: str):
 @router.post(
     "/",
     summary="Create a new customer tier",
-    response_model=CustomerTierSchema,
+    response_model=TierSchema,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def create_customer_tier(tier_data: CreateCustomerTierSchema):
+async def create_tier(tier_data: CreateTierSchema):
     """
     Create a new customer tier (Admin only).
 
     - **name**: Tier name (e.g., 'Gold', 'Platinum')
-    - **tier_code**: Tier code enum value
-    - **level**: Tier level (higher = better)
-    - **requirements**: Requirements to achieve this tier
-    - **benefits**: Benefits of this tier
-    - **icon_url**: URL to tier icon (optional)
-    - **color**: Tier color (hex code)
+    - **description**: Tier description
+    - **sort_order**: Sorting order
+    - **is_active**: Is the tier active
+    - **min_total_spent**: Minimum total spent to achieve tier
+    - **min_orders_count**: Minimum number of orders to achieve tier
     """
     try:
-        new_tier = await tier_service.create_customer_tier(tier_data)
+        new_tier = await tier_service.create_tier(tier_data)
         return success_response(
             new_tier.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
         )
@@ -78,12 +77,12 @@ async def create_customer_tier(tier_data: CreateCustomerTierSchema):
 @router.put(
     "/{tier_id}",
     summary="Update a customer tier",
-    response_model=CustomerTierSchema,
+    response_model=TierSchema,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def update_customer_tier(tier_id: str, tier_data: UpdateCustomerTierSchema):
+async def update_tier(tier_id: int, tier_data: UpdateTierSchema):
     """Update an existing customer tier (Admin only)"""
-    updated_tier = await tier_service.update_customer_tier(tier_id, tier_data)
+    updated_tier = await tier_service.update_tier(tier_id, tier_data)
     if not updated_tier:
         raise ResourceNotFoundException(
             detail=f"Customer tier with ID {tier_id} not found"
@@ -96,9 +95,9 @@ async def update_customer_tier(tier_id: str, tier_data: UpdateCustomerTierSchema
     summary="Delete a customer tier",
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def delete_customer_tier(tier_id: str):
+async def delete_tier(tier_id: int):
     """Delete a customer tier (Admin only)"""
-    success = await tier_service.delete_customer_tier(tier_id)
+    success = await tier_service.delete_tier(tier_id)
     if not success:
         raise ResourceNotFoundException(
             detail=f"Customer tier with ID {tier_id} not found"
@@ -111,7 +110,7 @@ async def delete_customer_tier(tier_id: str):
 @router.post(
     "/initialize-defaults",
     summary="Initialize default customer tiers",
-    response_model=List[CustomerTierSchema],
+    response_model=List[TierSchema],
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
 async def initialize_default_tiers():
@@ -240,15 +239,15 @@ async def auto_update_user_tier(user_id: str):
     summary="Manually update user's tier",
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def manually_update_user_tier(user_id: str, new_tier: str):
+async def manually_update_user_tier(user_id: str, new_tier_id: int):
     """Manually update a user's tier (Admin only)"""
-    success = await tier_service.update_user_tier(user_id, new_tier)
+    success = await tier_service.update_user_tier(user_id, new_tier_id)
     if not success:
         raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
     return success_response(
         {
             "user_id": user_id,
-            "new_tier": new_tier,
+            "new_tier_id": new_tier_id,
             "message": "User tier updated successfully",
         }
     )

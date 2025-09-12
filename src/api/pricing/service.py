@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict
 from google.cloud.firestore_v1.base_query import FieldFilter
 from src.shared.database import get_async_db, get_async_collection
@@ -48,7 +48,7 @@ class PricingService:
         doc_ref = price_lists_collection.document()
         price_list_dict = price_list_data.model_dump()
         price_list_dict.update(
-            {"created_at": datetime.now(), "updated_at": datetime.now()}
+            {"created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc)}
         )
         await doc_ref.set(price_list_dict)
 
@@ -105,7 +105,7 @@ class PricingService:
             return None
 
         update_data = price_list_data.model_dump(exclude_unset=True)
-        update_data["updated_at"] = datetime.now()
+        update_data["updated_at"] = datetime.now(timezone.utc)
         await doc_ref.update(update_data)
 
         cache_invalidation_manager.invalidate_price_list(price_list_id)
@@ -135,9 +135,8 @@ class PricingService:
         async for line_doc in lines_docs:
             await line_doc.reference.delete()
 
-        cache_invalidation_manager.invalidate_price_list(price_list_id)
-
         await doc_ref.delete()
+        cache_invalidation_manager.invalidate_price_list(price_list_id)
         return True
 
     async def create_price_list_line(
@@ -152,8 +151,8 @@ class PricingService:
         line_dict.update(
             {
                 "price_list_id": price_list_id,
-                "created_at": datetime.now(),
-                "updated_at": datetime.now(),
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
             }
         )
         await doc_ref.set(line_dict)
@@ -196,11 +195,17 @@ class PricingService:
         if not doc.exists:
             return None
 
+        doc_data = doc.to_dict()
+        price_list_id = doc_data.get("price_list_id")
+
         update_data = line_data.model_dump(exclude_unset=True)
-        update_data["updated_at"] = datetime.now()
+        update_data["updated_at"] = datetime.now(timezone.utc)
         await doc_ref.update(update_data)
 
-        cache_invalidation_manager.invalidate_price_list()
+        if price_list_id:
+            cache_invalidation_manager.invalidate_price_list(price_list_id)
+        else:
+            cache_invalidation_manager.invalidate_price_list()
 
         updated_doc = await doc_ref.get()
         if updated_doc.exists:
@@ -218,9 +223,16 @@ class PricingService:
         if not doc.exists:
             return False
 
-        cache_invalidation_manager.invalidate_price_list()
+        doc_data = doc.to_dict()
+        price_list_id = doc_data.get("price_list_id")
 
         await doc_ref.delete()
+
+        if price_list_id:
+            cache_invalidation_manager.invalidate_price_list(price_list_id)
+        else:
+            cache_invalidation_manager.invalidate_price_list()
+
         return True
 
     async def calculate_product_pricing(
@@ -391,8 +403,6 @@ class PricingService:
 
     def is_price_list_valid(self, price_list: PriceListSchema) -> bool:
         """Check if price list is within valid date range"""
-        from datetime import timezone
-
         now = datetime.now(timezone.utc)
 
         valid_from = price_list.valid_from
