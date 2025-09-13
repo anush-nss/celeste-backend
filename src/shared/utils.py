@@ -5,9 +5,11 @@ import os
 log_dir = "./logs"
 os.makedirs(log_dir, exist_ok=True)
 
+LOG_LEVEL = logging.INFO
+
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=LOG_LEVEL,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),  # Output to console

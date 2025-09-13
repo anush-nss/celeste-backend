@@ -23,3 +23,13 @@ class ResourceNotFoundException(HTTPException):
 class ConflictException(HTTPException):
     def __init__(self, detail: str = "Conflict occurred"):
         super().__init__(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+
+class ValidationException(HTTPException):
+    def __init__(self, detail: str = "Validation error"):
+        super().__init__(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+
+
+class ServiceUnavailableException(HTTPException):
+    def __init__(self, detail: str = "Service temporarily unavailable"):
+        super().__init__(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)

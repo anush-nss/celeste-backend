@@ -27,7 +27,8 @@ from src.api.pricing.models import (
     TierPriceListAssignmentSchema,
     DiscountType,
 )
-from src.shared.exceptions import ResourceNotFoundException
+from src.shared.exceptions import ResourceNotFoundException, ValidationException, ConflictException
+from src.shared.error_handler import ErrorHandler, handle_service_errors
 
 logger = get_logger(__name__)
 
@@ -37,14 +38,29 @@ class PricingService:
 
     def __init__(self):
         self.logger = logger
+        self._error_handler = ErrorHandler(__name__)
 
     # Price List Management
+    @handle_service_errors("creating price list")
     async def create_price_list(self, price_list_data: CreatePriceListSchema) -> PriceListSchema:
         """Create a new price list"""
+        if not price_list_data.name or not price_list_data.name.strip():
+            raise ValidationException(detail="Price list name is required")
+
+        if price_list_data.priority < 0:
+            raise ValidationException(detail="Priority cannot be negative")
+
         async with AsyncSessionLocal() as session:
+            # Check for duplicate name
+            existing = await session.execute(
+                select(PriceList).filter(PriceList.name == price_list_data.name.strip())
+            )
+            if existing.scalars().first():
+                raise ConflictException(detail=f"Price list with name '{price_list_data.name}' already exists")
+
             new_price_list = PriceList(
-                name=price_list_data.name,
-                description=price_list_data.description,
+                name=price_list_data.name.strip(),
+                description=price_list_data.description.strip() if price_list_data.description else None,
                 priority=price_list_data.priority,
                 valid_from=price_list_data.valid_from or datetime.now(),
                 valid_until=price_list_data.valid_until,
@@ -53,11 +69,15 @@ class PricingService:
             session.add(new_price_list)
             await session.commit()
             await session.refresh(new_price_list)
-            
+
             return await self._price_list_to_schema(new_price_list)
 
+    @handle_service_errors("retrieving price list by ID")
     async def get_price_list_by_id(self, price_list_id: int) -> Optional[PriceListSchema]:
         """Get a price list by ID"""
+        if price_list_id <= 0:
+            raise ValidationException(detail="Price list ID must be a positive integer")
+
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(PriceList).options(selectinload(PriceList.lines)).where(PriceList.id == price_list_id)
@@ -226,13 +246,23 @@ class PricingService:
             return [await self._price_list_to_schema(pl) for pl in price_lists]
 
     # Pricing Calculation Methods
+    @handle_service_errors("calculating product price")
     async def calculate_product_price(self, user_tier_id: Optional[int], product_id: int, product_category_ids: List[int], quantity: int = 1) -> ProductPricingSchema:
         """Calculate the final price for a product based on user tier and quantity"""
+        if product_id <= 0:
+            raise ValidationException(detail="Product ID must be a positive integer")
+
+        if quantity <= 0 or quantity > 1000:
+            raise ValidationException(detail="Quantity must be between 1 and 1000")
+
+        if user_tier_id is not None and user_tier_id <= 0:
+            raise ValidationException(detail="User tier ID must be a positive integer")
+
         async with AsyncSessionLocal() as session:
             # Get product base price
             product_result = await session.execute(select(Product).where(Product.id == product_id))
             product = product_result.scalars().first()
-            
+
             if not product:
                 raise ResourceNotFoundException(detail=f"Product with ID {product_id} not found")
             

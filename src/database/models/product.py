@@ -1,6 +1,6 @@
 from decimal import Decimal
 from typing import List, Optional, TYPE_CHECKING
-from sqlalchemy import ARRAY, String, DECIMAL, Text, Integer, Boolean, ForeignKey
+from sqlalchemy import ARRAY, String, DECIMAL, Text, Integer, Boolean, ForeignKey, CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -13,16 +13,22 @@ if TYPE_CHECKING:
 
 class Product(Base):
     __tablename__ = "products"
-    
+    __table_args__ = (
+        CheckConstraint('base_price >= 0', name='check_base_price_non_negative'),
+        Index('idx_product_name', 'name'),
+        Index('idx_product_brand', 'brand'),
+        Index('idx_product_price', 'base_price'),
+    )
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text)
-    brand: Mapped[str] = mapped_column(String(255), nullable=False)
-    base_price: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    brand: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    base_price: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False, index=True)
     unit_measure: Mapped[str] = mapped_column(String(20), nullable=False)
-    image_urls: Mapped[List[str]] = mapped_column(ARRAY(String), default=list)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'))
-    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), onupdate=text('NOW()'))
+    image_urls: Mapped[List[str]] = mapped_column(ARRAY(String), default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), onupdate=text('NOW()'), nullable=False)
     
     # Relationships
     categories: Mapped[List["Category"]] = relationship(
@@ -38,24 +44,32 @@ class Product(Base):
 
 class Tag(Base):
     __tablename__ = "tags"
-    
+    __table_args__ = (
+        Index('idx_tag_type_active', 'tag_type', 'is_active'),
+        Index('idx_tag_slug_unique', 'slug', unique=True),
+    )
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     tag_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    slug: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    description: Mapped[Optional[str]] = mapped_column(Text)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'))
+    slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), nullable=False)
 
 
 class ProductTag(Base):
     __tablename__ = "product_tags"
-    
+    __table_args__ = (
+        Index('idx_product_tag_product', 'product_id'),
+        Index('idx_product_tag_tag', 'tag_id'),
+    )
+
     product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id", ondelete="CASCADE"), primary_key=True)
     tag_id: Mapped[int] = mapped_column(Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
-    value: Mapped[Optional[str]] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'))
-    created_by: Mapped[Optional[str]] = mapped_column(String(100))
+    value: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), nullable=False)
+    created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     
     # Relationships
     product: Mapped["Product"] = relationship("Product", back_populates="product_tags")

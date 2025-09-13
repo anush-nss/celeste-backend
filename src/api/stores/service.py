@@ -20,11 +20,14 @@ from src.config.constants import (
     StoreFeatures,
 )
 from src.shared.cache_invalidation import cache_invalidation_manager
+from src.shared.exceptions import ValidationException, ConflictException
+from src.shared.error_handler import ErrorHandler, handle_service_errors
+from src.shared.performance_utils import async_timer
 
 
 class StoreService:
     def __init__(self):
-        pass
+        self._error_handler = ErrorHandler(__name__)
 
     async def get_stores_collection(self):
         return await get_async_collection(Collections.STORES)
@@ -287,19 +290,37 @@ class StoreService:
                 return store
         return None
 
+    @handle_service_errors("creating store")
+    @async_timer("create_store")
     async def create_store(self, store_data: CreateStoreSchema) -> StoreSchema:
+        if not store_data.name or not store_data.name.strip():
+            raise ValidationException(detail="Store name is required")
+
+        if not store_data.address or not store_data.address.strip():
+            raise ValidationException(detail="Store address is required")
+
+        if not (-90 <= store_data.location.latitude <= 90):
+            raise ValidationException(detail="Latitude must be between -90 and 90")
+
+        if not (-180 <= store_data.location.longitude <= 180):
+            raise ValidationException(detail="Longitude must be between -180 and 180")
+
         stores_collection = await self.get_stores_collection()
         doc_ref = stores_collection.document()
         store_dict = store_data.model_dump()
 
         store_dict.update({"created_at": datetime.now(), "updated_at": datetime.now()})
 
-        await doc_ref.set(store_dict)
+        try:
+            await doc_ref.set(store_dict)
 
-        # Invalidate cache
-        cache_invalidation_manager.invalidate_store()
+            # Invalidate cache
+            cache_invalidation_manager.invalidate_store()
 
-        return StoreSchema(**store_dict, id=doc_ref.id)
+            return StoreSchema(**store_dict, id=doc_ref.id)
+        except Exception as e:
+            self._error_handler.logger.error(f"Failed to create store: {str(e)}")
+            raise ValidationException(detail="Failed to create store due to database error")
 
     async def update_store(
         self, store_id: str, store_data: UpdateStoreSchema

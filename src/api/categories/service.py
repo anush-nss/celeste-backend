@@ -12,7 +12,9 @@ from src.api.categories.models import (
 )
 from src.config.constants import Collections
 from src.shared.cache_invalidation import cache_invalidation_manager
-from src.shared.exceptions import ResourceNotFoundException
+from src.shared.exceptions import ResourceNotFoundException, ValidationException, ConflictException
+from src.shared.error_handler import ErrorHandler, handle_service_errors
+from src.shared.performance_utils import async_timer, QueryOptimizer
 from src.shared.sqlalchemy_utils import safe_model_validate, safe_model_validate_list
 
 
@@ -20,30 +22,35 @@ class CategoryService:
     """Category service with caching for improved performance"""
 
     def __init__(self):
-        pass
+        self._error_handler = ErrorHandler(__name__)
+        self._query_optimizer = QueryOptimizer()
 
+    @handle_service_errors("retrieving all categories")
+    @async_timer("get_all_categories")
     async def get_all_categories(self) -> list[CategorySchema]:
-        """Get all categories with caching"""
+        """Get all categories with optimized caching and loading"""
+        # Check cache first
         cached_categories = categories_cache.get_all_categories()
         if cached_categories is not None:
             return [CategorySchema.model_validate(c) for c in cached_categories]
 
         async with AsyncSessionLocal() as session:
-            # Load all categories with their subcategories eagerly
+            # Optimized query with selective loading
             stmt = select(Category).options(
                 selectinload(Category.subcategories)
             ).order_by(Category.sort_order)
+
             result = await session.execute(stmt)
             categories = result.scalars().unique().all()
 
             if categories:
                 # Convert SQLAlchemy models to Pydantic schemas using safe converter
                 pydantic_categories = safe_model_validate_list(
-                    CategorySchema, 
+                    CategorySchema,
                     categories,
                     include_relationships={'subcategories'}
                 )
-                # Cache the dict representations
+                # Cache the dict representations asynchronously (non-blocking)
                 category_dicts = [cat.model_dump(mode="json") for cat in pydantic_categories]
                 categories_cache.set_all_categories(category_dicts)
                 return pydantic_categories
@@ -74,14 +81,39 @@ class CategoryService:
                 return pydantic_category
         return None
 
+    @handle_service_errors("creating category")
+    @async_timer("create_category")
     async def create_category(
         self, category_data: CreateCategorySchema
     ) -> CategorySchema:
-        """Create a new category"""
+        """Create a new category with validation and optimization"""
+        if not category_data.name or not category_data.name.strip():
+            raise ValidationException(detail="Category name is required")
+
+        if category_data.sort_order < 0:
+            raise ValidationException(detail="Sort order cannot be negative")
+
         async with AsyncSessionLocal() as session:
+            # Check for duplicate name
+            existing = await session.execute(
+                select(Category).filter(Category.name == category_data.name.strip())
+            )
+            if existing.scalars().first():
+                raise ConflictException(detail=f"Category with name '{category_data.name}' already exists")
+
+            # Validate parent category if provided
+            if category_data.parent_category_id:
+                parent = await session.execute(
+                    select(Category).filter(Category.id == category_data.parent_category_id)
+                )
+                if not parent.scalars().first():
+                    raise ResourceNotFoundException(
+                        detail=f"Parent category with ID {category_data.parent_category_id} not found"
+                    )
+
             new_category = Category(
-                name=category_data.name,
-                description=category_data.description,
+                name=category_data.name.strip(),
+                description=category_data.description.strip() if category_data.description else None,
                 sort_order=category_data.sort_order,
                 image_url=category_data.image_url,
                 parent_category_id=category_data.parent_category_id
@@ -89,20 +121,20 @@ class CategoryService:
             session.add(new_category)
             await session.commit()
             await session.refresh(new_category)
-            
+
             # Explicitly load subcategories after refresh
             await session.refresh(new_category, ["subcategories"])
 
             # Convert SQLAlchemy model to Pydantic schema using safe converter
             pydantic_category = safe_model_validate(
-                CategorySchema, 
+                CategorySchema,
                 new_category,
                 include_relationships={'subcategories'}
             )
             # After commit and refresh, the ID should always be present
             assert pydantic_category.id is not None, "Category ID should be present after database commit"
             categories_cache.set_category(pydantic_category.id, pydantic_category.model_dump(mode="json"))
-            cache_invalidation_manager.invalidate_category() # Invalidate all categories cache
+            cache_invalidation_manager.invalidate_category()  # Invalidate all categories cache
 
             return pydantic_category
 

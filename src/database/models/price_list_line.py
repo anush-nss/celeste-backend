@@ -1,6 +1,6 @@
 from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
-from sqlalchemy import String, Integer, ForeignKey, Boolean, DECIMAL, CheckConstraint
+from sqlalchemy import String, Integer, ForeignKey, Boolean, DECIMAL, CheckConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import text
@@ -43,7 +43,15 @@ class PriceListLine(Base):
     product: Mapped[Optional["Product"]] = relationship("Product", foreign_keys=[product_id])
     category: Mapped[Optional["Category"]] = relationship("Category", foreign_keys=[category_id])
 
-    # Table constraints
+    # Table constraints and indexes
     __table_args__ = (
         CheckConstraint("discount_type IN ('percentage', 'flat', 'fixed_price')", name='check_discount_type'),
+        CheckConstraint('discount_value >= 0', name='check_discount_value_non_negative'),
+        CheckConstraint('min_quantity >= 1', name='check_min_quantity_positive'),
+        CheckConstraint('min_order_amount >= 0', name='check_min_order_amount_non_negative'),
+        Index('idx_price_list_lines_list_active', 'price_list_id', 'is_active'),
+        Index('idx_price_list_lines_product', 'product_id'),
+        Index('idx_price_list_lines_category', 'category_id'),
+        Index('idx_price_list_lines_quantity', 'min_quantity'),
+        Index('idx_price_list_lines_covering', 'price_list_id', 'is_active', 'min_quantity', 'discount_type', 'discount_value'),
     )

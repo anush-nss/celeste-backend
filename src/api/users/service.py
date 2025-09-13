@@ -10,8 +10,9 @@ import src.database.models
 from src.api.users.models import CreateUserSchema, UserSchema, AddToCartSchema, UpdateCartItemSchema, AddressSchema, UpdateAddressSchema, CartItemSchema
 from src.config.constants import UserRole, DEFAULT_FALLBACK_TIER
 from src.api.tiers.service import TierService
-from src.shared.exceptions import ResourceNotFoundException
+from src.shared.exceptions import ResourceNotFoundException, ConflictException, ValidationException
 from src.shared.sqlalchemy_utils import safe_model_validate, safe_model_validate_list
+from src.shared.error_handler import ErrorHandler, handle_service_errors
 from sqlalchemy.exc import IntegrityError
 
 
@@ -73,9 +74,24 @@ def _cart_to_dict(cart: Cart) -> dict:
 class UserService:
     def __init__(self):
         self.tier_service = TierService()
+        self._error_handler = ErrorHandler(__name__)
 
+    @handle_service_errors("creating user")
     async def create_user(self, user_data: CreateUserSchema, uid: str) -> UserSchema:
+        if not uid or not uid.strip():
+            raise ValidationException(detail="Valid Firebase UID is required")
+
+        if not user_data.name or not user_data.name.strip():
+            raise ValidationException(detail="Valid user name is required")
+
         async with AsyncSessionLocal() as session:
+            # Check if user already exists
+            existing_user = await session.execute(
+                select(User).filter(User.firebase_uid == uid.strip())
+            )
+            if existing_user.scalars().first():
+                raise ConflictException(detail=f"User with UID {uid} already exists")
+
             # Try to set default customer tier when creating user, but allow null if no tiers exist
             default_tier = None
             try:
@@ -85,24 +101,28 @@ class UserService:
                 pass
 
             new_user = User(
-                firebase_uid=uid,
-                name=user_data.name,
+                firebase_uid=uid.strip(),
+                name=user_data.name.strip(),
                 email=user_data.email,
                 phone=user_data.phone,
-                role=user_data.role.value, # Store enum value as string
+                role=user_data.role.value,
                 tier_id=default_tier,
-                # created_at and last_order_at will be handled by database defaults or set explicitly if needed
             )
             session.add(new_user)
             await session.commit()
             await session.refresh(new_user)
+
             # Convert SQLAlchemy model to dict, then to Pydantic schema
             user_dict = _user_to_dict(new_user)
             return UserSchema.model_validate(user_dict)
 
+    @handle_service_errors("retrieving user by ID")
     async def get_user_by_id(self, user_id: str, include_cart: bool = False, include_addresses: bool = False) -> UserSchema | None:
+        if not user_id or not user_id.strip():
+            raise ValidationException(detail="Valid user ID is required")
+
         async with AsyncSessionLocal() as session:
-            query = select(User).filter(User.firebase_uid == user_id)
+            query = select(User).filter(User.firebase_uid == user_id.strip())
 
             if include_addresses:
                 query = query.options(selectinload(User.addresses))
@@ -114,14 +134,14 @@ class UserService:
                 # Convert SQLAlchemy model to Pydantic schema using safe converter
                 include_rels = {'addresses'} if include_addresses else set()
                 user_schema_data = safe_model_validate(
-                    UserSchema, 
+                    UserSchema,
                     user,
                     include_relationships=include_rels
                 )
 
                 if include_cart: # Only fetch and assign if include_cart is True
                     cart_result = await session.execute(
-                        select(Cart).filter(Cart.user_id == user_id)
+                        select(Cart).filter(Cart.user_id == user_id.strip())
                     )
                     cart_items = cart_result.scalars().all()
                     user_schema_data.cart = safe_model_validate_list(CartItemSchema, cart_items)
@@ -145,21 +165,45 @@ class UserService:
                 return safe_model_validate(UserSchema, user)
             return None
 
+    @handle_service_errors("adding to cart")
     async def add_to_cart(self, user_id: str, product_id: str, quantity: int) -> dict:
+        if not user_id or not user_id.strip():
+            raise ValidationException(detail="Valid user ID is required")
+
+        if not product_id or not product_id.strip():
+            raise ValidationException(detail="Valid product ID is required")
+
+        if quantity <= 0 or quantity > 1000:
+            raise ValidationException(detail="Quantity must be between 1 and 1000")
+
         async with AsyncSessionLocal() as session:
-            cart_item_query = await session.execute(
-                select(Cart).filter_by(user_id=user_id, product_id=product_id)
+            # Verify user exists
+            user_exists = await session.execute(
+                select(User).filter(User.firebase_uid == user_id.strip())
             )
-            item_to_return = cart_item_query.scalars().first() # Initialize with existing item
+            if not user_exists.scalars().first():
+                raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
+
+            cart_item_query = await session.execute(
+                select(Cart).filter_by(user_id=user_id.strip(), product_id=product_id.strip())
+            )
+            item_to_return = cart_item_query.scalars().first()
 
             if item_to_return:
-                item_to_return.quantity = item_to_return.quantity + quantity
+                new_quantity = item_to_return.quantity + quantity
+                if new_quantity > 1000:
+                    raise ValidationException(detail="Cart item quantity cannot exceed 1000")
+                item_to_return.quantity = new_quantity
             else:
-                item_to_return = Cart(user_id=user_id, product_id=product_id, quantity=quantity)
+                item_to_return = Cart(
+                    user_id=user_id.strip(),
+                    product_id=product_id.strip(),
+                    quantity=quantity
+                )
                 session.add(item_to_return)
 
             await session.commit()
-            await session.refresh(item_to_return) # Refresh regardless if new or existing
+            await session.refresh(item_to_return)
 
             return {
                 "user_id": item_to_return.user_id,

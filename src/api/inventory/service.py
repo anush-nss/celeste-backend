@@ -5,11 +5,14 @@ from src.api.inventory.models import (
     CreateInventorySchema,
     UpdateInventorySchema,
 )
+from src.shared.exceptions import ResourceNotFoundException, ValidationException
+from src.shared.error_handler import ErrorHandler, handle_service_errors
+from src.shared.performance_utils import async_timer
 
 
 class InventoryService:
     def __init__(self):
-        pass
+        self._error_handler = ErrorHandler(__name__)
 
     async def get_inventory_collection(self):
         return await get_async_collection("inventory")
@@ -40,20 +43,35 @@ class InventoryService:
                 return InventorySchema(id=doc.id, **doc_dict)
         return None
 
+    @handle_service_errors("creating inventory item")
+    @async_timer("create_inventory")
     async def create_inventory(
         self, inventory_data: CreateInventorySchema
     ) -> InventorySchema:
+        if not inventory_data.productId or not inventory_data.productId.strip():
+            raise ValidationException(detail="Valid product ID is required")
+
+        if not inventory_data.storeId or not inventory_data.storeId.strip():
+            raise ValidationException(detail="Valid store ID is required")
+
+        if inventory_data.stock < 0:
+            raise ValidationException(detail="Stock quantity cannot be negative")
+
         inventory_collection = await self.get_inventory_collection()
         doc_ref = inventory_collection.document()
         inventory_dict = inventory_data.model_dump()
-        doc_ref.set(inventory_dict)
-        created_inventory = doc_ref.get()
-        created_dict = created_inventory.to_dict()
-        if created_dict:  # Ensure created_dict is not None
-            return InventorySchema(id=created_inventory.id, **created_dict)
-        else:
-            # Handle the case where the document doesn't exist after creation
-            raise Exception("Failed to create inventory item")
+
+        try:
+            doc_ref.set(inventory_dict)
+            created_inventory = doc_ref.get()
+            created_dict = created_inventory.to_dict()
+            if created_dict:  # Ensure created_dict is not None
+                return InventorySchema(id=created_inventory.id, **created_dict)
+            else:
+                raise ValidationException(detail="Failed to create inventory item - document not found after creation")
+        except Exception as e:
+            self._error_handler.logger.error(f"Failed to create inventory item: {str(e)}")
+            raise ValidationException(detail="Failed to create inventory item due to database error")
 
     async def update_inventory(
         self, inventory_id: str, inventory_data: UpdateInventorySchema

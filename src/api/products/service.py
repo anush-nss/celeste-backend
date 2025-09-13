@@ -19,7 +19,8 @@ from src.config.constants import Collections
 from src.shared.cache_invalidation import cache_invalidation_manager
 from src.api.products.cache import products_cache
 from src.shared.sqlalchemy_utils import safe_model_validate, safe_model_validate_list
-from src.shared.exceptions import ResourceNotFoundException, ConflictException
+from src.shared.exceptions import ResourceNotFoundException, ConflictException, ValidationException
+from src.shared.error_handler import ErrorHandler, handle_service_errors
 from sqlalchemy.exc import IntegrityError
 
 
@@ -27,7 +28,7 @@ class ProductService:
     """Product service with PostgreSQL and generic utilities"""
 
     def __init__(self):
-        pass
+        self._error_handler = ErrorHandler(__name__)
 
     async def _build_product_query(self, query_params: ProductQuerySchema):
         """Build SQLAlchemy query with filters and relationships"""
@@ -101,20 +102,24 @@ class ProductService:
                 include_relationships=include_rels
             )
 
+    @handle_service_errors("retrieving product by ID")
     async def get_product_by_id(
-        self, 
+        self,
         product_id: int,
         include_categories: bool = True,
         include_tags: bool = True
     ) -> ProductSchema | None:
         """Get product by ID with relationships"""
+        if product_id <= 0:
+            raise ValidationException(detail="Product ID must be a positive integer")
+
         cached_product = products_cache.get_product(str(product_id))
         if cached_product:
             return ProductSchema.model_validate(cached_product)
 
         async with AsyncSessionLocal() as session:
             query = select(Product).filter(Product.id == product_id)
-            
+
             # Include relationships
             if include_categories:
                 query = query.options(selectinload(Product.categories))
@@ -122,104 +127,108 @@ class ProductService:
                 query = query.options(
                     selectinload(Product.product_tags).selectinload(ProductTag.tag)
                 )
-            
+
             result = await session.execute(query)
             product = result.scalars().first()
-            
+
             if product:
                 include_rels = set()
                 if include_categories:
                     include_rels.add('categories')
                 if include_tags:
                     include_rels.add('product_tags')
-                    
+
                 pydantic_product = safe_model_validate(
                     ProductSchema,
                     product,
                     max_depth=3
                 )
-                
+
                 # Cache the product
                 products_cache.set_product(str(product_id), pydantic_product.model_dump(mode="json"))
                 return pydantic_product
-                
+
             return None
 
+    @handle_service_errors("creating product")
     async def create_product(self, product_data: CreateProductSchema) -> ProductSchema:
         """Create a new product with categories and tags"""
+        # Validate input data
+        if not product_data.name or not product_data.name.strip():
+            raise ValidationException(detail="Product name is required")
+
+        if not product_data.brand or not product_data.brand.strip():
+            raise ValidationException(detail="Product brand is required")
+
+        if product_data.base_price < 0:
+            raise ValidationException(detail="Product price cannot be negative")
+
+        if not product_data.unit_measure or not product_data.unit_measure.strip():
+            raise ValidationException(detail="Product unit measure is required")
+
         async with AsyncSessionLocal() as session:
-            try:
-                # Create the product
-                new_product = Product(
-                    name=product_data.name,
-                    description=product_data.description,
-                    brand=product_data.brand,
-                    base_price=product_data.base_price,
-                    unit_measure=product_data.unit_measure,
-                    image_urls=product_data.image_urls
+            # Create the product
+            new_product = Product(
+                name=product_data.name.strip(),
+                description=product_data.description.strip() if product_data.description else None,
+                brand=product_data.brand.strip(),
+                base_price=product_data.base_price,
+                unit_measure=product_data.unit_measure.strip(),
+                image_urls=product_data.image_urls or []
+            )
+            session.add(new_product)
+            await session.commit()
+            await session.refresh(new_product)
+
+            # Add categories if provided
+            if product_data.category_ids:
+                # Load categories with eager loading
+                category_result = await session.execute(
+                    select(Category).filter(Category.id.in_(product_data.category_ids))
                 )
-                session.add(new_product)
-                await session.commit()
-                await session.refresh(new_product)
-                
-                # Add categories if provided
-                if product_data.category_ids:
-                    # Load categories with eager loading
-                    category_result = await session.execute(
-                        select(Category).filter(Category.id.in_(product_data.category_ids))
+                categories = category_result.scalars().all()
+
+                # Check if all requested categories exist
+                found_category_ids = {cat.id for cat in categories}
+                missing_category_ids = set(product_data.category_ids) - found_category_ids
+                if missing_category_ids:
+                    raise ResourceNotFoundException(
+                        detail=f"Categories with IDs {list(missing_category_ids)} not found"
                     )
-                    categories = category_result.scalars().all()
-                    
-                    # Check if all requested categories exist
-                    found_category_ids = {cat.id for cat in categories}
-                    missing_category_ids = set(product_data.category_ids) - found_category_ids
-                    if missing_category_ids:
-                        raise ResourceNotFoundException(
-                            detail=f"Categories with IDs {list(missing_category_ids)} not found"
-                        )
-                    
-                    # Load the categories relationship first to avoid lazy loading
-                    await session.refresh(new_product, ["categories"])
-                    new_product.categories.extend(categories)
-                
-                # Add tags if provided
-                if product_data.tag_ids:
-                    # Remove duplicates to avoid unique constraint violations
-                    unique_tag_ids = list(set(product_data.tag_ids))
-                    for tag_id in unique_tag_ids:
-                        product_tag = ProductTag(
-                            product_id=new_product.id,
-                            tag_id=tag_id,
-                            created_by="system"
-                        )
-                        session.add(product_tag)
-                
-                await session.commit()
-                await session.refresh(new_product)
-                
-                # Load relationships for response
-                await session.refresh(new_product, ["categories", "product_tags"])
-                
-                # Convert to Pydantic
-                pydantic_product = safe_model_validate(
-                    ProductSchema,
-                    new_product,
-                    max_depth=3
-                )
-                
-                # Invalidate cache
-                cache_invalidation_manager.invalidate_entity(Collections.PRODUCTS)
-                
-                return pydantic_product
-                
-            except IntegrityError as e:
-                await session.rollback()
-                if "tag_id" in str(e.orig) and "is not present" in str(e.orig):
-                    # Extract tag_id from error if possible
-                    raise ResourceNotFoundException(detail="One or more specified tags not found")
-                else:
-                    # Re-raise if it's a different integrity error
-                    raise
+
+                # Load the categories relationship first to avoid lazy loading
+                await session.refresh(new_product, ["categories"])
+                new_product.categories.extend(categories)
+
+            # Add tags if provided
+            if product_data.tag_ids:
+                # Remove duplicates to avoid unique constraint violations
+                unique_tag_ids = list(set(product_data.tag_ids))
+                for tag_id in unique_tag_ids:
+                    product_tag = ProductTag(
+                        product_id=new_product.id,
+                        tag_id=tag_id,
+                        created_by="system"
+                    )
+                    session.add(product_tag)
+
+            await session.commit()
+            await session.refresh(new_product)
+
+            # Load relationships for response
+            await session.refresh(new_product, ["categories", "product_tags"])
+
+            # Convert to Pydantic
+            pydantic_product = safe_model_validate(
+                ProductSchema,
+                new_product,
+                max_depth=3
+            )
+
+            # Invalidate cache
+            cache_invalidation_manager.invalidate_entity(Collections.PRODUCTS)
+
+            return pydantic_product
 
     async def update_product(
         self, product_id: int, product_data: UpdateProductSchema

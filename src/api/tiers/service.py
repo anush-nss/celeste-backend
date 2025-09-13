@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
 from sqlalchemy.future import select
@@ -27,20 +28,42 @@ from src.api.tiers.models import (
     UserTierInfoSchema,
     TierEvaluationSchema,
 )
-from src.shared.exceptions import ResourceNotFoundException
+from src.shared.exceptions import ResourceNotFoundException, ValidationException, ConflictException
+from src.shared.error_handler import ErrorHandler, handle_service_errors
+from src.shared.performance_utils import async_timer, BatchProcessor
 
 
 class TierService:
     def __init__(self):
         self.logger = get_logger(__name__)
+        self._error_handler = ErrorHandler(__name__)
+        self._batch_processor = BatchProcessor(batch_size=50)
 
+    @handle_service_errors("creating tier")
+    @async_timer("create_tier")
     async def create_tier(self, tier_data: CreateTierSchema) -> TierSchema:
         """Create a new tier with benefits"""
+        if not tier_data.name or not tier_data.name.strip():
+            raise ValidationException(detail="Tier name is required")
+
+        if tier_data.min_total_spent < 0:
+            raise ValidationException(detail="Minimum total spent cannot be negative")
+
+        if tier_data.min_orders_count < 0:
+            raise ValidationException(detail="Minimum orders count cannot be negative")
+
         async with AsyncSessionLocal() as session:
+            # Check for duplicate name
+            existing = await session.execute(
+                select(Tier).filter(Tier.name == tier_data.name.strip())
+            )
+            if existing.scalars().first():
+                raise ConflictException(detail=f"Tier with name '{tier_data.name}' already exists")
+
             # Create the tier
             new_tier = Tier(
-                name=tier_data.name,
-                description=tier_data.description,
+                name=tier_data.name.strip(),
+                description=tier_data.description.strip() if tier_data.description else None,
                 sort_order=tier_data.sort_order,
                 is_active=tier_data.is_active,
                 min_total_spent=tier_data.min_total_spent,
@@ -114,8 +137,10 @@ class TierService:
                 return await self._tier_to_schema(tier)
             return None
 
+    @handle_service_errors("retrieving all tiers")
+    @async_timer("get_all_tiers")
     async def get_all_tiers(self, active_only: bool = False) -> List[TierSchema]:
-        """Get all tiers"""
+        """Get all tiers with optimized loading"""
         async with AsyncSessionLocal() as session:
             query = select(Tier).options(
                 selectinload(Tier.benefits),
@@ -123,11 +148,18 @@ class TierService:
             ).order_by(Tier.sort_order)
             if active_only:
                 query = query.where(Tier.is_active == True)
-            
+
             result = await session.execute(query)
-            tiers = result.scalars().all()
-            
-            return [await self._tier_to_schema(tier) for tier in tiers]
+            tiers = result.scalars().unique().all()  # Use unique() for selectinload
+
+            # Process in batches if many tiers
+            if len(tiers) > 20:
+                return await self._batch_processor.process_in_batches(
+                    list(tiers),
+                    lambda batch: [self._tier_to_schema(tier) for tier in batch]
+                )
+            else:
+                return [await self._tier_to_schema(tier) for tier in tiers]
 
     async def update_tier(self, tier_id: int, tier_data: UpdateTierSchema) -> Optional[TierSchema]:
         """Update a tier"""
@@ -266,13 +298,22 @@ class TierService:
                 "created_at": user.created_at,
             }
 
+    @handle_service_errors("evaluating user tier")
+    @async_timer("evaluate_user_tier")
     async def evaluate_user_tier(self, user_id: str) -> TierEvaluationSchema:
         """Evaluate what tier a user should be in based on their activity"""
-        stats = await self.get_user_statistics(user_id)
-        current_tier_id = await self.get_user_tier_id(user_id)
+        if not user_id or not user_id.strip():
+            raise ValidationException(detail="Valid user ID is required")
+
+        # Batch these operations for performance
+        stats, current_tier_id, tiers = await asyncio.gather(
+            self.get_user_statistics(user_id.strip()),
+            self.get_user_tier_id(user_id.strip()),
+            self.get_all_tiers(active_only=True)
+        )
+
         if current_tier_id is None:
             current_tier_id = await self.get_default_tier()
-        tiers = await self.get_all_tiers(active_only=True)
 
         eligible_tier_ids = []
         for tier in tiers:

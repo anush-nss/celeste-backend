@@ -1,20 +1,46 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Annotated
 from src.config.constants import UserRole
 
 
 class LoginSchema(BaseModel):
-    token: str = Field(..., min_length=1)
+    token: Annotated[str, Field(
+        min_length=10,
+        max_length=5000,
+        description="Firebase ID token",
+        examples=["eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2NzAy..."]
+    )]
 
 
 class RegisterSchema(BaseModel):
-    phoneNumber: str = Field(..., min_length=1)
-    name: str = Field(..., min_length=1)
+    phoneNumber: Annotated[str, Field(
+        min_length=10,
+        max_length=20,
+        description="Phone number with country code",
+        pattern=r'^\+\d{10,19}$',
+        examples=["+1234567890"]
+    )]
+    name: Annotated[str, Field(
+        min_length=2,
+        max_length=100,
+        description="Full name of the user",
+        examples=["John Doe"]
+    )]
 
 
 class UserRegistration(BaseModel):
-    idToken: str
-    name: str
+    idToken: Annotated[str, Field(
+        min_length=10,
+        max_length=5000,
+        description="Firebase ID token obtained from client authentication",
+        examples=["eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2NzAy..."]
+    )]
+    name: Annotated[str, Field(
+        min_length=2,
+        max_length=100,
+        description="Full name of the user",
+        examples=["John Doe"]
+    )]
 
 
 class DecodedToken(BaseModel):

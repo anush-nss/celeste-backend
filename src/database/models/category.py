@@ -1,5 +1,5 @@
 from typing import List, Optional, TYPE_CHECKING
-from sqlalchemy import String, Integer, ForeignKey
+from sqlalchemy import String, Integer, ForeignKey, Index, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import text
@@ -12,15 +12,22 @@ if TYPE_CHECKING:
 
 class Category(Base):
     __tablename__ = "categories"
+    __table_args__ = (
+        CheckConstraint('sort_order >= 0', name='check_sort_order_non_negative'),
+        Index('idx_categories_name', 'name'),
+        Index('idx_categories_parent', 'parent_category_id'),
+        Index('idx_categories_sort_order', 'sort_order'),
+        Index('idx_categories_parent_sort', 'parent_category_id', 'sort_order'),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
-    image_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    parent_category_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("categories.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'))
-    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), onupdate=text('NOW()'))
+    name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    parent_category_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("categories.id", ondelete="CASCADE"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), onupdate=text('NOW()'), nullable=False)
 
     # Self-referencing relationship for parent/child categories
     parent_category: Mapped[Optional["Category"]] = relationship(
