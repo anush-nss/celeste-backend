@@ -7,6 +7,9 @@ from src.api.tiers.models import (
     UserTierProgressSchema,
     UserTierInfoSchema,
     TierEvaluationSchema,
+    BenefitSchema,
+    CreateBenefitSchema,
+    UpdateBenefitSchema,
 )
 from src.api.auth.models import DecodedToken
 from src.api.tiers.service import TierService
@@ -251,3 +254,149 @@ async def manually_update_user_tier(user_id: str, new_tier_id: int):
             "message": "User tier updated successfully",
         }
     )
+
+
+# Benefits CRUD Endpoints (Admin only)
+@router.get(
+    "/benefits/",
+    summary="Get all benefits",
+    response_model=List[BenefitSchema],
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def get_all_benefits(active_only: bool = False):
+    """
+    Get all benefits (Admin only).
+
+    - **active_only**: Filter to show only active benefits
+    """
+    benefits = await tier_service.get_all_benefits(active_only=active_only)
+    return success_response([benefit.model_dump(mode="json") for benefit in benefits])
+
+
+@router.get(
+    "/benefits/{benefit_id}",
+    summary="Get benefit by ID",
+    response_model=BenefitSchema,
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def get_benefit_by_id(benefit_id: int):
+    """Get a specific benefit by ID (Admin only)"""
+    benefit = await tier_service.get_benefit_by_id(benefit_id)
+    if not benefit:
+        raise ResourceNotFoundException(
+            detail=f"Benefit with ID {benefit_id} not found"
+        )
+    return success_response(benefit.model_dump(mode="json"))
+
+
+@router.post(
+    "/benefits/",
+    summary="Create a new benefit",
+    response_model=BenefitSchema,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def create_benefit(benefit_data: CreateBenefitSchema):
+    """
+    Create a new benefit (Admin only).
+
+    - **benefit_type**: Type of benefit (order_discount or delivery_discount)
+    - **discount_type**: Type of discount (flat or percentage)
+    - **discount_value**: Discount amount or percentage
+    - **max_discount_amount**: Maximum discount amount (for percentage discounts)
+    - **min_order_value**: Minimum order value required
+    - **min_items**: Minimum number of items required
+    - **is_active**: Whether the benefit is active
+    """
+    try:
+        new_benefit = await tier_service.create_benefit(benefit_data)
+        return success_response(
+            new_benefit.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+        )
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.put(
+    "/benefits/{benefit_id}",
+    summary="Update a benefit",
+    response_model=BenefitSchema,
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def update_benefit(benefit_id: int, benefit_data: UpdateBenefitSchema):
+    """Update an existing benefit (Admin only)"""
+    updated_benefit = await tier_service.update_benefit(benefit_id, benefit_data)
+    if not updated_benefit:
+        raise ResourceNotFoundException(
+            detail=f"Benefit with ID {benefit_id} not found"
+        )
+    return success_response(updated_benefit.model_dump(mode="json"))
+
+
+@router.delete(
+    "/benefits/{benefit_id}",
+    summary="Delete a benefit",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def delete_benefit(benefit_id: int):
+    """Delete a benefit (Admin only)"""
+    success = await tier_service.delete_benefit(benefit_id)
+    if not success:
+        raise ResourceNotFoundException(
+            detail=f"Benefit with ID {benefit_id} not found"
+        )
+    return success_response(
+        {"id": benefit_id, "message": "Benefit deleted successfully"}
+    )
+
+
+# Tier-Benefit Association Endpoints (Admin only)
+@router.get(
+    "/{tier_id}/benefits",
+    summary="Get benefits for a tier",
+    response_model=List[BenefitSchema],
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def get_tier_benefits(tier_id: int):
+    """Get all benefits associated with a specific tier (Admin only)"""
+    benefits = await tier_service.get_tier_benefits(tier_id)
+    return success_response([benefit.model_dump(mode="json") for benefit in benefits])
+
+
+@router.post(
+    "/{tier_id}/benefits/{benefit_id}",
+    summary="Associate benefit with tier",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def associate_benefit_to_tier(tier_id: int, benefit_id: int):
+    """Associate a benefit with a tier (Admin only)"""
+    success = await tier_service.associate_benefit_to_tier(tier_id, benefit_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to associate benefit with tier. Check if tier and benefit exist."
+        )
+    return success_response({
+        "tier_id": tier_id,
+        "benefit_id": benefit_id,
+        "message": "Benefit associated with tier successfully"
+    })
+
+
+@router.delete(
+    "/{tier_id}/benefits/{benefit_id}",
+    summary="Remove benefit from tier",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def remove_benefit_from_tier(tier_id: int, benefit_id: int):
+    """Remove a benefit from a tier (Admin only)"""
+    success = await tier_service.remove_benefit_from_tier(tier_id, benefit_id)
+    if not success:
+        raise ResourceNotFoundException(
+            detail="Benefit association not found or tier/benefit doesn't exist"
+        )
+    return success_response({
+        "tier_id": tier_id,
+        "benefit_id": benefit_id,
+        "message": "Benefit removed from tier successfully"
+    })

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
 from sqlalchemy import String, Integer, ForeignKey, Boolean, DECIMAL, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -24,14 +25,14 @@ class PriceListLine(Base):
     
     # Pricing Rules
     discount_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    discount_value: Mapped[float] = mapped_column(DECIMAL(10, 2), nullable=False)
-    max_discount_amount: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 2), nullable=True)  # Cap for percentage discounts
+    discount_value: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
+    max_discount_amount: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(10, 2), nullable=True)  # Cap for percentage discounts
     
     # Minimum quantity for bulk pricing
     min_quantity: Mapped[int] = mapped_column(Integer, default=1)
     
     # Conditions
-    min_order_amount: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 2), nullable=True)  # NULL = no minimum order requirement
+    min_order_amount: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(10, 2), nullable=True)  # NULL = no minimum order requirement
     
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'))

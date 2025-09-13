@@ -7,7 +7,7 @@ from datetime import datetime
 from src.database.base import Base
 
 if TYPE_CHECKING:
-    from src.database.models.tier_benefit import TierBenefit
+    from src.database.models.tier_benefit import Benefit
     from src.database.models.tier_price_list import TierPriceList
 
 class Tier(Base):
@@ -29,5 +29,5 @@ class Tier(Base):
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), onupdate=text('NOW()'))
 
     # Relationships
-    benefits: Mapped[List["TierBenefit"]] = relationship("TierBenefit", back_populates="tier", cascade="all, delete-orphan")
+    benefits: Mapped[List["Benefit"]] = relationship("Benefit", secondary="tier_benefits", back_populates="tiers")
     price_lists: Mapped[List["TierPriceList"]] = relationship("TierPriceList", back_populates="tier", cascade="all, delete-orphan")

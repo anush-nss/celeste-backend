@@ -1,38 +1,46 @@
-from typing import Optional, TYPE_CHECKING
-from sqlalchemy import String, Integer, ForeignKey, Boolean, DECIMAL, CheckConstraint
+from typing import Optional, List, TYPE_CHECKING
+from sqlalchemy import String, Integer, ForeignKey, Boolean, DECIMAL, CheckConstraint, Table, Column
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import text
 from datetime import datetime
 from src.database.base import Base
+
 if TYPE_CHECKING:
     from src.database.models.tier import Tier
 
-class TierBenefit(Base):
-    __tablename__ = "tier_benefits"
+# Association table for many-to-many relationship between tiers and benefits
+tier_benefits = Table(
+    'tier_benefits',
+    Base.metadata,
+    Column('tier_id', Integer, ForeignKey('tiers.id', ondelete='CASCADE'), primary_key=True),
+    Column('benefit_id', Integer, ForeignKey('benefits.id', ondelete='CASCADE'), primary_key=True),
+    Column('created_at', TIMESTAMP(timezone=True), server_default=text('NOW()'))
+)
+
+class Benefit(Base):
+    __tablename__ = "benefits"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    tier_id: Mapped[int] = mapped_column(Integer, ForeignKey("tiers.id", ondelete="CASCADE"), nullable=False)
-    benefit_type: Mapped[str] = mapped_column(
-        String(30), 
-        nullable=False,
-        # Add check constraint for valid benefit types
-    )
+    benefit_type: Mapped[str] = mapped_column(String(30), nullable=False)  # order_discount or delivery_discount
+    discount_type: Mapped[str] = mapped_column(String(20), nullable=False)  # flat or percentage
     
-    # Simple discount fields
-    discount_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    discount_value: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 2), nullable=True)
+    # Discount configuration
+    discount_value: Mapped[float] = mapped_column(DECIMAL(10, 2), nullable=False)
     max_discount_amount: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 2), nullable=True)  # Cap for percentage discounts
-    min_order_amount: Mapped[float] = mapped_column(DECIMAL(10, 2), default=0.0)
+    
+    # Minimum requirements
+    min_order_value: Mapped[float] = mapped_column(DECIMAL(10, 2), default=0.0)
+    min_items: Mapped[int] = mapped_column(Integer, default=0)
     
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'))
 
-    # Relationships
-    tier: Mapped["Tier"] = relationship("Tier", back_populates="benefits")
+    # Many-to-many relationship with tiers
+    tiers: Mapped[List["Tier"]] = relationship("Tier", secondary=tier_benefits, back_populates="benefits")
 
     # Table constraints
     __table_args__ = (
-        CheckConstraint("benefit_type IN ('delivery_discount', 'order_discount', 'free_shipping')", name='check_benefit_type'),
-        CheckConstraint("discount_type IN ('percentage', 'flat') OR discount_type IS NULL", name='check_discount_type'),
+        CheckConstraint("benefit_type IN ('order_discount', 'delivery_discount')", name='check_benefit_type'),
+        CheckConstraint("discount_type IN ('flat', 'percentage')", name='check_discount_type'),
     )

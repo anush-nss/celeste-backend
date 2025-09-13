@@ -321,7 +321,7 @@ class ProductService:
     async def get_products_with_pagination(
         self,
         query_params: ProductQuerySchema,
-        customer_tier: Optional[str] = None,
+        customer_tier: Optional[int] = None,
         pricing_service=None,
     ) -> PaginatedProductsResponse:
         """Get products with pagination and optional pricing"""
@@ -362,7 +362,11 @@ class ProductService:
             if query_params.include_pricing and pricing_service and customer_tier:
                 # Convert to dict format for bulk pricing
                 product_data = [
-                    {"id": str(p.id), "price": p.base_price, "category_id": str(p.categories[0].get("id")) if p.categories and p.categories[0].get("id") else None}
+                    {
+                        "id": str(p.id),
+                        "price": p.base_price,
+                        "category_ids": [cat.get("id") for cat in p.categories] if p.categories else []
+                    }
                     for p in base_products
                 ]
                 
@@ -376,7 +380,13 @@ class ProductService:
                     enhanced_product = EnhancedProductSchema(**product.model_dump(mode="json"))
                     pricing_info = pricing_results[i] if i < len(pricing_results) else None
                     if pricing_info:
-                        enhanced_product.pricing = PricingInfoSchema(**pricing_info)
+                        enhanced_product.pricing = PricingInfoSchema(
+                            base_price=pricing_info.base_price,
+                            final_price=pricing_info.final_price,
+                            discount_applied=pricing_info.savings,
+                            discount_percentage=(pricing_info.savings / pricing_info.base_price) * 100 if pricing_info.base_price > 0 else 0,
+                            applied_price_lists=[pl["price_list_name"] for pl in pricing_info.applied_discounts]
+                        )
                     
                     # Filter discounted products if requested
                     if query_params.only_discounted:
@@ -432,14 +442,13 @@ class ProductService:
             )
             return list(result.scalars().all())
 
-    async def assign_tag_to_product(self, product_id: int, tag_id: int, value: Optional[str] = None):
+    async def assign_tag_to_product(self, product_id: int, tag_id: int):
         """Assign a tag to a product"""
         async with AsyncSessionLocal() as session:
             try:
                 product_tag = ProductTag(
                     product_id=product_id,
                     tag_id=tag_id,
-                    value=value,
                     created_by="system"
                 )
                 session.add(product_tag)

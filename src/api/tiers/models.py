@@ -6,37 +6,46 @@ from enum import Enum
 
 # Enums for validation
 class BenefitType(str, Enum):
-    DELIVERY_DISCOUNT = "delivery_discount"
     ORDER_DISCOUNT = "order_discount"
-    FREE_SHIPPING = "free_shipping"
+    DELIVERY_DISCOUNT = "delivery_discount"
 
 
 class DiscountType(str, Enum):
-    PERCENTAGE = "percentage"
     FLAT = "flat"
-    FIXED_PRICE = "fixed_price"
+    PERCENTAGE = "percentage"
 
 
-# Tier Benefits Schema
-class TierBenefitSchema(BaseModel):
+# Benefit Schema (now a separate entity with many-to-many relationship to tiers)
+class BenefitSchema(BaseModel):
     id: Optional[int] = None
-    tier_id: Optional[int] = None
-    benefit_type: BenefitType
-    discount_type: Optional[DiscountType] = None
-    discount_value: Optional[float] = None
-    max_discount_amount: Optional[float] = None
-    min_order_amount: float = 0.0
+    benefit_type: BenefitType  # order_discount or delivery_discount
+    discount_type: DiscountType  # flat or percentage
+    discount_value: float  # required
+    max_discount_amount: Optional[float] = None  # used for percentage discounts
+    min_order_value: float = 0.0  # minimum order value required
+    min_items: int = 0  # minimum items required
     is_active: bool = True
     created_at: Optional[datetime] = None
 
 
-class CreateTierBenefitSchema(BaseModel):
+class CreateBenefitSchema(BaseModel):
     benefit_type: BenefitType
+    discount_type: DiscountType
+    discount_value: float
+    max_discount_amount: Optional[float] = None
+    min_order_value: float = 0.0
+    min_items: int = 0
+    is_active: bool = True
+
+
+class UpdateBenefitSchema(BaseModel):
+    benefit_type: Optional[BenefitType] = None
     discount_type: Optional[DiscountType] = None
     discount_value: Optional[float] = None
     max_discount_amount: Optional[float] = None
-    min_order_amount: float = 0.0
-    is_active: bool = True
+    min_order_value: Optional[float] = None
+    min_items: Optional[int] = None
+    is_active: Optional[bool] = None
 
 
 # Price List Schemas
@@ -85,7 +94,7 @@ class TierSchema(BaseModel):
     updated_at: Optional[datetime] = None
     
     # Related data
-    benefits: List[TierBenefitSchema] = Field(default_factory=list)
+    benefits: List[BenefitSchema] = Field(default_factory=list)
     price_lists: List[PriceListSchema] = Field(default_factory=list)
 
 
@@ -101,8 +110,10 @@ class CreateTierSchema(BaseModel):
     min_monthly_spent: float = 0.0
     min_monthly_orders: int = 0
     
-    # Benefits to create with the tier
-    benefits: List[CreateTierBenefitSchema] = Field(default_factory=list)
+    # Benefit IDs to associate with the tier
+    benefits: List[int] = Field(default_factory=list, description="List of benefit IDs to associate with this tier")
+    # Price list IDs to associate with the tier  
+    price_lists: List[int] = Field(default_factory=list, description="List of price list IDs to associate with this tier")
 
 
 class UpdateTierSchema(BaseModel):
@@ -117,6 +128,11 @@ class UpdateTierSchema(BaseModel):
     min_monthly_spent: Optional[float] = None
     min_monthly_orders: Optional[int] = None
 
+    # Benefit IDs to associate with the tier
+    benefits: List[int] = Field(default_factory=list, description="List of benefit IDs to associate with this tier")
+    # Price list IDs to associate with the tier
+    price_lists: List[int] = Field(default_factory=list, description="List of price list IDs to associate with this tier")
+
 
 # User tier progress and evaluation schemas
 class UserTierProgressSchema(BaseModel):
@@ -125,7 +141,7 @@ class UserTierProgressSchema(BaseModel):
     next_tier_id: Optional[int] = None
     next_tier_name: Optional[str] = None
     progress: dict = Field(..., description="Progress towards next tier")
-    benefits: List[TierBenefitSchema] = Field(..., description="Current tier benefits")
+    benefits: List[BenefitSchema] = Field(..., description="Current tier benefits")
 
 
 class UserTierInfoSchema(BaseModel):

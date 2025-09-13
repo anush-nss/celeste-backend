@@ -1,11 +1,21 @@
-import asyncio
 from datetime import datetime, timezone
-from typing import List, Optional, Dict
-from google.cloud.firestore_v1.base_query import FieldFilter
-from src.shared.database import get_async_db, get_async_collection
+from decimal import Decimal
+from typing import Any, List, Optional, Dict
+from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
+from sqlalchemy import and_, or_, desc
+
+from src.database.connection import AsyncSessionLocal
+# Import all models to ensure relationships are properly registered
+import src.database.models
+from src.database.models.price_list import PriceList
+from src.database.models.price_list_line import PriceListLine
+from src.database.models.tier_price_list import TierPriceList
+from src.database.models.tier import Tier
+from src.database.models.product import Product
+from src.database.models.category import Category
+
 from src.shared.utils import get_logger
-from src.config.cache_config import cache_config
-from .cache import pricing_cache
 from src.api.pricing.models import (
     PriceListSchema,
     CreatePriceListSchema,
@@ -13,469 +23,319 @@ from src.api.pricing.models import (
     PriceListLineSchema,
     CreatePriceListLineSchema,
     UpdatePriceListLineSchema,
-)
-from src.config.constants import (
-    Collections,
-    PriceListType,
+    ProductPricingSchema,
+    TierPriceListAssignmentSchema,
     DiscountType,
-    DEFAULT_FALLBACK_TIER,
 )
-from src.shared.cache_invalidation import cache_invalidation_manager
+from src.shared.exceptions import ResourceNotFoundException
 
 logger = get_logger(__name__)
 
 
 class PricingService:
-    """Pricing service with optimized caching and pre-loading"""
+    """PostgreSQL-based pricing service"""
 
     def __init__(self):
-        pass
+        self.logger = logger
 
-    async def get_price_lists_collection(self):
-        return await get_async_collection(Collections.PRICE_LISTS)
-
-    async def get_price_list_lines_collection(self):
-        return await get_async_collection(Collections.PRICE_LIST_LINES)
-
-    async def get_customer_tiers_collection(self):
-        return await get_async_collection(Collections.CUSTOMER_TIERS)
-
-    async def create_price_list(
-        self, price_list_data: CreatePriceListSchema
-    ) -> PriceListSchema:
+    # Price List Management
+    async def create_price_list(self, price_list_data: CreatePriceListSchema) -> PriceListSchema:
         """Create a new price list"""
-        price_lists_collection = await self.get_price_lists_collection()
-        doc_ref = price_lists_collection.document()
-        price_list_dict = price_list_data.model_dump()
-        price_list_dict.update(
-            {"created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc)}
-        )
-        await doc_ref.set(price_list_dict)
+        async with AsyncSessionLocal() as session:
+            new_price_list = PriceList(
+                name=price_list_data.name,
+                description=price_list_data.description,
+                priority=price_list_data.priority,
+                valid_from=price_list_data.valid_from or datetime.now(),
+                valid_until=price_list_data.valid_until,
+                is_active=price_list_data.is_active,
+            )
+            session.add(new_price_list)
+            await session.commit()
+            await session.refresh(new_price_list)
+            
+            return await self._price_list_to_schema(new_price_list)
 
-        cache_invalidation_manager.invalidate_price_list()
-
-        return PriceListSchema(**price_list_dict, id=doc_ref.id)
-
-    async def get_price_list_by_id(
-        self, price_list_id: str
-    ) -> Optional[PriceListSchema]:
+    async def get_price_list_by_id(self, price_list_id: int) -> Optional[PriceListSchema]:
         """Get a price list by ID"""
-        price_lists_collection = await self.get_price_lists_collection()
-        doc = await price_lists_collection.document(price_list_id).get()
-        if doc.exists:
-            doc_data = doc.to_dict()
-            if doc_data:
-                return PriceListSchema(**doc_data, id=doc.id)
-        return None
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(PriceList).options(selectinload(PriceList.lines)).where(PriceList.id == price_list_id)
+            )
+            price_list = result.scalars().first()
+            if price_list:
+                return await self._price_list_to_schema(price_list)
+            return None
 
-    async def get_all_price_lists(
-        self, active_only: bool = False
-    ) -> List[PriceListSchema]:
-        """Get all price lists, optionally filtered by active status"""
-        cached_lists = pricing_cache.get_price_lists(active_only)
-        if cached_lists is not None:
-            return cached_lists
+    async def get_all_price_lists(self, active_only: bool = False) -> List[PriceListSchema]:
+        """Get all price lists"""
+        async with AsyncSessionLocal() as session:
+            query = select(PriceList).options(selectinload(PriceList.lines)).order_by(PriceList.priority.desc())
+            if active_only:
+                query = query.where(PriceList.is_active == True)
+            
+            result = await session.execute(query)
+            price_lists = result.scalars().all()
+            
+            return [await self._price_list_to_schema(pl) for pl in price_lists]
 
-        price_lists_collection = await self.get_price_lists_collection()
-        query = price_lists_collection.order_by(field_path="priority")
-        if active_only:
-            query = query.where(filter=FieldFilter("active", "==", True))
-
-        docs = query.stream()
-        price_lists = []
-        async for doc in docs:
-            doc_data = doc.to_dict()
-            if doc_data:
-                price_lists.append(PriceListSchema(**doc_data, id=doc.id))
-
-        if price_lists:
-            pricing_cache.set_price_lists(price_lists, active_only)
-
-        return price_lists
-
-    async def update_price_list(
-        self, price_list_id: str, price_list_data: UpdatePriceListSchema
-    ) -> Optional[PriceListSchema]:
+    async def update_price_list(self, price_list_id: int, price_list_data: UpdatePriceListSchema) -> Optional[PriceListSchema]:
         """Update a price list"""
-        price_lists_collection = await self.get_price_lists_collection()
-        doc_ref = price_lists_collection.document(price_list_id)
-        doc = await doc_ref.get()
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(PriceList).where(PriceList.id == price_list_id))
+            price_list = result.scalars().first()
+            
+            if not price_list:
+                return None
+            
+            update_data = price_list_data.model_dump(exclude_unset=True)
+            for key, value in update_data.items():
+                setattr(price_list, key, value)
+            
+            await session.commit()
+            await session.refresh(price_list)
+            
+            return await self._price_list_to_schema(price_list)
 
-        if not doc.exists:
-            return None
+    async def delete_price_list(self, price_list_id: int) -> bool:
+        """Delete a price list"""
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(PriceList).where(PriceList.id == price_list_id))
+            price_list = result.scalars().first()
+            
+            if not price_list:
+                return False
+            
+            await session.delete(price_list)
+            await session.commit()
+            return True
 
-        update_data = price_list_data.model_dump(exclude_unset=True)
-        update_data["updated_at"] = datetime.now(timezone.utc)
-        await doc_ref.update(update_data)
+    # Price List Line Management  
+    async def add_price_list_line(self, price_list_id: int, line_data: CreatePriceListLineSchema) -> PriceListLineSchema:
+        """Add a line to a price list"""
+        async with AsyncSessionLocal() as session:
+            new_line = PriceListLine(
+                price_list_id=price_list_id,
+                product_id=line_data.product_id,
+                category_id=line_data.category_id,
+                discount_type=line_data.discount_type.value,
+                discount_value=line_data.discount_value,
+                max_discount_amount=line_data.max_discount_amount,
+                min_quantity=line_data.min_quantity,
+                min_order_amount=line_data.min_order_amount,
+                is_active=line_data.is_active,
+            )
+            session.add(new_line)
+            await session.commit()
+            await session.refresh(new_line)
+            
+            return await self._price_list_line_to_schema(new_line)
 
-        cache_invalidation_manager.invalidate_price_list(price_list_id)
-
-        updated_doc = await doc_ref.get()
-        if updated_doc.exists:
-            updated_data = updated_doc.to_dict()
-            if updated_data:
-                return PriceListSchema(**updated_data, id=updated_doc.id)
-        return None
-
-    async def delete_price_list(self, price_list_id: str) -> bool:
-        """Delete a price list and its lines"""
-        price_lists_collection = await self.get_price_lists_collection()
-        doc_ref = price_lists_collection.document(price_list_id)
-        doc = await doc_ref.get()
-
-        if not doc.exists:
-            return False
-
-        price_list_lines_collection = await self.get_price_list_lines_collection()
-        lines_query = price_list_lines_collection.where(
-            filter=FieldFilter("price_list_id", "==", price_list_id)
-        )
-        lines_docs = lines_query.stream()
-
-        async for line_doc in lines_docs:
-            await line_doc.reference.delete()
-
-        await doc_ref.delete()
-        cache_invalidation_manager.invalidate_price_list(price_list_id)
-        return True
-
-    async def create_price_list_line(
-        self, price_list_id: str, line_data: CreatePriceListLineSchema
-    ) -> PriceListLineSchema:
-        """Create a new price list line"""
-        line_data.validate_type_fields()
-
-        price_list_lines_collection = await self.get_price_list_lines_collection()
-        doc_ref = price_list_lines_collection.document()
-        line_dict = line_data.model_dump()
-        line_dict.update(
-            {
-                "price_list_id": price_list_id,
-                "created_at": datetime.now(timezone.utc),
-                "updated_at": datetime.now(timezone.utc),
-            }
-        )
-        await doc_ref.set(line_dict)
-
-        cache_invalidation_manager.invalidate_price_list(price_list_id)
-
-        return PriceListLineSchema(**line_dict, id=doc_ref.id)
-
-    async def get_price_list_lines(
-        self, price_list_id: str
-    ) -> List[PriceListLineSchema]:
+    async def get_price_list_lines(self, price_list_id: int) -> List[PriceListLineSchema]:
         """Get all lines for a price list"""
-        cached_lines = pricing_cache.get_price_list_lines(price_list_id)
-        if cached_lines is not None:
-            return cached_lines
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(PriceListLine).where(PriceListLine.price_list_id == price_list_id)
+            )
+            lines = result.scalars().all()
+            
+            return [await self._price_list_line_to_schema(line) for line in lines]
 
-        price_list_lines_collection = await self.get_price_list_lines_collection()
-        docs = price_list_lines_collection.where(
-            filter=FieldFilter("price_list_id", "==", price_list_id)
-        ).stream()
-        lines = []
-        async for doc in docs:
-            doc_data = doc.to_dict()
-            if doc_data:
-                lines.append(PriceListLineSchema(**doc_data, id=doc.id))
-
-        if lines:
-            pricing_cache.set_price_list_lines(price_list_id, lines)
-
-        return lines
-
-    async def update_price_list_line(
-        self, line_id: str, line_data: UpdatePriceListLineSchema
-    ) -> Optional[PriceListLineSchema]:
+    async def update_price_list_line(self, line_id: int, line_data: UpdatePriceListLineSchema) -> Optional[PriceListLineSchema]:
         """Update a price list line"""
-        price_list_lines_collection = await self.get_price_list_lines_collection()
-        doc_ref = price_list_lines_collection.document(line_id)
-        doc = await doc_ref.get()
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(PriceListLine).where(PriceListLine.id == line_id))
+            line = result.scalars().first()
+            
+            if not line:
+                return None
+            
+            update_data = line_data.model_dump(exclude_unset=True)
+            for key, value in update_data.items():
+                if key == "discount_type" and value:
+                    setattr(line, key, value.value)
+                else:
+                    setattr(line, key, value)
+            
+            await session.commit()
+            await session.refresh(line)
+            
+            return await self._price_list_line_to_schema(line)
 
-        if not doc.exists:
-            return None
-
-        doc_data = doc.to_dict()
-        price_list_id = doc_data.get("price_list_id")
-
-        update_data = line_data.model_dump(exclude_unset=True)
-        update_data["updated_at"] = datetime.now(timezone.utc)
-        await doc_ref.update(update_data)
-
-        if price_list_id:
-            cache_invalidation_manager.invalidate_price_list(price_list_id)
-        else:
-            cache_invalidation_manager.invalidate_price_list()
-
-        updated_doc = await doc_ref.get()
-        if updated_doc.exists:
-            updated_data = updated_doc.to_dict()
-            if updated_data:
-                return PriceListLineSchema(**updated_data, id=updated_doc.id)
-        return None
-
-    async def delete_price_list_line(self, line_id: str) -> bool:
+    async def delete_price_list_line(self, line_id: int) -> bool:
         """Delete a price list line"""
-        price_list_lines_collection = await self.get_price_list_lines_collection()
-        doc_ref = price_list_lines_collection.document(line_id)
-        doc = await doc_ref.get()
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(PriceListLine).where(PriceListLine.id == line_id))
+            line = result.scalars().first()
+            
+            if not line:
+                return False
+            
+            await session.delete(line)
+            await session.commit()
+            return True
 
-        if not doc.exists:
-            return False
-
-        doc_data = doc.to_dict()
-        price_list_id = doc_data.get("price_list_id")
-
-        await doc_ref.delete()
-
-        if price_list_id:
-            cache_invalidation_manager.invalidate_price_list(price_list_id)
-        else:
-            cache_invalidation_manager.invalidate_price_list()
-
-        return True
-
-    async def calculate_product_pricing(
-        self,
-        product_id: Optional[str],
-        base_price: float,
-        category_id: Optional[str],
-        customer_tier: str,
-        quantity: int = 1,
-    ) -> Optional[Dict]:
-        """Calculate pricing for a single product with caching"""
-        if not customer_tier:
-            customer_tier = DEFAULT_FALLBACK_TIER
-
-        cached_result = pricing_cache.get_product_pricing(
-            product_id or "none", base_price, category_id, customer_tier, quantity
-        )
-        if cached_result is not None:
-            return cached_result
-
-        active_price_lists = await self.get_all_price_lists(active_only=True)
-
-        if not active_price_lists:
-            return self.create_base_pricing_result(base_price, customer_tier)
-
-        final_price = base_price
-        applied_price_lists = []
-        best_discount = 0.0
-
-        for price_list in active_price_lists:
-            if not self.is_price_list_valid(price_list):
-                continue
-
-            if not price_list.id:
-                continue
-
-            applicable_lines = await self.get_applicable_lines(
-                price_list.id, product_id, category_id, quantity
-            )
-
-            for line in applicable_lines:
-                discount = self.calculate_discount(base_price, line)
-                if discount > best_discount:
-                    best_discount = discount
-                    final_price = base_price - discount
-                    if price_list.name not in applied_price_lists:
-                        applied_price_lists.append(price_list.name)
-
-        discount_percentage = (
-            (best_discount / base_price * 100) if base_price > 0 else 0
-        )
-
-        result = {
-            "base_price": base_price,
-            "final_price": final_price,
-            "discount_applied": best_discount,
-            "discount_percentage": discount_percentage,
-            "applied_price_lists": applied_price_lists,
-            "customer_tier": customer_tier,
-        }
-
-        pricing_cache.set_product_pricing(
-            product_id or "none",
-            base_price,
-            category_id,
-            customer_tier,
-            result,
-            quantity,
-        )
-
-        return result
-
-    async def calculate_bulk_product_pricing(
-        self,
-        products: List[Dict],
-        customer_tier: str,
-        quantity: int = 1,
-    ) -> List[Dict]:
-        """Calculate pricing for multiple products efficiently with caching"""
-        if not products or not customer_tier:
-            return [
-                self.create_base_pricing_result(p.get("price", 0.0), customer_tier)
-                for p in products
-            ]
-
-        product_ids = [p.get("id", "") for p in products if p.get("id")]
-        if product_ids:
-            cached_result = pricing_cache.get_bulk_pricing(customer_tier, product_ids)
-            if cached_result is not None:
-                return cached_result
-
-        active_price_lists = await self.get_all_price_lists(active_only=True)
-
-        if not active_price_lists:
-            return [
-                self.create_base_pricing_result(p.get("price", 0.0), customer_tier)
-                for p in products
-            ]
-
-        valid_price_lists = [
-            pl for pl in active_price_lists if self.is_price_list_valid(pl)
-        ]
-
-        if not valid_price_lists:
-            return [
-                self.create_base_pricing_result(p.get("price", 0.0), customer_tier)
-                for p in products
-            ]
-
-        price_list_ids = [pl.id for pl in valid_price_lists if pl.id]
-        tasks = [self.get_price_list_lines(pl_id) for pl_id in price_list_ids]
-        results = await asyncio.gather(*tasks)
-        all_price_lines = {
-            pl_id: lines for pl_id, lines in zip(price_list_ids, results)
-        }
-
-        results = []
-        for product in products:
-            base_price = product.get("price", 0.0)
-            product_id = product.get("id")
-            category_id = product.get("categoryId")
-
-            if not product_id:
-                results.append(
-                    self.create_base_pricing_result(base_price, customer_tier)
+    # Tier Price List Association Management
+    async def assign_price_list_to_tier(self, tier_id: int, price_list_id: int) -> bool:
+        """Assign a price list to a tier"""
+        async with AsyncSessionLocal() as session:
+            # Check if association already exists
+            existing = await session.execute(
+                select(TierPriceList).where(
+                    and_(TierPriceList.tier_id == tier_id, TierPriceList.price_list_id == price_list_id)
                 )
-                continue
+            )
+            if existing.scalars().first():
+                return True  # Already exists
+            
+            association = TierPriceList(tier_id=tier_id, price_list_id=price_list_id)
+            session.add(association)
+            await session.commit()
+            return True
 
+    async def remove_price_list_from_tier(self, tier_id: int, price_list_id: int) -> bool:
+        """Remove a price list from a tier"""
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(TierPriceList).where(
+                    and_(TierPriceList.tier_id == tier_id, TierPriceList.price_list_id == price_list_id)
+                )
+            )
+            association = result.scalars().first()
+            
+            if not association:
+                return False
+            
+            await session.delete(association)
+            await session.commit()
+            return True
+
+    async def get_tier_price_lists(self, tier_id: int) -> List[PriceListSchema]:
+        """Get all price lists for a tier"""
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(TierPriceList)
+                .options(selectinload(TierPriceList.price_list))
+                .where(TierPriceList.tier_id == tier_id)
+            )
+            tier_price_lists = result.scalars().all()
+            
+            price_lists = [tpl.price_list for tpl in tier_price_lists if tpl.price_list and tpl.price_list.is_active]
+            price_lists.sort(key=lambda pl: pl.priority, reverse=True)
+
+            return [await self._price_list_to_schema(pl) for pl in price_lists]
+
+    # Pricing Calculation Methods
+    async def calculate_product_price(self, user_tier_id: Optional[int], product_id: int, product_category_ids: List[int], quantity: int = 1) -> ProductPricingSchema:
+        """Calculate the final price for a product based on user tier and quantity"""
+        async with AsyncSessionLocal() as session:
+            # Get product base price
+            product_result = await session.execute(select(Product).where(Product.id == product_id))
+            product = product_result.scalars().first()
+            
+            if not product:
+                raise ResourceNotFoundException(detail=f"Product with ID {product_id} not found")
+            
+            base_price = product.base_price
             final_price = base_price
-            applied_price_lists = []
-            best_discount = 0.0
-
-            for price_list in valid_price_lists:
-                if not price_list.id:
-                    continue
-                lines = all_price_lines.get(price_list.id, [])
-
-                for line in lines:
-                    if self.line_applies_to_product(
-                        line, product_id, category_id, quantity
-                    ):
-                        discount = self.calculate_discount(base_price, line)
-                        if discount > best_discount:
-                            best_discount = discount
-                            final_price = base_price - discount
-                            if price_list.name not in applied_price_lists:
-                                applied_price_lists.append(price_list.name)
-
-            discount_percentage = (
-                (best_discount / base_price * 100) if base_price > 0 else 0
+            applied_discounts = []
+            
+            if user_tier_id:
+                # Get applicable price lists for the user's tier
+                tier_price_lists = await self.get_tier_price_lists(user_tier_id)
+                
+                for price_list in tier_price_lists:
+                    # Check if price list is valid (date range)
+                    now = datetime.now(timezone.utc)
+                    if price_list.valid_from and now < price_list.valid_from:
+                        continue
+                    if price_list.valid_until and now > price_list.valid_until:
+                        continue
+                    
+                    # Find applicable lines for this product
+                    lines_result = await session.execute(
+                        select(PriceListLine)
+                        .where(PriceListLine.price_list_id == price_list.id)
+                        .where(PriceListLine.is_active == True)
+                        .where(
+                            or_(
+                                PriceListLine.product_id == product_id,
+                                PriceListLine.category_id.in_(product_category_ids), # Specific categories of the product
+                                and_(PriceListLine.product_id.is_(None), PriceListLine.category_id.is_(None))
+                            )
+                        )
+                        .where(PriceListLine.min_quantity <= quantity)
+                        .order_by(PriceListLine.product_id.desc().nullslast())  # Product-specific first
+                    )
+                    
+                    lines = lines_result.scalars().all()
+                    
+                    for line in lines:
+                        discount_applied = self._apply_discount(base_price, line, quantity)
+                        if discount_applied < final_price:
+                            final_price = discount_applied
+                            applied_discounts.append({
+                                "price_list_id": price_list.id,
+                                "price_list_name": price_list.name,
+                                "line_id": line.id,
+                                "discount_type": line.discount_type,
+                                "discount_value": float(line.discount_value),
+                                "original_price": float(base_price),
+                                "discounted_price": float(round(discount_applied, 2)),
+                                "savings": float(round(base_price - discount_applied, 2))
+                            })
+                            break  # Use first applicable discount from this price list
+            
+            return ProductPricingSchema(
+                product_id=product_id,
+                quantity=quantity,
+                base_price=float(base_price),
+                final_price=float(round(final_price, 2)),
+                total_price=float(round(final_price * quantity, 2)),
+                savings=float(round((base_price - final_price) * quantity, 2)),
+                applied_discounts=applied_discounts
             )
 
-            results.append(
-                {
-                    "base_price": base_price,
-                    "final_price": final_price,
-                    "discount_applied": best_discount,
-                    "discount_percentage": discount_percentage,
-                    "applied_price_lists": applied_price_lists,
-                    "customer_tier": customer_tier,
-                }
-            )
+    def _apply_discount(self, base_price: Decimal, line: PriceListLine, quantity: int) -> Decimal:
+        """Apply a discount from a price list line"""
+        if line.discount_type == "percentage":
+            discount_amount = base_price * (line.discount_value / 100)
+            if line.max_discount_amount:
+                discount_amount = min(discount_amount, line.max_discount_amount)
+            return base_price - discount_amount
+        
+        elif line.discount_type == "flat":
+            return max(Decimal(0), base_price - line.discount_value)
+        
+        elif line.discount_type == "fixed_price":
+            return line.discount_value
+        
+        return base_price
 
-        if product_ids and results:
-            pricing_cache.set_bulk_pricing(customer_tier, product_ids, results)
-
+    async def calculate_bulk_product_pricing(self, product_data: List[Dict[str, Any]], user_tier_id: Optional[int]) -> List[ProductPricingSchema]:
+        """Calculate pricing for multiple products"""
+        
+        results = []
+        for p_data in product_data:
+            product_id = int(p_data["id"])
+            quantity = p_data.get("quantity", 1)
+            product_category_ids = p_data.get("category_ids", [])
+            try:
+                pricing = await self.calculate_product_price(user_tier_id, product_id, product_category_ids, quantity)
+                results.append(pricing)
+            except ResourceNotFoundException:
+                # Skip products that don't exist
+                continue
+        
         return results
 
-    def is_price_list_valid(self, price_list: PriceListSchema) -> bool:
-        """Check if price list is within valid date range"""
-        now = datetime.now(timezone.utc)
+    # Helper methods
+    async def _price_list_to_schema(self, price_list: PriceList) -> PriceListSchema:
+        """Convert SQLAlchemy PriceList model to Pydantic schema"""
+        from src.shared.sqlalchemy_utils import safe_model_validate
+        return safe_model_validate(PriceListSchema, price_list)
 
-        valid_from = price_list.valid_from
-        if valid_from and valid_from.tzinfo is None:
-            valid_from = valid_from.replace(tzinfo=timezone.utc)
-
-        valid_until = price_list.valid_until
-        if valid_until and valid_until.tzinfo is None:
-            valid_until = valid_until.replace(tzinfo=timezone.utc)
-
-        if valid_from and valid_from > now:
-            return False
-
-        if valid_until and valid_until < now:
-            return False
-
-        return True
-
-    async def get_applicable_lines(
-        self,
-        price_list_id: str,
-        product_id: Optional[str],
-        category_id: Optional[str],
-        quantity: int,
-    ) -> List[PriceListLineSchema]:
-        """Get price list lines that apply to this product"""
-        lines = await self.get_price_list_lines(price_list_id)
-        applicable_lines = []
-
-        for line in lines:
-            if self.line_applies_to_product(line, product_id, category_id, quantity):
-                applicable_lines.append(line)
-
-        return applicable_lines
-
-    def line_applies_to_product(
-        self,
-        line: PriceListLineSchema,
-        product_id: Optional[str],
-        category_id: Optional[str],
-        quantity: int,
-    ) -> bool:
-        """Check if a price list line applies to a product"""
-        if line.type == PriceListType.PRODUCT:
-            if not product_id or line.product_id != product_id:
-                return False
-        elif line.type == PriceListType.CATEGORY:
-            if not category_id or line.category_id != category_id:
-                return False
-
-        if quantity < line.min_product_qty:
-            return False
-
-        if line.max_product_qty and quantity > line.max_product_qty:
-            return False
-
-        return True
-
-    def calculate_discount(self, base_price: float, line: PriceListLineSchema) -> float:
-        """Calculate discount amount from a price list line"""
-        if line.discount_type == DiscountType.PERCENTAGE:
-            return base_price * (line.amount / 100)
-        elif line.discount_type == DiscountType.FLAT:
-            return min(line.amount, base_price)
-        return 0.0
-
-    def create_base_pricing_result(self, base_price: float, customer_tier: str) -> Dict:
-        """Create base pricing result with no discounts"""
-        return {
-            "base_price": base_price,
-            "final_price": base_price,
-            "discount_applied": 0.0,
-            "discount_percentage": 0.0,
-            "applied_price_lists": [],
-            "customer_tier": customer_tier,
-        }
+    async def _price_list_line_to_schema(self, line: PriceListLine) -> PriceListLineSchema:
+        """Convert SQLAlchemy PriceListLine model to Pydantic schema"""
+        from src.shared.sqlalchemy_utils import safe_model_validate
+        return safe_model_validate(PriceListLineSchema, line)

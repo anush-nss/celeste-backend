@@ -56,7 +56,7 @@ async def get_all_products(
     only_discounted: Optional[bool] = Query(
         False, description="Return only products with discounts applied"
     ),
-    user_tier: Optional[str] = Depends(get_user_tier),
+    user_tier: Optional[int] = Depends(get_user_tier),
 ):
     """
     Enhanced product listing with:
@@ -103,9 +103,7 @@ class UpdateTagSchema(BaseModel):
     is_active: Optional[bool] = None
 
 
-class AssignTagSchema(BaseModel):
-    tag_id: int = Field(..., description="ID of the tag to assign")
-    value: Optional[str] = Field(None, max_length=255, description="Optional value for the tag")
+
 
 
 class TagResponseSchema(BaseModel):
@@ -276,7 +274,7 @@ async def get_product_by_id(
         True, description="Include pricing calculations"
     ),
     quantity: Optional[int] = Query(1, description="Quantity for bulk pricing"),
-    user_tier: Optional[str] = Depends(get_user_tier),
+    user_tier: Optional[int] = Depends(get_user_tier),
 ):
     """
     Get a single product with OPTIMIZED pricing (sub-30ms target)
@@ -288,23 +286,28 @@ async def get_product_by_id(
     
     # If pricing is requested and we have user tier, add pricing info
     if include_pricing and user_tier and product:
+        if product.id is None:
+            raise ValueError("Product ID cannot be None for pricing calculation")
         # Get category ID for pricing calculation
-        category_id = None
-        if product.categories and len(product.categories) > 0:
-            category_id = str(product.categories[0].get("id"))
-            
-        pricing_result = await pricing_service.calculate_product_pricing(
-            product_id=str(product.id),
-            base_price=product.base_price,
-            category_id=category_id,
-            customer_tier=user_tier,
+        product_category_ids = [cat_id for cat_id in [cat.get("id") for cat in product.categories] if cat_id is not None] if product.categories else []
+        pricing_result = await pricing_service.calculate_product_price(
+            product_id=product.id,
+            product_category_ids=product_category_ids, # New argument
+            user_tier_id=user_tier,
             quantity=quantity or 1
         )
         
         # Convert to enhanced schema with pricing
         enhanced_product = EnhancedProductSchema(**product.model_dump(mode="json"))
         if pricing_result:
-            enhanced_product.pricing = PricingInfoSchema(**pricing_result)
+            discount_percentage = (pricing_result.savings / pricing_result.base_price) * 100 if pricing_result.base_price > 0 else 0
+            enhanced_product.pricing = PricingInfoSchema(
+                base_price=pricing_result.base_price,
+                final_price=pricing_result.final_price,
+                discount_applied=pricing_result.savings,
+                discount_percentage=discount_percentage,
+                applied_price_lists=[pl["price_list_name"] for pl in pricing_result.applied_discounts]
+            )
         
         return success_response(enhanced_product.model_dump(mode="json"))
     
@@ -356,17 +359,32 @@ async def delete_product(id: int):
 
 # ===== PRODUCT-TAG ASSIGNMENT ROUTES =====
 
-@products_router.post(
+@products_router.get(
     "/{product_id}/tags",
+    summary="Get all tags assigned to a product",
+    response_model=Dict[str, List[ProductTagSchema]],
+)
+async def get_product_tags(product_id: int):
+    """Get all tags assigned to a product, grouped by tag type"""
+    product = await product_service.get_product_by_id(
+        product_id, include_categories=False, include_tags=True
+    )
+    
+    if not product:
+        raise ResourceNotFoundException(detail=f"Product with ID {product_id} not found")
+    
+    return success_response(product.model_dump(mode="json").get("product_tags",[]))
+
+@products_router.post(
+    "/{product_id}/tags/{tag_id}",
     summary="Assign a tag to a product",
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def assign_tag_to_product(product_id: int, assign_data: AssignTagSchema):
+async def assign_tag_to_product(product_id: int, tag_id: int):
     """Assign a tag to a product"""
     await product_service.assign_tag_to_product(
         product_id=product_id,
-        tag_id=assign_data.tag_id,
-        value=assign_data.value
+        tag_id=tag_id
     )
     return success_response({"message": "Tag assigned successfully"})
 
@@ -399,20 +417,3 @@ async def remove_tag_from_product(product_id: int, tag_id: int):
         await session.commit()
         
         return success_response({"message": "Tag removed successfully"})
-
-
-@products_router.get(
-    "/{product_id}/tags",
-    summary="Get all tags assigned to a product",
-    response_model=Dict[str, List[ProductTagSchema]],
-)
-async def get_product_tags(product_id: int):
-    """Get all tags assigned to a product, grouped by tag type"""
-    product = await product_service.get_product_by_id(
-        product_id, include_categories=False, include_tags=True
-    )
-    
-    if not product:
-        raise ResourceNotFoundException(detail=f"Product with ID {product_id} not found")
-    
-    return success_response(product.model_dump(mode="json").get("product_tags",[]))

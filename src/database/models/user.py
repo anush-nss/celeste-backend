@@ -16,7 +16,7 @@ class User(Base):
     phone: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     role: Mapped[str] = mapped_column(String, nullable=False)
     email: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True)
-    tier_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("tiers.id"), nullable=True, default=1)  # Default to Bronze tier (id=1)
+    tier_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("tiers.id"), nullable=True, default=None)  # Will be set after tiers are created
     
     # Customer statistics for tier evaluation
     total_orders: Mapped[int] = mapped_column(Integer, default=0)

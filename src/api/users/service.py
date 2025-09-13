@@ -5,6 +5,8 @@ from src.database.connection import AsyncSessionLocal
 from src.database.models.user import User
 from src.database.models.cart import Cart
 from src.database.models.address import Address
+# Import all models to ensure relationships are properly registered
+import src.database.models
 from src.api.users.models import CreateUserSchema, UserSchema, AddToCartSchema, UpdateCartItemSchema, AddressSchema, UpdateAddressSchema, CartItemSchema
 from src.config.constants import UserRole, DEFAULT_FALLBACK_TIER
 from src.api.tiers.service import TierService
@@ -74,8 +76,13 @@ class UserService:
 
     async def create_user(self, user_data: CreateUserSchema, uid: str) -> UserSchema:
         async with AsyncSessionLocal() as session:
-            # Set default customer tier when creating user
-            default_tier = await self.tier_service.get_default_tier()
+            # Try to set default customer tier when creating user, but allow null if no tiers exist
+            default_tier = None
+            try:
+                default_tier = await self.tier_service.get_default_tier()
+            except Exception:
+                # If no tiers exist, leave tier_id as None
+                pass
 
             new_user = User(
                 firebase_uid=uid,

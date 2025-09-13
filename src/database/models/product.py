@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import List, Optional, TYPE_CHECKING
 from sqlalchemy import ARRAY, String, DECIMAL, Text, Integer, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import TIMESTAMP
@@ -17,7 +18,7 @@ class Product(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     brand: Mapped[str] = mapped_column(String(255), nullable=False)
-    base_price: Mapped[float] = mapped_column(DECIMAL(10, 2), nullable=False)
+    base_price: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
     unit_measure: Mapped[str] = mapped_column(String(20), nullable=False)
     image_urls: Mapped[List[str]] = mapped_column(ARRAY(String), default=list)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'))

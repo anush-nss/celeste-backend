@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
-from src.config.constants import DEFAULT_FALLBACK_TIER, UserRole
+from src.config.constants import UserRole
 
 
 class AddressSchema(BaseModel):
@@ -41,8 +41,8 @@ class UserSchema(BaseModel):
     phone: Optional[str] = None
     is_delivery: Optional[bool] = None
     role: UserRole = UserRole.CUSTOMER
-    tier_id: str = Field(
-        default=DEFAULT_FALLBACK_TIER, description="Customer loyalty tier"
+    tier_id: Optional[int] = Field(
+        default=None, description="Customer tier ID"
     )
     total_orders: int = Field(
         default=0, ge=0, description="Total number of orders placed"
@@ -64,7 +64,7 @@ class CreateUserSchema(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
     role: UserRole = Field(default=UserRole.CUSTOMER, description="Role of the user")
-    tier_id: Optional[str] = None
+    tier_id: Optional[int] = None
 
 
 class UpdateUserSchema(BaseModel):
@@ -73,7 +73,7 @@ class UpdateUserSchema(BaseModel):
     phone: Optional[str] = None
     is_delivery: Optional[bool] = None
     role: Optional[UserRole] = None
-    tier_id: Optional[str] = Field(None, description="Customer loyalty tier")
+    tier_id: Optional[int] = Field(None, description="Customer tier ID")
 
 
 class AddToCartSchema(BaseModel):
