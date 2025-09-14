@@ -184,26 +184,54 @@ class UserService:
             if not user_exists.scalars().first():
                 raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
 
-            cart_item_query = await session.execute(
-                select(Cart).filter_by(user_id=user_id.strip(), product_id=product_id.strip())
+            # Use database-level atomic operation to update or insert
+            from sqlalchemy import text
+            # Try to update existing cart item
+            update_result = await session.execute(
+                text("""
+                    UPDATE cart 
+                    SET quantity = LEAST(quantity + :quantity, 1000)
+                    WHERE user_id = :user_id AND product_id = :product_id
+                """),
+                {
+                    "user_id": user_id.strip(),
+                    "product_id": product_id.strip(),
+                    "quantity": quantity
+                }
             )
-            item_to_return = cart_item_query.scalars().first()
-
-            if item_to_return:
-                new_quantity = item_to_return.quantity + quantity
-                if new_quantity > 1000:
-                    raise ValidationException(detail="Cart item quantity cannot exceed 1000")
-                item_to_return.quantity = new_quantity
-            else:
-                item_to_return = Cart(
-                    user_id=user_id.strip(),
-                    product_id=product_id.strip(),
-                    quantity=quantity
+            
+            # If no rows were updated, insert a new cart item
+            if update_result.rowcount == 0:
+                # Check if we would exceed the quantity limit
+                cart_item_query = await session.execute(
+                    select(Cart).filter_by(user_id=user_id.strip(), product_id=product_id.strip())
                 )
-                session.add(item_to_return)
-
-            await session.commit()
-            await session.refresh(item_to_return)
+                existing_item = cart_item_query.scalars().first()
+                
+                if existing_item:
+                    # Race condition - item was created between our check and update
+                    new_quantity = min(existing_item.quantity + quantity, 1000)
+                    existing_item.quantity = new_quantity
+                    await session.commit()
+                    await session.refresh(existing_item)
+                    item_to_return = existing_item
+                else:
+                    # Insert new cart item
+                    item_to_return = Cart(
+                        user_id=user_id.strip(),
+                        product_id=product_id.strip(),
+                        quantity=quantity
+                    )
+                    session.add(item_to_return)
+                    await session.commit()
+                    await session.refresh(item_to_return)
+            else:
+                # Refresh the updated item
+                cart_item_query = await session.execute(
+                    select(Cart).filter_by(user_id=user_id.strip(), product_id=product_id.strip())
+                )
+                item_to_return = cart_item_query.scalars().first()
+                await session.refresh(item_to_return)
 
             return {
                 "user_id": item_to_return.user_id,
@@ -212,44 +240,114 @@ class UserService:
             }
 
     async def update_cart_item(self, user_id: str, product_id: str, quantity: int) -> dict:
+        if quantity <= 0 or quantity > 1000:
+            raise ValidationException(detail="Quantity must be between 1 and 1000")
+            
         async with AsyncSessionLocal() as session:
+            # Use database-level atomic operation to update
+            from sqlalchemy import text
+            result = await session.execute(
+                text("""
+                    UPDATE cart 
+                    SET quantity = :quantity
+                    WHERE user_id = :user_id AND product_id = :product_id
+                """),
+                {
+                    "user_id": user_id,
+                    "product_id": product_id,
+                    "quantity": quantity
+                }
+            )
+            
+            await session.commit()
+            
+            if result.rowcount == 0:
+                raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
+            
+            # Fetch the updated item
             cart_item = await session.execute(
                 select(Cart).filter_by(user_id=user_id, product_id=product_id)
             )
             existing_item = cart_item.scalars().first()
-
-            if not existing_item:
-                raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
-
-            existing_item.quantity = quantity
-            await session.commit()
-            await session.refresh(existing_item)
+            
             return {"user_id": existing_item.user_id, "product_id": existing_item.product_id, "quantity": existing_item.quantity}
 
     async def remove_from_cart(self, user_id: str, product_id: str, quantity: Optional[int] = None) -> dict:
         async with AsyncSessionLocal() as session:
-            cart_item = await session.execute(
-                select(Cart).filter_by(user_id=user_id, product_id=product_id)
-            )
-            existing_item = cart_item.scalars().first()
-
-            if not existing_item:
-                raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
-
-            result = {"action": "", "previous_quantity": existing_item.quantity}
-
-            if quantity is None or quantity >= existing_item.quantity:
-                await session.delete(existing_item)
-                result["action"] = "removed_completely"
-                result["new_quantity"] = 0
+            from sqlalchemy import text
+            
+            if quantity is None:
+                # Remove completely
+                result = await session.execute(
+                    text("""
+                        DELETE FROM cart 
+                        WHERE user_id = :user_id AND product_id = :product_id
+                    """),
+                    {
+                        "user_id": user_id,
+                        "product_id": product_id
+                    }
+                )
+                
+                await session.commit()
+                
+                if result.rowcount == 0:
+                    raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
+                
+                return {
+                    "action": "removed_completely",
+                    "previous_quantity": 0,  # We don't know the previous quantity in this approach
+                    "new_quantity": 0
+                }
             else:
-                existing_item.quantity = existing_item.quantity - quantity
-                result["action"] = "quantity_reduced"
-                result["new_quantity"] = existing_item.quantity
-                result["quantity_removed"] = quantity
-
-            await session.commit()
-            return result
+                # Partial removal - update quantity
+                # First get current quantity
+                cart_item = await session.execute(
+                    select(Cart).filter_by(user_id=user_id, product_id=product_id)
+                )
+                existing_item = cart_item.scalars().first()
+                
+                if not existing_item:
+                    raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
+                
+                current_quantity = existing_item.quantity
+                result = {"action": "", "previous_quantity": current_quantity}
+                
+                if quantity >= current_quantity:
+                    # Remove completely
+                    await session.execute(
+                        text("""
+                            DELETE FROM cart 
+                            WHERE user_id = :user_id AND product_id = :product_id
+                        """),
+                        {
+                            "user_id": user_id,
+                            "product_id": product_id
+                        }
+                    )
+                    result["action"] = "removed_completely"
+                    result["new_quantity"] = 0
+                else:
+                    # Reduce quantity
+                    new_quantity = current_quantity - quantity
+                    await session.execute(
+                        text("""
+                            UPDATE cart 
+                            SET quantity = :quantity
+                            WHERE user_id = :user_id AND product_id = :product_id
+                        """),
+                        {
+                            "user_id": user_id,
+                            "product_id": product_id,
+                            "quantity": new_quantity
+                        }
+                    )
+                    result["action"] = "quantity_reduced"
+                    result["new_quantity"] = new_quantity
+                    result["quantity_removed"] = quantity
+                
+                await session.commit()
+                return result
 
     async def get_cart(self, user_id: str) -> List[dict]:
         async with AsyncSessionLocal() as session:
@@ -265,13 +363,11 @@ class UserService:
 
     async def add_address(self, user_id: str, address_data: AddressSchema) -> AddressSchema:
         async with AsyncSessionLocal() as session:
-            # If new address is default, set all other addresses for this user to not default
+            # If new address is default, atomically set all other addresses for this user to not default
             if address_data.is_default:
-                result = await session.execute(
-                    select(Address).filter_by(user_id=user_id, is_default=True)
+                await session.execute(
+                    select(Address).filter_by(user_id=user_id).update({"is_default": False})
                 )
-                for addr in result.scalars().all(): # Iterate over the result of the query
-                    setattr(addr, "is_default", False) # Fixed Pylance error
 
             new_address = Address(
                 user_id=user_id,
@@ -307,6 +403,7 @@ class UserService:
 
     async def update_address(self, user_id: str, address_id: int, address_data: UpdateAddressSchema) -> AddressSchema | None:
         async with AsyncSessionLocal() as session:
+            # First verify the address exists and belongs to the user
             result = await session.execute(
                 select(Address).filter_by(user_id=user_id, id=address_id)
             )
@@ -315,13 +412,16 @@ class UserService:
             if not address:
                 raise ResourceNotFoundException(detail=f"Address with ID {address_id} not found for user {user_id}")
 
-            # Handle is_default logic
-            if address_data.is_default is True and not address.is_default:
-                # If this address is being set to default, unset others
-                for addr in (await session.execute(select(Address).filter_by(user_id=user_id, is_default=True))).scalars().all():
-                    setattr(addr, "is_default", False) # Fixed Pylance error
+            # Handle is_default logic atomically
+            update_data = address_data.model_dump(exclude_unset=True)
+            if update_data.get("is_default") is True and not address.is_default:
+                # If this address is being set to default, unset others atomically
+                await session.execute(
+                    select(Address).filter_by(user_id=user_id).filter(Address.id != address_id).update({"is_default": False})
+                )
 
-            for field, value in address_data.model_dump(exclude_unset=True).items():
+            # Update the specific address with all provided fields
+            for field, value in update_data.items():
                 setattr(address, field, value)
 
             await session.commit()
@@ -338,7 +438,7 @@ class UserService:
             address = result.scalars().first()
 
             if not address:
-                raise ResourceNotFoundException(detail=f"Address with ID {address_id} not found for user {user_id}")
+                return False
 
             await session.delete(address)
             await session.commit()
@@ -346,11 +446,8 @@ class UserService:
 
     async def set_default_address(self, user_id: str, address_id: int) -> AddressSchema | None:
         async with AsyncSessionLocal() as session:
-            # Unset current default address for the user
-            for addr in (await session.execute(select(Address).filter_by(user_id=user_id, is_default=True))).scalars().all():
-                setattr(addr, "is_default", False) # Fixed Pylance error
-
-            # Set the new default address
+            # Atomically unset current default address and set new default in one transaction
+            # First verify the address exists and belongs to the user
             result = await session.execute(
                 select(Address).filter_by(user_id=user_id, id=address_id)
             )
@@ -359,8 +456,19 @@ class UserService:
             if not address:
                 raise ResourceNotFoundException(detail=f"Address with ID {address_id} not found for user {user_id}")
 
-            setattr(address, "is_default", True) # Fixed Pylance error
+            # Atomically update all addresses for this user:
+            # 1. Set the specified address as default
+            # 2. Set all other addresses as non-default
+            await session.execute(
+                select(Address).filter_by(user_id=user_id, id=address_id).update({"is_default": True})
+            )
+            await session.execute(
+                select(Address).filter_by(user_id=user_id).filter(Address.id != address_id).update({"is_default": False})
+            )
+
             await session.commit()
+            
+            # Refresh the specific address we're returning
             await session.refresh(address)
             # Convert SQLAlchemy model to dict, then to Pydantic schema
             address_dict = _address_to_dict(address)

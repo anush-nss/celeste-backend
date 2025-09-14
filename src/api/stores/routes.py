@@ -90,19 +90,16 @@ async def get_all_stores(
         includeOpenStatus=includeOpenStatus,
     )
 
-    try:
-        # If location AND radius provided, use location-based search for filtering
-        # If only location provided, use get_all_stores with distance calculations
-        if latitude is not None and longitude is not None and radius is not None:
-            result = await store_service.get_stores_by_location(query_params)
-        else:
-            result = await store_service.get_all_stores(query_params)
+    # If location AND radius provided, use location-based search for filtering
+    # If only location provided, use get_all_stores with distance calculations
+    if latitude is not None and longitude is not None and radius is not None:
+        result = await store_service.get_stores_by_location(query_params)
+    else:
+        result = await store_service.get_all_stores(query_params)
         
-        return success_response(
-            result.model_dump(mode="json"), status_code=status.HTTP_200_OK
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return success_response(
+        result.model_dump(mode="json"), status_code=status.HTTP_200_OK
+    )
 
 
 @stores_router.get(
@@ -157,13 +154,10 @@ async def get_nearby_stores(
         includeOpenStatus=includeOpenStatus,
     )
 
-    try:
-        result = await store_service.get_stores_by_location(query_params)
-        return success_response(
-            result.model_dump(mode="json"), status_code=status.HTTP_200_OK
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    result = await store_service.get_stores_by_location(query_params)
+    return success_response(
+        result.model_dump(mode="json"), status_code=status.HTTP_200_OK
+    )
 
 
 @stores_router.get("/{store_id}", summary="Get store by ID", response_model=StoreSchema)
@@ -244,13 +238,10 @@ async def create_store(store_data: CreateStoreSchema):
     - **Location storage**: Stores latitude and longitude coordinates
     - **Validation**: Full input validation with location bounds checking
     """
-    try:
-        new_store = await store_service.create_store(store_data)
-        return success_response(
-            new_store.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    new_store = await store_service.create_store(store_data)
+    return success_response(
+        new_store.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+    )
 
 
 @stores_router.put(
@@ -266,17 +257,14 @@ async def update_store(store_id: str, store_data: UpdateStoreSchema):
     - **Location update**: Updates latitude and longitude coordinates if location changes
     - **Partial updates**: Only updates provided fields
     """
-    try:
-        updated_store = await store_service.update_store(store_id, store_data)
-        if not updated_store:
-            raise ResourceNotFoundException(
-                detail=f"Store with ID {store_id} not found"
-            )
-        return success_response(
-            updated_store.model_dump(mode="json"), status_code=status.HTTP_200_OK
+    updated_store = await store_service.update_store(store_id, store_data)
+    if not updated_store:
+        raise ResourceNotFoundException(
+            detail=f"Store with ID {store_id} not found"
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return success_response(
+        updated_store.model_dump(mode="json"), status_code=status.HTTP_200_OK
+    )
 
 
 @stores_router.delete(

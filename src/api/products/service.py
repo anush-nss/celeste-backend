@@ -370,14 +370,21 @@ class ProductService:
             # Add pricing if requested
             if query_params.include_pricing and pricing_service and customer_tier:
                 # Convert to dict format for bulk pricing
-                product_data = [
-                    {
+                product_data = []
+                for p in base_products:
+                    category_ids = []
+                    if p.categories:
+                        category_ids = []
+                        for cat in p.categories:
+                            # Safely get category ID, ensuring it exists and is not None
+                            cat_id = cat.get("id") if isinstance(cat, dict) else getattr(cat, "id", None)
+                            if cat_id is not None:
+                                category_ids.append(cat_id)
+                    product_data.append({
                         "id": str(p.id),
                         "price": p.base_price,
-                        "category_ids": [cat.get("id") for cat in p.categories] if p.categories else []
-                    }
-                    for p in base_products
-                ]
+                        "category_ids": category_ids
+                    })
                 
                 # Get pricing for all products in one batch
                 pricing_results = await pricing_service.calculate_bulk_product_pricing(

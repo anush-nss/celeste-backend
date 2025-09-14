@@ -8,9 +8,9 @@ from sqlalchemy.inspection import inspect
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.orm.relationships import RelationshipProperty
 from sqlalchemy.sql.schema import Column
-import logging
+from src.shared.utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def sqlalchemy_to_dict(
@@ -88,12 +88,13 @@ def sqlalchemy_to_dict(
                     ]
                 else:
                     # Handle one-to-one or many-to-one relationships
-                    result[rel_name] = sqlalchemy_to_dict(
-                        rel_value,
-                        include_relationships=include_relationships,
-                        exclude_relationships=exclude_relationships,
-                        max_depth=max_depth - 1
-                    )
+                    if isinstance(rel_value, DeclarativeBase):
+                        result[rel_name] = sqlalchemy_to_dict(
+                            rel_value,
+                            include_relationships=include_relationships,
+                            exclude_relationships=exclude_relationships,
+                            max_depth=max_depth - 1
+                        )
             except Exception as e:
                 logger.warning(f"Error accessing relationship {rel_name}: {e}")
                 result[rel_name] = None

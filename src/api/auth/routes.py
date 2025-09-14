@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from typing import Annotated
 from src.api.auth.models import (
     RegisterSchema,
@@ -18,8 +18,5 @@ auth_service = AuthService()
     "/register", summary="Register a new user", status_code=status.HTTP_201_CREATED
 )
 async def register_user(user_registration: UserRegistration):
-    try:
-        result = await auth_service.register_user(user_registration)
-        return success_response(result, status_code=status.HTTP_201_CREATED)
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+    result = await auth_service.register_user(user_registration)
+    return success_response(result, status_code=status.HTTP_201_CREATED)

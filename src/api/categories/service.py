@@ -27,7 +27,7 @@ class CategoryService:
 
     @handle_service_errors("retrieving all categories")
     @async_timer("get_all_categories")
-    async def get_all_categories(self) -> list[CategorySchema]:
+    async def get_all_categories(self, include_subcategories: bool = True) -> list[CategorySchema]:
         """Get all categories with optimized caching and loading"""
         # Check cache first
         cached_categories = categories_cache.get_all_categories()
@@ -35,20 +35,22 @@ class CategoryService:
             return [CategorySchema.model_validate(c) for c in cached_categories]
 
         async with AsyncSessionLocal() as session:
-            # Optimized query with selective loading
-            stmt = select(Category).options(
-                selectinload(Category.subcategories)
-            ).order_by(Category.sort_order)
+            # Optimized query with conditional loading
+            stmt = select(Category)
+            if include_subcategories:
+                stmt = stmt.options(selectinload(Category.subcategories))
+            stmt = stmt.order_by(Category.sort_order)
 
             result = await session.execute(stmt)
             categories = result.scalars().unique().all()
 
             if categories:
                 # Convert SQLAlchemy models to Pydantic schemas using safe converter
+                include_relationships = {'subcategories'} if include_subcategories else set()
                 pydantic_categories = safe_model_validate_list(
                     CategorySchema,
                     categories,
-                    include_relationships={'subcategories'}
+                    include_relationships=include_relationships
                 )
                 # Cache the dict representations asynchronously (non-blocking)
                 category_dicts = [cat.model_dump(mode="json") for cat in pydantic_categories]

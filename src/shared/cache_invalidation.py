@@ -3,7 +3,6 @@ Centralized cache invalidation manager for all domains
 """
 
 from typing import Optional, Dict, Any, List, Callable
-from enum import Enum
 from src.shared.utils import get_logger
 from src.config.constants import Collections, CacheScopes
 from src.config.cache_config import cache_config
@@ -11,7 +10,7 @@ from src.config.cache_config import cache_config
 logger = get_logger(__name__)
 
 
-# Use the constants from config for backward compatibility
+# Use the constants from config
 CacheInvalidationScope = CacheScopes
 
 

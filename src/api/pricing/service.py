@@ -62,7 +62,7 @@ class PricingService:
                 name=price_list_data.name.strip(),
                 description=price_list_data.description.strip() if price_list_data.description else None,
                 priority=price_list_data.priority,
-                valid_from=price_list_data.valid_from or datetime.now(),
+                valid_from=price_list_data.valid_from or datetime.now(timezone.utc),
                 valid_until=price_list_data.valid_until,
                 is_active=price_list_data.is_active,
             )
@@ -271,50 +271,87 @@ class PricingService:
             applied_discounts = []
             
             if user_tier_id:
-                # Get applicable price lists for the user's tier
-                tier_price_lists = await self.get_tier_price_lists(user_tier_id)
+                # Get applicable price lists for the user's tier in a single query
+                tier_price_lists_result = await session.execute(
+                    select(TierPriceList)
+                    .options(selectinload(TierPriceList.price_list))
+                    .where(TierPriceList.tier_id == user_tier_id)
+                )
+                tier_price_list_associations = tier_price_lists_result.scalars().all()
                 
-                for price_list in tier_price_lists:
-                    # Check if price list is valid (date range)
+                # Filter active price lists and sort by priority
+                active_price_lists = [
+                    tpl.price_list for tpl in tier_price_list_associations 
+                    if tpl.price_list and tpl.price_list.is_active
+                ]
+                active_price_lists.sort(key=lambda pl: pl.priority, reverse=True)
+                
+                # Get all price list IDs for efficient querying
+                price_list_ids = [pl.id for pl in active_price_lists]
+                
+                if price_list_ids:
+                    # Check which price lists are currently valid
                     now = datetime.now(timezone.utc)
-                    if price_list.valid_from and now < price_list.valid_from:
-                        continue
-                    if price_list.valid_until and now > price_list.valid_until:
-                        continue
+                    valid_price_lists = [
+                        pl for pl in active_price_lists
+                        if (not pl.valid_from or now >= pl.valid_from) and 
+                           (not pl.valid_until or now <= pl.valid_until)
+                    ]
                     
-                    # Find applicable lines for this product
-                    lines_result = await session.execute(
-                        select(PriceListLine)
-                        .where(PriceListLine.price_list_id == price_list.id)
-                        .where(PriceListLine.is_active == True)
-                        .where(
-                            or_(
-                                PriceListLine.product_id == product_id,
-                                PriceListLine.category_id.in_(product_category_ids), # Specific categories of the product
-                                and_(PriceListLine.product_id.is_(None), PriceListLine.category_id.is_(None))
-                            )
+                    if valid_price_lists:
+                        # Get all applicable price list lines in a single query
+                        lines_query = (
+                            select(PriceListLine)
+                            .where(PriceListLine.price_list_id.in_([pl.id for pl in valid_price_lists]))
+                            .where(PriceListLine.is_active == True)
+                            .where(PriceListLine.min_quantity <= quantity)
                         )
-                        .where(PriceListLine.min_quantity <= quantity)
-                        .order_by(PriceListLine.product_id.desc().nullslast())  # Product-specific first
-                    )
-                    
-                    lines = lines_result.scalars().all()
-                    
-                    for line in lines:
-                        discount_applied = self._apply_discount(base_price, line, quantity)
-                        if discount_applied < final_price:
-                            final_price = discount_applied
-                            applied_discounts.append({
-                                "price_list_id": price_list.id,
-                                "price_list_name": price_list.name,
-                                "line_id": line.id,
-                                "discount_type": line.discount_type,
-                                "discount_value": float(line.discount_value),
-                                "original_price": float(base_price),
-                                "discounted_price": float(round(discount_applied, 2)),
-                                "savings": float(round(base_price - discount_applied, 2))
-                            })
-                            break  # Use first applicable discount from this price list
+                        
+                        # Add conditions for product/category matching
+                        line_conditions = [
+                            PriceListLine.product_id == product_id,
+                            PriceListLine.category_id.in_(product_category_ids) if product_category_ids else None,
+                            and_(PriceListLine.product_id.is_(None), PriceListLine.category_id.is_(None))
+                        ]
+                        # Filter out None conditions
+                        line_conditions = [cond for cond in line_conditions if cond is not None]
+                        lines_query = lines_query.where(or_(*line_conditions))
+                        
+                        lines_query = lines_query.order_by(
+                            PriceListLine.price_list_id,
+                            PriceListLine.product_id.desc().nullslast()
+                        )
+                        
+                        lines_result = await session.execute(lines_query)
+                        all_lines = lines_result.scalars().all()
+                        
+                        # Group lines by price list for efficient processing
+                        lines_by_price_list = {}
+                        for line in all_lines:
+                            if line.price_list_id not in lines_by_price_list:
+                                lines_by_price_list[line.price_list_id] = []
+                            lines_by_price_list[line.price_list_id].append(line)
+                        
+                        # Process each price list in priority order
+                        for price_list in valid_price_lists:
+                            if price_list.id in lines_by_price_list:
+                                lines = lines_by_price_list[price_list.id]
+                                # Process lines for this price list
+                                for line in lines:
+                                    discount_applied = self._apply_discount(base_price, line, quantity)
+                                    if discount_applied < final_price:
+                                        final_price = discount_applied
+                                        applied_discounts.append({
+                                            "price_list_id": price_list.id,
+                                            "price_list_name": price_list.name,
+                                            "line_id": line.id,
+                                            "discount_type": line.discount_type,
+                                            "discount_value": float(line.discount_value),
+                                            "original_price": float(base_price),
+                                            "discounted_price": float(round(discount_applied, 2)),
+                                            "savings": float(round(base_price - discount_applied, 2))
+                                        })
+                                        break  # Use first applicable discount from this price list
             
             return ProductPricingSchema(
                 product_id=product_id,
@@ -329,6 +366,9 @@ class PricingService:
     def _apply_discount(self, base_price: Decimal, line: PriceListLine, quantity: int) -> Decimal:
         """Apply a discount from a price list line"""
         if line.discount_type == "percentage":
+            # Prevent division by zero
+            if line.discount_value == 0:
+                return base_price
             discount_amount = base_price * (line.discount_value / 100)
             if line.max_discount_amount:
                 discount_amount = min(discount_amount, line.max_discount_amount)
@@ -344,20 +384,33 @@ class PricingService:
 
     async def calculate_bulk_product_pricing(self, product_data: List[Dict[str, Any]], user_tier_id: Optional[int]) -> List[ProductPricingSchema]:
         """Calculate pricing for multiple products"""
+        # Process products in parallel for better performance
+        import asyncio
         
-        results = []
-        for p_data in product_data:
+        async def process_single_product(p_data):
             product_id = int(p_data["id"])
             quantity = p_data.get("quantity", 1)
             product_category_ids = p_data.get("category_ids", [])
             try:
                 pricing = await self.calculate_product_price(user_tier_id, product_id, product_category_ids, quantity)
-                results.append(pricing)
+                return pricing
             except ResourceNotFoundException:
                 # Skip products that don't exist
-                continue
+                return None
         
-        return results
+        # Create tasks for all products
+        tasks = [process_single_product(p_data) for p_data in product_data]
+        
+        # Execute all tasks concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Filter out None values and exceptions
+        valid_results = []
+        for result in results:
+            if result is not None and not isinstance(result, Exception):
+                valid_results.append(result)
+        
+        return valid_results
 
     # Helper methods
     async def _price_list_to_schema(self, price_list: PriceList) -> PriceListSchema:

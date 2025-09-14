@@ -289,7 +289,14 @@ async def get_product_by_id(
         if product.id is None:
             raise ValueError("Product ID cannot be None for pricing calculation")
         # Get category ID for pricing calculation
-        product_category_ids = [cat_id for cat_id in [cat.get("id") for cat in product.categories] if cat_id is not None] if product.categories else []
+        product_category_ids = []
+        if product.categories:
+            product_category_ids = []
+            for cat in product.categories:
+                # Safely get category ID, ensuring it exists and is not None
+                cat_id = cat.get("id") if isinstance(cat, dict) else getattr(cat, "id", None)
+                if cat_id is not None:
+                    product_category_ids.append(cat_id)
         pricing_result = await pricing_service.calculate_product_price(
             product_id=product.id,
             product_category_ids=product_category_ids, # New argument

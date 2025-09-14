@@ -136,11 +136,8 @@ async def get_my_tier_info(
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found in token")
 
-    try:
-        tier_info = await tier_service.get_user_tier_info(user_id)
-        return success_response(tier_info.model_dump(mode="json"))
-    except ValueError as e:
-        raise ResourceNotFoundException(detail=str(e))
+    tier_info = await tier_service.get_user_tier_info(user_id)
+    return success_response(tier_info.model_dump(mode="json"))
 
 
 @router.get(
@@ -156,11 +153,8 @@ async def get_my_tier_progress(
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found in token")
 
-    try:
-        progress = await tier_service.get_user_tier_progress(user_id)
-        return success_response(progress.model_dump(mode="json"))
-    except ValueError as e:
-        raise ResourceNotFoundException(detail=str(e))
+    progress = await tier_service.get_user_tier_progress(user_id)
+    return success_response(progress.model_dump(mode="json"))
 
 
 @router.post(
@@ -206,11 +200,8 @@ async def auto_update_my_tier(
 )
 async def get_user_tier_info(user_id: str):
     """Get complete tier information for a specific user (Admin only)"""
-    try:
-        tier_info = await tier_service.get_user_tier_info(user_id)
-        return success_response(tier_info.model_dump(mode="json"))
-    except ValueError as e:
-        raise ResourceNotFoundException(detail=str(e))
+    tier_info = await tier_service.get_user_tier_info(user_id)
+    return success_response(tier_info.model_dump(mode="json"))
 
 
 @router.post(

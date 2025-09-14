@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from google.cloud.firestore_v1.base_query import FieldFilter
 from src.shared.database import get_async_db, get_async_collection
@@ -140,15 +140,15 @@ class StoreService:
     ) -> StoreLocationResponse:
         """Get stores within radius of specified location using lat/lon filtering"""
         if not query_params.latitude or not query_params.longitude:
-            raise ValueError(
-                "Latitude and longitude are required for location-based search"
+            raise ValidationException(
+                detail="Latitude and longitude are required for location-based search"
             )
 
         # Validate coordinates
         if not GeoUtils.validate_coordinates(
             query_params.latitude, query_params.longitude
         ):
-            raise ValueError("Invalid coordinates provided")
+            raise ValidationException(detail="Invalid coordinates provided")
 
         radius = query_params.radius or DEFAULT_SEARCH_RADIUS_KM
         radius = min(radius, MAX_SEARCH_RADIUS_KM)
@@ -309,7 +309,7 @@ class StoreService:
         doc_ref = stores_collection.document()
         store_dict = store_data.model_dump()
 
-        store_dict.update({"created_at": datetime.now(), "updated_at": datetime.now()})
+        store_dict.update({"created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc)})
 
         try:
             await doc_ref.set(store_dict)
@@ -330,7 +330,7 @@ class StoreService:
         store_dict = store_data.model_dump(exclude_unset=True)
 
         if store_dict:
-            store_dict["updated_at"] = datetime.now()
+            store_dict["updated_at"] = datetime.now(timezone.utc)
             await doc_ref.update(store_dict)
 
             updated_doc = await doc_ref.get()

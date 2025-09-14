@@ -372,11 +372,11 @@ class TierService:
         """Get complete tier information for a user"""
         current_tier_id = await self.get_user_tier_id(user_id)
         if current_tier_id is None:
-            raise ValueError(f"User {user_id} not found or has no tier assigned")
+            raise ValidationException(detail=f"User {user_id} not found or has no tier assigned")
 
         tier_info = await self.get_tier_by_id(current_tier_id)
         if not tier_info:
-            raise ValueError(f"Tier with ID {current_tier_id} not found")
+            raise ValidationException(detail=f"Tier with ID {current_tier_id} not found")
 
         progress = await self.get_user_tier_progress(user_id)
         stats = await self.get_user_statistics(user_id)
@@ -393,11 +393,11 @@ class TierService:
         """Get a user's current tier and progress towards next tier"""
         current_tier_id = await self.get_user_tier_id(user_id)
         if current_tier_id is None:
-            raise ValueError(f"User {user_id} not found or has no tier assigned")
+            raise ValidationException(detail=f"User {user_id} not found or has no tier assigned")
 
         current_tier_info = await self.get_tier_by_id(current_tier_id)
         if not current_tier_info:
-            raise ValueError(f"Tier with ID {current_tier_id} not found")
+            raise ValidationException(detail=f"Tier with ID {current_tier_id} not found")
 
         stats = await self.get_user_statistics(user_id)
         all_tiers = await self.get_all_tiers(active_only=True)
@@ -418,16 +418,16 @@ class TierService:
                     "progress_percentage": (
                         min(100, (stats.get("total_orders", 0) / next_tier_info.min_orders_count * 100))
                         if next_tier_info.min_orders_count > 0 else 100
-                    ),
+                    )
                 },
-                "lifetime_value": {
-                    "current": stats.get("lifetime_value", 0.0),
+                "spending": {
+                    "current": stats.get("lifetime_value", 0),
                     "required": next_tier_info.min_total_spent,
                     "progress_percentage": (
-                        min(100, (stats.get("lifetime_value", 0.0) / next_tier_info.min_total_spent * 100))
+                        min(100, (stats.get("lifetime_value", 0) / next_tier_info.min_total_spent * 100))
                         if next_tier_info.min_total_spent > 0 else 100
-                    ),
-                },
+                    )
+                }
             }
 
         return UserTierProgressSchema(

@@ -294,7 +294,14 @@ async def calculate_bulk_pricing(
         product_data = []
         for i, p in enumerate(products):
             quantity = quantities[i] if quantities and i < len(quantities) else 1
-            product_category_ids = [cat.get("id") for cat in p.categories if cat.get("id") is not None] if p.categories else []
+            product_category_ids = []
+            if p.categories:
+                product_category_ids = []
+                for cat in p.categories:
+                    # Safely get category ID, ensuring it exists and is not None
+                    cat_id = cat.get("id") if isinstance(cat, dict) else getattr(cat, "id", None)
+                    if cat_id is not None:
+                        product_category_ids.append(cat_id)
             product_data.append({
                 "id": p.id,
                 "quantity": quantity,

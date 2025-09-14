@@ -2,6 +2,16 @@ from typing import Optional, List
 from pydantic import BaseModel, Field, HttpUrl, ConfigDict # Added ConfigDict
 
 
+class CategoryQuerySchema(BaseModel):
+    """Schema for category query parameters"""
+    include_subcategories: bool = Field(
+        default=True,
+        description="Whether to include subcategories in the response"
+    )
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
 class CategorySchema(BaseModel):
     id: Optional[int] = None # Changed to int
     name: str = Field(..., min_length=1)
