@@ -18,6 +18,8 @@ class Product(Base):
         Index('idx_product_name', 'name'),
         Index('idx_product_brand', 'brand'),
         Index('idx_product_price', 'base_price'),
+        Index('idx_products_brand_price', 'brand', 'base_price'),
+        Index('idx_products_created_at', 'created_at'),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)

@@ -569,6 +569,42 @@ class TierService:
             tier_result = await session.execute(select(Tier).where(Tier.id == tier_id))
             tier = tier_result.scalars().first()
             if not tier:
+                raise ResourceNotFoundException(detail=f"Tier with ID {tier_id} not found")
+
+            # Check if benefit exists
+            benefit_result = await session.execute(select(Benefit).where(Benefit.id == benefit_id))
+            benefit = benefit_result.scalars().first()
+            if not benefit:
+                raise ResourceNotFoundException(detail=f"Benefit with ID {benefit_id} not found")
+
+            # Check if association already exists using a direct query
+            from src.database.models.tier_benefit import tier_benefits
+            association_result = await session.execute(
+                select(tier_benefits).where(
+                    tier_benefits.c.tier_id == tier_id,
+                    tier_benefits.c.benefit_id == benefit_id
+                )
+            )
+            association = association_result.first()
+            
+            if not association:
+                # Create the association
+                await session.execute(
+                    tier_benefits.insert().values(tier_id=tier_id, benefit_id=benefit_id)
+                )
+                await session.commit()
+                return True  # Newly created
+            else:
+                # Already exists
+                raise ConflictException(detail="Benefit already associated with tier")
+
+    async def remove_benefit_from_tier(self, tier_id: int, benefit_id: int) -> bool:
+        """Remove a benefit from a tier"""
+        async with AsyncSessionLocal() as session:
+            # Check if tier exists
+            tier_result = await session.execute(select(Tier).where(Tier.id == tier_id))
+            tier = tier_result.scalars().first()
+            if not tier:
                 return False
 
             # Check if benefit exists
@@ -577,30 +613,26 @@ class TierService:
             if not benefit:
                 return False
 
-            # Check if association already exists
-            if benefit not in tier.benefits:
-                tier.benefits.append(benefit)
-                await session.commit()
-
-            return True
-
-    async def remove_benefit_from_tier(self, tier_id: int, benefit_id: int) -> bool:
-        """Remove a benefit from a tier"""
-        async with AsyncSessionLocal() as session:
-            # Load tier with benefits
-            tier_result = await session.execute(
-                select(Tier).options(selectinload(Tier.benefits)).where(Tier.id == tier_id)
+            # Check if association exists using a direct query
+            from src.database.models.tier_benefit import tier_benefits
+            association_result = await session.execute(
+                select(tier_benefits).where(
+                    tier_benefits.c.tier_id == tier_id,
+                    tier_benefits.c.benefit_id == benefit_id
+                )
             )
-            tier = tier_result.scalars().first()
-            if not tier:
-                return False
-
-            # Find and remove the benefit
-            for benefit in tier.benefits:
-                if benefit.id == benefit_id:
-                    tier.benefits.remove(benefit)
-                    await session.commit()
-                    return True
+            association = association_result.first()
+            
+            if association:
+                # Remove the association
+                await session.execute(
+                    tier_benefits.delete().where(
+                        tier_benefits.c.tier_id == tier_id,
+                        tier_benefits.c.benefit_id == benefit_id
+                    )
+                )
+                await session.commit()
+                return True
 
             return False
 

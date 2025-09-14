@@ -1,5 +1,11 @@
 import asyncio
 import argparse
+import sys
+import os
+
+# Add the project root to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 from src.database.base import Base
 from src.database.connection import engine
 from src.database.models.user import User  # Import User model to ensure it's registered with Base.metadata
@@ -24,6 +30,17 @@ async def init_db(drop_tables: bool = False):
         await conn.run_sync(Base.metadata.create_all)
         print("Tables created.")
 
+async def apply_pricing_optimizations():
+    """Apply database optimizations for pricing queries"""
+    try:
+        from scripts.db.pricing_optimization import apply_pricing_optimizations as pricing_opt_func
+        print("Applying pricing optimizations...")
+        await pricing_opt_func()
+        print("Pricing optimizations applied successfully.")
+    except Exception as e:
+        print(f"Warning: Could not apply pricing optimizations: {e}")
+        print("This is not critical for database initialization.")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Initialize the database.")
     parser.add_argument(
@@ -34,3 +51,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     asyncio.run(init_db(drop_tables=args.drop))
+    
+    # Apply pricing optimizations
+    asyncio.run(apply_pricing_optimizations())
+    print("Database initialization complete.")

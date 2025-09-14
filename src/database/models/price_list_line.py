@@ -54,4 +54,6 @@ class PriceListLine(Base):
         Index('idx_price_list_lines_category', 'category_id'),
         Index('idx_price_list_lines_quantity', 'min_quantity'),
         Index('idx_price_list_lines_covering', 'price_list_id', 'is_active', 'min_quantity', 'discount_type', 'discount_value'),
+        # Additional indexes for optimized pricing queries
+        Index('idx_price_list_lines_lookup', 'price_list_id', 'is_active', 'min_quantity'),
     )

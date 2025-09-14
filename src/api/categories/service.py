@@ -1,4 +1,5 @@
 import asyncio
+from typing import Optional
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload, joinedload
 from src.database.connection import AsyncSessionLocal
@@ -27,7 +28,7 @@ class CategoryService:
 
     @handle_service_errors("retrieving all categories")
     @async_timer("get_all_categories")
-    async def get_all_categories(self, include_subcategories: bool = True) -> list[CategorySchema]:
+    async def get_all_categories(self, include_subcategories: Optional[bool] = True) -> list[CategorySchema]:
         """Get all categories with optimized caching and loading"""
         # Check cache first
         cached_categories = categories_cache.get_all_categories()

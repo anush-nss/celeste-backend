@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, ForeignKey, UniqueConstraint
+from sqlalchemy import Integer, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import text
@@ -22,4 +22,5 @@ class TierPriceList(Base):
     # Table constraints
     __table_args__ = (
         UniqueConstraint('tier_id', 'price_list_id', name='unique_tier_price_list'),
+        Index('idx_tier_price_lists_tier_id', 'tier_id'),
     )

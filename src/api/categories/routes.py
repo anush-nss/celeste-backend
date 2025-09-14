@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, status, Query
 from typing import Annotated, List
 from src.api.categories.models import (
-    CategorySchema,
     CreateCategorySchema,
     UpdateCategorySchema,
     CategoryQuerySchema,
+    CategorySchema,
 )
 from src.api.categories.service import CategoryService
 from src.dependencies.auth import RoleChecker
@@ -19,9 +19,7 @@ category_service = CategoryService()
 @categories_router.get(
     "/", summary="Get all categories", response_model=List[CategorySchema]
 )
-async def get_all_categories(query: CategoryQuerySchema):
-    if query is None:
-        query = CategoryQuerySchema()
+async def get_all_categories(query: CategoryQuerySchema = Query(True, description="Whether to include subcategories in the response")):
     categories = await category_service.get_all_categories(include_subcategories=query.include_subcategories)
     return success_response([c.model_dump(mode="json") for c in categories])
 

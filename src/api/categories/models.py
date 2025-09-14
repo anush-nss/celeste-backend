@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, HttpUrl, ConfigDict # Added ConfigDict
 
 class CategoryQuerySchema(BaseModel):
     """Schema for category query parameters"""
-    include_subcategories: bool = Field(
+    include_subcategories: Optional[bool] = Field(
         default=True,
         description="Whether to include subcategories in the response"
     )

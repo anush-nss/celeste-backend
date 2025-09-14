@@ -1,5 +1,6 @@
 from typing import Optional, List
 from sqlalchemy.future import select
+from sqlalchemy import update
 from sqlalchemy.orm import selectinload
 from src.database.connection import AsyncSessionLocal
 from src.database.models.user import User
@@ -366,7 +367,7 @@ class UserService:
             # If new address is default, atomically set all other addresses for this user to not default
             if address_data.is_default:
                 await session.execute(
-                    select(Address).filter_by(user_id=user_id).update({"is_default": False})
+                    update(Address).where(Address.user_id == user_id).values(is_default=False)
                 )
 
             new_address = Address(
@@ -417,7 +418,7 @@ class UserService:
             if update_data.get("is_default") is True and not address.is_default:
                 # If this address is being set to default, unset others atomically
                 await session.execute(
-                    select(Address).filter_by(user_id=user_id).filter(Address.id != address_id).update({"is_default": False})
+                    update(Address).where(Address.user_id == user_id).where(Address.id != address_id).values(is_default=False)
                 )
 
             # Update the specific address with all provided fields
@@ -460,10 +461,10 @@ class UserService:
             # 1. Set the specified address as default
             # 2. Set all other addresses as non-default
             await session.execute(
-                select(Address).filter_by(user_id=user_id, id=address_id).update({"is_default": True})
+                update(Address).where(Address.user_id == user_id).where(Address.id == address_id).values(is_default=True)
             )
             await session.execute(
-                select(Address).filter_by(user_id=user_id).filter(Address.id != address_id).update({"is_default": False})
+                update(Address).where(Address.user_id == user_id).where(Address.id != address_id).values(is_default=False)
             )
 
             await session.commit()

@@ -1,5 +1,5 @@
 from typing import Optional, List, TYPE_CHECKING
-from sqlalchemy import String, Integer, Boolean, Text
+from sqlalchemy import String, Integer, Boolean, Text, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import text
@@ -29,3 +29,8 @@ class PriceList(Base):
     # Relationships
     lines: Mapped[List["PriceListLine"]] = relationship("PriceListLine", back_populates="price_list", cascade="all, delete-orphan")
     tier_associations: Mapped[List["TierPriceList"]] = relationship("TierPriceList", back_populates="price_list", cascade="all, delete-orphan")
+    
+    # Table constraints and indexes
+    __table_args__ = (
+        Index('idx_price_lists_validity', 'is_active', 'valid_from', 'valid_until'),
+    )

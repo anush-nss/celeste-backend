@@ -79,11 +79,18 @@ async def get_all_products(
         only_discounted=only_discounted,
     )
 
-    result = await product_service.get_products_with_pagination(
-        query_params=query_params,
-        customer_tier=user_tier,
-        pricing_service=pricing_service if include_pricing else None,
-    )
+    # Use the optimized method if pricing is requested and we have a user tier
+    if include_pricing and user_tier:
+        result = await product_service.get_products_with_pagination_optimized(
+            query_params=query_params,
+            customer_tier=user_tier,
+        )
+    else:
+        result = await product_service.get_products_with_pagination(
+            query_params=query_params,
+            customer_tier=user_tier,
+            pricing_service=pricing_service if include_pricing else None,
+        )
 
     return success_response(result.model_dump(mode="json"))
 
@@ -403,24 +410,5 @@ async def assign_tag_to_product(product_id: int, tag_id: int):
 )
 async def remove_tag_from_product(product_id: int, tag_id: int):
     """Remove a tag from a product"""
-    async with AsyncSessionLocal() as session:
-        from sqlalchemy.future import select
-        from src.database.models.product import ProductTag
-        
-        result = await session.execute(
-            select(ProductTag).filter(
-                ProductTag.product_id == product_id,
-                ProductTag.tag_id == tag_id
-            )
-        )
-        product_tag = result.scalars().first()
-        
-        if not product_tag:
-            raise ResourceNotFoundException(
-                detail=f"Tag {tag_id} not found on product {product_id}"
-            )
-        
-        await session.delete(product_tag)
-        await session.commit()
-        
-        return success_response({"message": "Tag removed successfully"})
+    await product_service.remove_tag_from_product(product_id, tag_id)
+    return success_response({"message": "Tag removed successfully"})

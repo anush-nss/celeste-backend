@@ -361,17 +361,13 @@ async def get_tier_benefits(tier_id: int):
 )
 async def associate_benefit_to_tier(tier_id: int, benefit_id: int):
     """Associate a benefit with a tier (Admin only)"""
-    success = await tier_service.associate_benefit_to_tier(tier_id, benefit_id)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to associate benefit with tier. Check if tier and benefit exist."
-        )
-    return success_response({
-        "tier_id": tier_id,
-        "benefit_id": benefit_id,
-        "message": "Benefit associated with tier successfully"
-    })
+    is_new = await tier_service.associate_benefit_to_tier(tier_id, benefit_id)
+    if is_new:
+        return success_response({
+            "tier_id": tier_id,
+            "benefit_id": benefit_id,
+            "message": "Benefit associated with tier successfully"
+        }, status_code=status.HTTP_201_CREATED)
 
 
 @router.delete(

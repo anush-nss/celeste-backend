@@ -382,6 +382,190 @@ class PricingService:
         
         return base_price
 
+    async def calculate_bulk_product_pricing_optimized(self, product_data: List[Dict[str, Any]], user_tier_id: Optional[int]) -> List[ProductPricingSchema]:
+        """Calculate pricing for multiple products using optimized SQL query"""
+        if not user_tier_id:
+            # If no tier, return base pricing for all products
+            return [
+                ProductPricingSchema(
+                    product_id=int(p_data["id"]),
+                    quantity=p_data.get("quantity", 1),
+                    base_price=float(p_data["price"]),
+                    final_price=float(p_data["price"]),
+                    total_price=float(p_data["price"]) * p_data.get("quantity", 1),
+                    savings=0.0,
+                    applied_discounts=[]
+                )
+                for p_data in product_data
+            ]
+        
+        product_ids = [int(p_data["id"]) for p_data in product_data]
+        if not product_ids:
+            return []
+        
+        async with AsyncSessionLocal() as session:
+            # Optimized bulk pricing query
+            pricing_query = """
+                WITH active_price_lists AS (
+                    SELECT 
+                        pl.id as price_list_id,
+                        pl.name as price_list_name,
+                        pl.priority,
+                        tpl.tier_id
+                    FROM price_lists pl
+                    JOIN tier_price_lists tpl ON pl.id = tpl.price_list_id
+                    WHERE pl.is_active = true
+                      AND tpl.tier_id = :tier_id
+                      AND (pl.valid_from IS NULL OR pl.valid_from <= NOW())
+                      AND (pl.valid_until IS NULL OR pl.valid_until >= NOW())
+                ),
+                applicable_price_list_lines AS (
+                    SELECT 
+                        pll.*,
+                        apl.priority as price_list_priority
+                    FROM price_list_lines pll
+                    JOIN active_price_lists apl ON pll.price_list_id = apl.price_list_id
+                    WHERE pll.is_active = true
+                      AND pll.min_quantity = 1
+                      AND (
+                          pll.product_id = ANY(:product_ids) OR
+                          (pll.product_id IS NULL AND pll.category_id IN (
+                              SELECT pc.category_id 
+                              FROM product_categories pc 
+                              WHERE pc.product_id = ANY(:product_ids)
+                          )) OR
+                          (pll.product_id IS NULL AND pll.category_id IS NULL)
+                      )
+                ),
+                ranked_pricing AS (
+                    SELECT 
+                        p.id as product_id,
+                        p.base_price,
+                        apll.price_list_id,
+                        apll.price_list_name,
+                        apll.discount_type,
+                        apll.discount_value,
+                        apll.max_discount_amount,
+                        CASE 
+                            WHEN apll.discount_type = 'percentage' THEN
+                                GREATEST(
+                                    0,
+                                    p.base_price - (
+                                        LEAST(
+                                            p.base_price * (apll.discount_value / 100),
+                                            COALESCE(apll.max_discount_amount, p.base_price * (apll.discount_value / 100))
+                                        )
+                                    )
+                                )
+                            WHEN apll.discount_type = 'flat' THEN
+                                GREATEST(0, p.base_price - apll.discount_value)
+                            WHEN apll.discount_type = 'fixed_price' THEN
+                                apll.discount_value
+                            ELSE p.base_price
+                        END as calculated_final_price,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY p.id 
+                            ORDER BY 
+                                apll.price_list_priority DESC,
+                                CASE 
+                                    WHEN apll.product_id IS NOT NULL THEN 1
+                                    WHEN apll.category_id IS NOT NULL THEN 2
+                                    ELSE 3
+                                END,
+                                apll.id
+                        ) as pricing_rank
+                    FROM products p
+                    LEFT JOIN applicable_price_list_lines apll ON (
+                        apll.product_id = p.id OR
+                        (apll.product_id IS NULL AND apll.category_id IN (
+                            SELECT pc.category_id 
+                            FROM product_categories pc 
+                            WHERE pc.product_id = p.id
+                        )) OR
+                        (apll.product_id IS NULL AND apll.category_id IS NULL)
+                    )
+                    WHERE p.id = ANY(:product_ids)
+                ),
+                best_pricing AS (
+                    SELECT 
+                        product_id,
+                        base_price,
+                        calculated_final_price as final_price,
+                        (base_price - calculated_final_price) as savings,
+                        discount_type,
+                        discount_value,
+                        max_discount_amount,
+                        price_list_id,
+                        price_list_name
+                    FROM ranked_pricing
+                    WHERE pricing_rank = 1
+                )
+                SELECT 
+                    bp.product_id,
+                    bp.final_price,
+                    bp.savings,
+                    bp.discount_type,
+                    bp.discount_value,
+                    bp.max_discount_amount,
+                    bp.price_list_id,
+                    bp.price_list_name,
+                    bp.base_price
+                FROM best_pricing bp
+                WHERE bp.product_id = ANY(:product_ids)
+            """
+            
+            pricing_result = await session.execute(
+                text(pricing_query),
+                {
+                    "tier_id": user_tier_id,
+                    "product_ids": product_ids
+                }
+            )
+            pricing_rows = pricing_result.fetchall()
+            
+            # Create a dictionary for quick lookup
+            pricing_dict = {}
+            for row in pricing_rows:
+                pricing_dict[row.product_id] = row
+            
+            # Build results
+            results = []
+            for p_data in product_data:
+                product_id = int(p_data["id"])
+                quantity = p_data.get("quantity", 1)
+                base_price = float(p_data["price"])
+                
+                if product_id in pricing_dict:
+                    pricing_row = pricing_dict[product_id]
+                    final_price = float(pricing_row.final_price)
+                    savings = float(pricing_row.savings)
+                    applied_discounts = [{
+                        "price_list_id": pricing_row.price_list_id,
+                        "price_list_name": pricing_row.price_list_name,
+                        "line_id": None,
+                        "discount_type": pricing_row.discount_type,
+                        "discount_value": float(pricing_row.discount_value) if pricing_row.discount_value else 0.0,
+                        "original_price": base_price,
+                        "discounted_price": final_price,
+                        "savings": savings
+                    }] if pricing_row.price_list_name else []
+                else:
+                    final_price = base_price
+                    savings = 0.0
+                    applied_discounts = []
+                
+                results.append(ProductPricingSchema(
+                    product_id=product_id,
+                    quantity=quantity,
+                    base_price=base_price,
+                    final_price=final_price,
+                    total_price=final_price * quantity,
+                    savings=savings * quantity,
+                    applied_discounts=applied_discounts
+                ))
+            
+            return results
+
     async def calculate_bulk_product_pricing(self, product_data: List[Dict[str, Any]], user_tier_id: Optional[int]) -> List[ProductPricingSchema]:
         """Calculate pricing for multiple products"""
         # Process products in parallel for better performance

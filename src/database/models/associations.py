@@ -1,7 +1,7 @@
 """
 Association tables for many-to-many relationships
 """
-from sqlalchemy import Table, Column, Integer, ForeignKey
+from sqlalchemy import Table, Column, Integer, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import text
 from src.database.base import Base
@@ -12,5 +12,8 @@ product_categories = Table(
     Base.metadata,
     Column('product_id', Integer, ForeignKey('products.id', ondelete='CASCADE'), primary_key=True),
     Column('category_id', Integer, ForeignKey('categories.id', ondelete='CASCADE'), primary_key=True),
-    Column('created_at', TIMESTAMP(timezone=True), server_default=text('NOW()'))
+    Column('created_at', TIMESTAMP(timezone=True), server_default=text('NOW()')),
+    # Indexes for optimized queries
+    Index('idx_product_categories_product_id', 'product_id'),
+    Index('idx_product_categories_category_id', 'category_id'),
 )
