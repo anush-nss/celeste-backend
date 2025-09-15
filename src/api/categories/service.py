@@ -192,6 +192,66 @@ class CategoryService:
 
             return True
 
+    async def create_categories(self, categories_data: list[CreateCategorySchema]) -> list[CategorySchema]:
+        """Create multiple new categories with validation and optimization"""
+        if not categories_data:
+            raise ValidationException(detail="Category list cannot be empty")
+
+        async with AsyncSessionLocal() as session:
+            created_categories = []
+            for category_data in categories_data:
+                if not category_data.name or not category_data.name.strip():
+                    raise ValidationException(detail="Category name is required")
+
+                if category_data.sort_order < 0:
+                    raise ValidationException(detail="Sort order cannot be negative")
+
+                # Check for duplicate name
+                existing = await session.execute(
+                    select(Category).filter(Category.name == category_data.name.strip())
+                )
+                if existing.scalars().first():
+                    raise ConflictException(detail=f"Category with name '{category_data.name}' already exists")
+
+                # Validate parent category if provided
+                if category_data.parent_category_id:
+                    parent = await session.execute(
+                        select(Category).filter(Category.id == category_data.parent_category_id)
+                    )
+                    if not parent.scalars().first():
+                        raise ResourceNotFoundException(
+                            detail=f"Parent category with ID {category_data.parent_category_id} not found"
+                        )
+
+                new_category = Category(
+                    name=category_data.name.strip(),
+                    description=category_data.description.strip() if category_data.description else None,
+                    sort_order=category_data.sort_order,
+                    image_url=category_data.image_url,
+                    parent_category_id=category_data.parent_category_id
+                )
+                session.add(new_category)
+                created_categories.append(new_category)
+
+            await session.commit()
+
+            for category in created_categories:
+                await session.refresh(category, ["subcategories"])
+
+            pydantic_categories = safe_model_validate_list(
+                CategorySchema,
+                created_categories,
+                include_relationships={'subcategories'}
+            )
+            
+            for pydantic_category in pydantic_categories:
+                assert pydantic_category.id is not None, "Category ID should be present after database commit"
+                categories_cache.set_category(pydantic_category.id, pydantic_category.model_dump(mode="json"))
+            
+            cache_invalidation_manager.invalidate_category()
+
+            return pydantic_categories
+
     async def get_categories_by_ids(
         self, category_ids: list[int]
     ) -> list[CategorySchema]:

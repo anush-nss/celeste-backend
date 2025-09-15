@@ -2,6 +2,7 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy import and_, or_, text
+from src.api.tags.models import CreateTagSchema
 from src.database.connection import AsyncSessionLocal
 from src.database.models.product import Product, ProductTag, Tag
 from src.api.tags.service import TagService
@@ -458,6 +459,79 @@ class ProductService:
             cache_invalidation_manager.invalidate_entity(Collections.PRODUCTS, str(product_id))
             
             return True
+
+    async def create_products(self, products_data: list[CreateProductSchema]) -> list[ProductSchema]:
+        """Create multiple new products with validation and optimization"""
+        if not products_data:
+            raise ValidationException(detail="Product list cannot be empty")
+
+        async with AsyncSessionLocal() as session:
+            # Step 1: Bulk validation
+            all_category_ids = {cid for p in products_data for cid in p.category_ids}
+            all_tag_ids = {tid for p in products_data for tid in p.tag_ids}
+            product_names = {p.name for p in products_data}
+
+            # Check for existing product names
+            existing_products = (await session.execute(select(Product).filter(Product.name.in_(product_names)))).scalars().all()
+            if existing_products:
+                raise ConflictException(f"Products with these names already exist: {[p.name for p in existing_products]}")
+
+            # Check for existing categories
+            if all_category_ids:
+                categories = (await session.execute(select(Category).filter(Category.id.in_(all_category_ids)))).scalars().all()
+                if len(categories) != len(all_category_ids):
+                    raise ResourceNotFoundException("One or more categories not found.")
+
+            # Check for existing tags
+            if all_tag_ids:
+                tags = (await session.execute(select(Tag).filter(Tag.id.in_(all_tag_ids)))).scalars().all()
+                if len(tags) != len(all_tag_ids):
+                    raise ResourceNotFoundException("One or more tags not found.")
+
+            # Step 2: Create Product ORM objects
+            new_products = [Product(**data.model_dump(exclude={'category_ids', 'tag_ids'})) for data in products_data]
+            
+            session.add_all(new_products)
+            await session.flush()  # Assigns IDs
+
+            # Step 3: Create associations using bulk inserts
+            product_category_associations = []
+            product_tag_associations = []
+            for i, product in enumerate(new_products):
+                data = products_data[i]
+                if data.category_ids:
+                    for cid in data.category_ids:
+                        product_category_associations.append({'product_id': product.id, 'category_id': cid})
+                if data.tag_ids:
+                    for tid in data.tag_ids:
+                        product_tag_associations.append({'product_id': product.id, 'tag_id': tid, 'created_by': 'system'})
+
+            if product_category_associations:
+                from src.database.models.associations import product_categories
+                await session.execute(product_categories.insert(), product_category_associations)
+
+            if product_tag_associations:
+                await session.execute(ProductTag.__table__.insert(), product_tag_associations)
+
+            await session.commit()
+
+            # Step 4: Fetch created products with relationships for the response
+            created_ids = [p.id for p in new_products]
+            query = select(Product).where(Product.id.in_(created_ids)).options(
+                selectinload(Product.categories),
+                selectinload(Product.product_tags).selectinload(ProductTag.tag)
+            )
+            result = await session.execute(query)
+            final_products = result.scalars().unique().all()
+            
+            pydantic_products = safe_model_validate_list(
+                ProductSchema,
+                final_products,
+                max_depth=3
+            )
+            
+            cache_invalidation_manager.invalidate_entity(Collections.PRODUCTS)
+            return pydantic_products
 
     async def get_products_with_pagination_optimized(
         self,
@@ -975,6 +1049,11 @@ class ProductService:
             description=description
         )
         return await self.tag_service.create_tag(tag_data)
+
+    async def create_product_tags(self, tags_data: list[CreateTagSchema]) -> list[Tag]:
+        """Create multiple new product tags with specific type (e.g., 'color', 'size')"""
+        from src.api.tags.models import CreateTagSchema
+        return await self.tag_service.create_tags(tags_data)
 
     async def get_product_tags(self, is_active: bool = True, tag_type_suffix: Optional[str] = None) -> List[Tag]:
         """Get product tags, optionally filtered by type suffix (e.g., 'color', 'size')"""

@@ -131,6 +131,45 @@ class PricingService:
             await session.commit()
             return True
 
+    async def create_price_lists(self, price_lists_data: list[CreatePriceListSchema]) -> list[PriceListSchema]:
+        """Create multiple new price lists with validation and optimization"""
+        if not price_lists_data:
+            raise ValidationException(detail="Price list cannot be empty")
+
+        async with AsyncSessionLocal() as session:
+            new_price_lists = []
+            for price_list_data in price_lists_data:
+                if not price_list_data.name or not price_list_data.name.strip():
+                    raise ValidationException(detail="Price list name is required")
+
+                if price_list_data.priority < 0:
+                    raise ValidationException(detail="Priority cannot be negative")
+
+                # Check for duplicate name
+                existing = await session.execute(
+                    select(PriceList).filter(PriceList.name == price_list_data.name.strip())
+                )
+                if existing.scalars().first():
+                    raise ConflictException(detail=f"Price list with name '{price_list_data.name}' already exists")
+
+                new_price_list = PriceList(
+                    name=price_list_data.name.strip(),
+                    description=price_list_data.description.strip() if price_list_data.description else None,
+                    priority=price_list_data.priority,
+                    valid_from=price_list_data.valid_from or datetime.now(timezone.utc),
+                    valid_until=price_list_data.valid_until,
+                    is_active=price_list_data.is_active,
+                )
+                new_price_lists.append(new_price_list)
+            
+            session.add_all(new_price_lists)
+            await session.commit()
+
+            for pl in new_price_lists:
+                await session.refresh(pl)
+
+            return [await self._price_list_to_schema(pl) for pl in new_price_lists]
+
     # Price List Line Management  
     async def add_price_list_line(self, price_list_id: int, line_data: CreatePriceListLineSchema) -> PriceListLineSchema:
         """Add a line to a price list"""
@@ -195,6 +234,32 @@ class PricingService:
             await session.delete(line)
             await session.commit()
             return True
+
+    async def add_price_list_lines(self, price_list_id: int, lines_data: list[CreatePriceListLineSchema]) -> list[PriceListLineSchema]:
+        """Add multiple lines to a price list"""
+        async with AsyncSessionLocal() as session:
+            new_lines = []
+            for line_data in lines_data:
+                new_line = PriceListLine(
+                    price_list_id=price_list_id,
+                    product_id=line_data.product_id,
+                    category_id=line_data.category_id,
+                    discount_type=line_data.discount_type.value,
+                    discount_value=line_data.discount_value,
+                    max_discount_amount=line_data.max_discount_amount,
+                    min_quantity=line_data.min_quantity,
+                    min_order_amount=line_data.min_order_amount,
+                    is_active=line_data.is_active,
+                )
+                new_lines.append(new_line)
+            
+            session.add_all(new_lines)
+            await session.commit()
+
+            for line in new_lines:
+                await session.refresh(line)
+
+            return [await self._price_list_line_to_schema(line) for line in new_lines]
 
     # Tier Price List Association Management
     async def assign_price_list_to_tier(self, tier_id: int, price_list_id: int) -> bool:

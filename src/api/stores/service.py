@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy import and_
+from src.api.tags.models import CreateTagSchema
 from src.database.connection import AsyncSessionLocal
 from src.database.models.store import Store
 from src.database.models.store_tag import StoreTag
@@ -465,6 +466,10 @@ class StoreService:
             description=description
         )
         return await self.tag_service.create_tag(tag_data)
+
+    async def create_store_tags(self, tags_data: list[CreateTagSchema]) -> list[Tag]:
+        """Create multiple new store tags with specific type (e.g., 'features', 'amenities')"""
+        return await self.tag_service.create_tags(tags_data)
 
     async def get_store_tags(self, is_active: bool = True, tag_type_suffix: Optional[str] = None):
         """Get store tags, optionally filtered by type suffix (e.g., 'features', 'amenities')"""

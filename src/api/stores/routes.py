@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, status, Query, HTTPException
-from typing import Annotated, List, Optional
+from typing import Annotated, List, Optional, Union
 from src.api.stores.models import (
     StoreSchema,
     CreateStoreSchema,
@@ -8,7 +8,7 @@ from src.api.stores.models import (
     StoreLocationResponse,
     StoreTagSchema,
 )
-from src.api.tags.models import TagSchema, CreateTagSchema
+from src.api.tags.models import CreateTagSchema, TagSchema
 from src.api.stores.service import StoreService
 from src.dependencies.auth import RoleChecker
 from src.config.constants import (
@@ -33,25 +33,29 @@ store_service = StoreService()
 
 @stores_router.post(
     "/tags",
-    summary="Create a new store tag",
-    response_model=TagSchema,
+    summary="Create one or more new store tags",
+    response_model=Union[TagSchema, List[TagSchema]],
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def create_store_tag(tag_data: CreateTagSchema):
-    """Create a new tag for stores (Admin only)."""
-    # Use tag_type as suffix, defaulting to "general" if not provided
-    tag_type_suffix = tag_data.tag_type or "general"
-    new_tag = await store_service.create_store_tag(
-        name=tag_data.name,
-        tag_type_suffix=tag_type_suffix,
-        slug=tag_data.slug,
-        description=tag_data.description
-    )
-    return success_response(
-        TagSchema.model_validate(new_tag).model_dump(mode="json"),
-        status_code=status.HTTP_201_CREATED
-    )
+async def create_store_tags(payload: Union[CreateTagSchema, List[CreateTagSchema]]):
+    """Create one or more new tags for stores (Admin only)."""
+    is_list = isinstance(payload, list)
+    tags_to_create = payload if is_list else [payload]
+
+    if not tags_to_create:
+        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+
+    created_tags = await store_service.create_store_tags(tags_to_create)
+
+    if is_list:
+        return success_response(
+            [t.model_dump(mode="json") for t in created_tags], status_code=status.HTTP_201_CREATED
+        )
+    else:
+        return success_response(
+            created_tags[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+        )
 
 
 @stores_router.get(

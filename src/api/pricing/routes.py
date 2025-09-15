@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, status, HTTPException
-from typing import List, Optional
+from typing import List, Optional, Union
 from src.api.pricing.models import (
     PriceListSchema,
     CreatePriceListSchema,
@@ -49,13 +49,13 @@ async def get_price_list_by_id(price_list_id: int):
 
 @pricing_router.post(
     "/price-lists",
-    summary="Create a new price list",
-    response_model=PriceListSchema,
+    summary="Create one or more new price lists",
+    response_model=Union[PriceListSchema, List[PriceListSchema]],
     status_code=status.HTTP_201_CREATED,
 )
-async def create_price_list(price_list_data: CreatePriceListSchema):
+async def create_price_lists(payload: Union[CreatePriceListSchema, List[CreatePriceListSchema]]):
     """
-    Create a new price list.
+    Create one or more new price lists.
 
     - **name**: Price list name
     - **priority**: Priority order (1 = highest priority)
@@ -63,10 +63,22 @@ async def create_price_list(price_list_data: CreatePriceListSchema):
     - **valid_from**: When this price list becomes valid
     - **valid_until**: When this price list expires (optional)
     """
-    new_price_list = await pricing_service.create_price_list(price_list_data)
-    return success_response(
-        new_price_list.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
-    )
+    is_list = isinstance(payload, list)
+    price_lists_to_create = payload if is_list else [payload]
+
+    if not price_lists_to_create:
+        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+
+    created_price_lists = await pricing_service.create_price_lists(price_lists_to_create)
+
+    if is_list:
+        return success_response(
+            [pl.model_dump(mode="json") for pl in created_price_lists], status_code=status.HTTP_201_CREATED
+        )
+    else:
+        return success_response(
+            created_price_lists[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+        )
 
 
 @pricing_router.put(
@@ -123,15 +135,15 @@ async def get_price_list_lines(price_list_id: int):
 
 @pricing_router.post(
     "/price-lists/{price_list_id}/lines",
-    summary="Add a price list line",
-    response_model=PriceListLineSchema,
+    summary="Add one or more price list lines",
+    response_model=Union[PriceListLineSchema, List[PriceListLineSchema]],
     status_code=status.HTTP_201_CREATED,
 )
-async def create_price_list_line(
-    price_list_id: int, line_data: CreatePriceListLineSchema
+async def create_price_list_lines(
+    price_list_id: int, payload: Union[CreatePriceListLineSchema, List[CreatePriceListLineSchema]]
 ):
     """
-    Add a new line to a price list.
+    Add one or more new lines to a price list.
 
     - **product_id**: Product ID (null for all products)
     - **category_id**: Category ID (null for all categories)
@@ -147,13 +159,24 @@ async def create_price_list_line(
             detail=f"Price list with ID {price_list_id} not found"
         )
 
+    is_list = isinstance(payload, list)
+    lines_to_create = payload if is_list else [payload]
+
+    if not lines_to_create:
+        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+
     try:
-        new_line = await pricing_service.add_price_list_line(
-            price_list_id, line_data
+        new_lines = await pricing_service.add_price_list_lines(
+            price_list_id, lines_to_create
         )
-        return success_response(
-            new_line.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
-        )
+        if is_list:
+            return success_response(
+                [line.model_dump(mode="json") for line in new_lines], status_code=status.HTTP_201_CREATED
+            )
+        else:
+            return success_response(
+                new_lines[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+            )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

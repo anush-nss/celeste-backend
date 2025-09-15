@@ -7,7 +7,7 @@ from src.config.constants import (
     MIN_LONGITUDE,
     MAX_LONGITUDE,
 )
-from src.api.shared.tags.models import EntityTagSchema
+from src.api.tags.models import EntityTagSchema
 
 
 class LocationSchema(BaseModel):

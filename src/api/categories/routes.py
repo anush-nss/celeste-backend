@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, status, Query
-from typing import Annotated, List
+from fastapi import APIRouter, Depends, status, Query, HTTPException
+from typing import Annotated, List, Union
 from src.api.categories.models import (
     CreateCategorySchema,
     UpdateCategorySchema,
@@ -36,8 +36,8 @@ async def get_category_by_id(id: int): # Changed id type to int
 
 @categories_router.post(
     "/",
-    summary="Create a new category",
-    response_model=CategorySchema,
+    summary="Create one or more new categories",
+    response_model=Union[CategorySchema, List[CategorySchema]],
     status_code=status.HTTP_201_CREATED,
     dependencies=[
         Depends(
@@ -47,11 +47,23 @@ async def get_category_by_id(id: int): # Changed id type to int
         )
     ],
 )
-async def create_category(category_data: CreateCategorySchema):
-    new_category = await category_service.create_category(category_data)
-    return success_response(
-        new_category.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
-    )
+async def create_categories(payload: Union[CreateCategorySchema, List[CreateCategorySchema]]):
+    is_list = isinstance(payload, list)
+    categories_to_create = payload if is_list else [payload]
+    
+    if not categories_to_create:
+        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+
+    created_categories = await category_service.create_categories(categories_to_create)
+    
+    if is_list:
+        return success_response(
+            [c.model_dump(mode="json") for c in created_categories], status_code=status.HTTP_201_CREATED
+        )
+    else:
+        return success_response(
+            created_categories[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+        )
 
 
 @categories_router.put(

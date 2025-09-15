@@ -15,7 +15,7 @@ class TagService:
     def __init__(self, entity_type: str):
         self.entity_type = entity_type  # e.g., "product", "store"
 
-    def _generate_slug(self, name: str, tag_type_suffix: str = None) -> str:
+    def _generate_slug(self, name: str, tag_type_suffix: Optional[str] = None) -> str:
         """Generate URL-friendly slug with format: {entity}-{type_suffix}-{name}"""
         # Clean the name part
         name_slug = re.sub(r'[^\w\s-]', '', name.lower())
@@ -61,6 +61,42 @@ class TagService:
                 await session.commit()
                 await session.refresh(new_tag)
                 return new_tag
+            except IntegrityError as e:
+                await session.rollback()
+                raise ConflictException(detail="Tag creation failed due to constraint violation")
+
+    async def create_tags(self, tags_data: list[CreateTagSchema]) -> list[Tag]:
+        """Create multiple new tags with entity type prefix"""
+        async with AsyncSessionLocal() as session:
+            new_tags = []
+            for tag_data in tags_data:
+                # Generate slug if not provided (using the new format: entity-suffix-name)
+                slug = tag_data.slug or self._generate_slug(tag_data.name, tag_data.tag_type)
+
+                # Ensure slug is unique
+                existing_tag = await session.execute(
+                    select(Tag).filter(Tag.slug == slug)
+                )
+                if existing_tag.scalars().first():
+                    raise ConflictException(detail=f"Tag with slug '{slug}' already exists")
+
+                # Use tag_type from the schema, prefixed with entity type
+                tag_type = f"{self.entity_type}_{tag_data.tag_type}" if tag_data.tag_type else self.entity_type
+
+                new_tag = Tag(
+                    tag_type=tag_type,
+                    name=tag_data.name,
+                    slug=slug,
+                    description=tag_data.description
+                )
+                new_tags.append(new_tag)
+
+            try:
+                session.add_all(new_tags)
+                await session.commit()
+                for tag in new_tags:
+                    await session.refresh(tag)
+                return new_tags
             except IntegrityError as e:
                 await session.rollback()
                 raise ConflictException(detail="Tag creation failed due to constraint violation")

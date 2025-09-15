@@ -1,1 +1,0 @@
-# Shared tags module

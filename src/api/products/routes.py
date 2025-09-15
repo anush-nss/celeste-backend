@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, status, Query, HTTPException
-from typing import Annotated, List, Optional, Dict
+from typing import Annotated, List, Optional, Dict, Union
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from src.database.connection import AsyncSessionLocal
@@ -198,25 +198,29 @@ async def delete_tag(tag_id: int):
 
 @products_router.post(
     "/tags",
-    summary="Create a new product tag",
-    response_model=TagSchema,
+    summary="Create one or more new product tags",
+    response_model=Union[TagSchema, List[TagSchema]],
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def create_product_tag(tag_data: CreateTagSchema):
-    """Create a new tag for products (Admin only)."""
-    # Use tag_type as suffix, defaulting to "general" if not provided
-    tag_type_suffix = tag_data.tag_type or "general"
-    new_tag = await product_service.create_product_tag(
-        name=tag_data.name,
-        tag_type_suffix=tag_type_suffix,
-        slug=tag_data.slug,
-        description=tag_data.description
-    )
-    return success_response(
-        TagSchema.model_validate(new_tag).model_dump(mode="json"),
-        status_code=status.HTTP_201_CREATED
-    )
+async def create_product_tags(payload: Union[CreateTagSchema, List[CreateTagSchema]]):
+    """Create one or more new tags for products (Admin only)."""
+    is_list = isinstance(payload, list)
+    tags_to_create = payload if is_list else [payload]
+
+    if not tags_to_create:
+        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+
+    created_tags = await product_service.create_product_tags(tags_to_create)
+
+    if is_list:
+        return success_response(
+            [t.model_dump(mode="json") for t in created_tags], status_code=status.HTTP_201_CREATED
+        )
+    else:
+        return success_response(
+            created_tags[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+        )
 
 
 @products_router.get(
@@ -302,16 +306,28 @@ async def get_product_by_id(
 
 @products_router.post(
     "/",
-    summary="Create a new product",
-    response_model=ProductSchema,
+    summary="Create one or more new products",
+    response_model=Union[ProductSchema, List[ProductSchema]],
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def create_product(product_data: CreateProductSchema):
-    new_product = await product_service.create_product(product_data)
-    return success_response(
-        new_product.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
-    )
+async def create_products(payload: Union[CreateProductSchema, List[CreateProductSchema]]):
+    is_list = isinstance(payload, list)
+    products_to_create = payload if is_list else [payload]
+    
+    if not products_to_create:
+        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+
+    created_products = await product_service.create_products(products_to_create)
+    
+    if is_list:
+        return success_response(
+            [p.model_dump(mode="json") for p in created_products], status_code=status.HTTP_201_CREATED
+        )
+    else:
+        return success_response(
+            created_products[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+        )
 
 
 @products_router.put(
