@@ -8,7 +8,7 @@ from src.api.stores.models import (
     StoreLocationResponse,
     StoreTagSchema,
 )
-from src.api.tags.models import CreateTagSchema, TagSchema
+from src.api.tags.models import CreateTagSchema, TagSchema, UpdateTagSchema
 from src.api.stores.service import StoreService
 from src.dependencies.auth import RoleChecker
 from src.config.constants import (
@@ -74,6 +74,76 @@ async def get_store_tags(
     )
 
 
+@stores_router.get(
+    "/tags/types",
+    summary="Get all available store tag types",
+    response_model=List[str],
+)
+async def get_store_tag_types():
+    """Get all unique tag types for stores only"""
+    from src.database.connection import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy.future import select
+        from sqlalchemy import distinct
+        from src.database.models.product import Tag
+
+        query = select(distinct(Tag.tag_type)).filter(
+            Tag.is_active == True,
+            Tag.tag_type.like('store_%')
+        ).order_by(Tag.tag_type)
+        result = await session.execute(query)
+        tag_types = result.scalars().all()
+
+    return success_response(list(tag_types))
+
+
+@stores_router.get(
+    "/tags/{tag_id}",
+    summary="Get a store tag by ID",
+    response_model=TagSchema,
+)
+async def get_store_tag_by_id(tag_id: int):
+    """Get a specific store tag by ID"""
+    tag = await store_service.tag_service.get_tag_by_id(tag_id)
+
+    if not tag:
+        raise ResourceNotFoundException(detail=f"Store tag with ID {tag_id} not found")
+
+    return success_response(TagSchema.model_validate(tag).model_dump(mode="json"))
+
+
+@stores_router.put(
+    "/tags/{tag_id}",
+    summary="Update a store tag",
+    response_model=TagSchema,
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def update_store_tag(tag_id: int, tag_data: UpdateTagSchema):
+    """Update an existing store tag"""
+    updated_tag = await store_service.tag_service.update_tag(tag_id, tag_data)
+
+    if not updated_tag:
+        raise ResourceNotFoundException(detail=f"Store tag with ID {tag_id} not found")
+
+    return success_response(TagSchema.model_validate(updated_tag).model_dump(mode="json"))
+
+
+@stores_router.delete(
+    "/tags/{tag_id}",
+    summary="Delete a store tag",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def delete_store_tag(tag_id: int):
+    """Delete a store tag (soft delete by setting is_active to False)"""
+    success = await store_service.tag_service.deactivate_tag(tag_id)
+
+    if not success:
+        raise ResourceNotFoundException(detail=f"Store tag with ID {tag_id} not found")
+
+    return success_response({"id": tag_id, "message": "Store tag deactivated successfully"})
+
+
 # ===== STORE ROUTES =====
 
 @stores_router.get("/", summary="Get all stores with optional location filtering", response_model=StoreLocationResponse)
@@ -97,11 +167,8 @@ async def get_all_stores(
         description="Maximum number of stores to return",
     ),
     is_active: Optional[bool] = Query(True, description="Filter by store status"),
-    tag_types: Optional[List[str]] = Query(
-        None, description="Filter by tag types"
-    ),
-    tag_ids: Optional[List[int]] = Query(
-        None, description="Filter by specific tags"
+    tags: Optional[List[str]] = Query(
+        None, description="Filter by tags (flexible syntax: 'organic', 'id:5', 'type:amenities', 'value:wifi')"
     ),
     include_distance: Optional[bool] = Query(
         True, description="Include distance calculations (requires lat/lon)"
@@ -136,8 +203,7 @@ async def get_all_stores(
         radius=radius,
         limit=limit,
         is_active=is_active,
-        tag_types=tag_types,
-        tag_ids=tag_ids,
+        tags=tags,
         include_distance=include_distance if (latitude is not None and longitude is not None) else False,
         include_tags=include_tags,
     )
@@ -180,11 +246,8 @@ async def get_nearby_stores(
         le=MAX_STORES_LIMIT,
         description="Max stores to return",
     ),
-    tag_types: Optional[List[str]] = Query(
-        None, description="Filter by tag types"
-    ),
-    tag_ids: Optional[List[int]] = Query(
-        None, description="Filter by specific tags"
+    tags: Optional[List[str]] = Query(
+        None, description="Filter by tags (flexible syntax: 'organic', 'id:5', 'type:amenities', 'value:wifi')"
     ),
     include_distance: Optional[bool] = Query(
         True, description="Include distance calculations"
@@ -206,8 +269,7 @@ async def get_nearby_stores(
         radius=radius,
         limit=limit,
         is_active=True,  # Only active stores for nearby search
-        tag_types=tag_types,
-        tag_ids=tag_ids,
+        tags=tags,
         include_distance=include_distance,
         include_tags=include_tags,
     )

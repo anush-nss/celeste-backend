@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import and_
+from sqlalchemy import and_, text
 from src.api.tags.models import CreateTagSchema
 from src.database.connection import AsyncSessionLocal
 from src.database.models.store import Store
@@ -53,7 +53,7 @@ class StoreService:
             query = select(Store)
 
             # Include tag relationships if needed
-            if query_params and (query_params.include_tags or query_params.tag_ids or query_params.tag_types):
+            if query_params and (query_params.include_tags or query_params.tags):
                 query = query.options(
                     selectinload(Store.store_tags).selectinload(StoreTag.tag)
                 )
@@ -64,16 +64,17 @@ class StoreService:
             if query_params and query_params.is_active is not None:
                 conditions.append(Store.is_active == query_params.is_active)
 
-            # Add tag filtering
-            if query_params and query_params.tag_ids:
-                query = query.join(Store.store_tags).filter(
-                    StoreTag.tag_id.in_(query_params.tag_ids)
-                )
-
-            if query_params and query_params.tag_types:
-                query = query.join(Store.store_tags).join(StoreTag.tag).filter(
-                    Tag.tag_type.in_(query_params.tag_types)
-                )
+            # Handle new tag filtering
+            tag_params = {}
+            if query_params and query_params.tags:
+                tag_filter_result = self.tag_service.parse_tag_filters(query_params.tags)
+                if tag_filter_result['needs_joins'] and tag_filter_result['conditions']:
+                    # Join with store_tags and tags tables
+                    query = query.join(Store.store_tags).join(StoreTag.tag)
+                    # Add tag filter conditions
+                    tag_conditions_str = " OR ".join(tag_filter_result['conditions'])
+                    conditions.append(text(f"({tag_conditions_str})"))
+                    tag_params.update(tag_filter_result['params'])
 
             if conditions:
                 query = query.filter(and_(*conditions))
@@ -83,7 +84,7 @@ class StoreService:
                 query = query.limit(query_params.limit)
 
             # Execute query
-            result = await session.execute(query)
+            result = await session.execute(query, tag_params)
             store_models = result.scalars().unique().all()
 
             # Convert to schemas and add dynamic fields
@@ -160,24 +161,25 @@ class StoreService:
             )
 
             # Include tag relationships if needed
-            if query_params.include_tags or query_params.tag_ids or query_params.tag_types:
+            if query_params.include_tags or query_params.tags:
                 query = query.options(
                     selectinload(Store.store_tags).selectinload(StoreTag.tag)
                 )
 
-            # Add tag filtering
-            if query_params.tag_ids:
-                query = query.join(Store.store_tags).filter(
-                    StoreTag.tag_id.in_(query_params.tag_ids)
-                )
-
-            if query_params.tag_types:
-                query = query.join(Store.store_tags).join(StoreTag.tag).filter(
-                    Tag.tag_type.in_(query_params.tag_types)
-                )
+            # Handle new tag filtering
+            tag_params = {}
+            if query_params.tags:
+                tag_filter_result = self.tag_service.parse_tag_filters(query_params.tags)
+                if tag_filter_result['needs_joins'] and tag_filter_result['conditions']:
+                    # Join with store_tags and tags tables
+                    query = query.join(Store.store_tags).join(StoreTag.tag)
+                    # Add tag filter conditions
+                    tag_conditions_str = " OR ".join(tag_filter_result['conditions'])
+                    query = query.filter(text(f"({tag_conditions_str})"))
+                    tag_params.update(tag_filter_result['params'])
 
             # Execute query
-            result = await session.execute(query)
+            result = await session.execute(query, tag_params)
             store_models = result.scalars().unique().all()
 
             # Calculate exact distances and filter by radius

@@ -50,8 +50,7 @@ async def get_all_products(
         False, description="Include tag information"
     ),
     category_ids: Optional[List[int]] = Query(None, description="Filter by category IDs"),
-    tag_types: Optional[List[str]] = Query(None, description="Filter by tag types"),
-    tag_ids: Optional[List[int]] = Query(None, description="Filter by tag IDs"),
+    tags: Optional[List[str]] = Query(None, description="Filter by tags (flexible syntax: 'organic', 'id:5', 'type:dietary', 'value:gluten-free')"),
     min_price: Optional[float] = Query(None, description="Filter by minimum price"),
     max_price: Optional[float] = Query(None, description="Filter by maximum price"),
     only_discounted: Optional[bool] = Query(
@@ -73,8 +72,7 @@ async def get_all_products(
         include_categories=include_categories,
         include_tags=include_tags,
         category_ids=category_ids,
-        tag_types=tag_types,
-        tag_ids=tag_ids,
+        tags=tags,
         min_price=min_price,
         max_price=max_price,
         only_discounted=only_discounted,
@@ -104,20 +102,23 @@ async def get_all_products(
 
 @products_router.get(
     "/tags/types",
-    summary="Get all available tag types",
+    summary="Get all available product tag types",
     response_model=List[str],
 )
 async def get_tag_types():
-    """Get all unique tag types"""
+    """Get all unique tag types for products only"""
     async with AsyncSessionLocal() as session:
         from sqlalchemy.future import select
         from sqlalchemy import distinct
         from src.database.models.product import Tag
-        
-        query = select(distinct(Tag.tag_type)).filter(Tag.is_active == True).order_by(Tag.tag_type)
+
+        query = select(distinct(Tag.tag_type)).filter(
+            Tag.is_active == True,
+            Tag.tag_type.like('product_%')
+        ).order_by(Tag.tag_type)
         result = await session.execute(query)
         tag_types = result.scalars().all()
-    
+
     return success_response(list(tag_types))
 
 
@@ -361,31 +362,44 @@ async def delete_product(id: int):
 @products_router.get(
     "/{product_id}/tags",
     summary="Get all tags assigned to a product",
-    response_model=Dict[str, List[ProductTagSchema]],
+    response_model=List[ProductTagSchema],
 )
 async def get_product_tags_by_id(product_id: int):
-    """Get all tags assigned to a product, grouped by tag type"""
+    """Get all tags assigned to a product"""
     product = await product_service.get_product_by_id(
         product_id, include_categories=False, include_tags=True
     )
-    
+
     if not product:
         raise ResourceNotFoundException(detail=f"Product with ID {product_id} not found")
-    
-    return success_response(product.model_dump(mode="json").get("product_tags",[]))
+
+    product_tags = product.model_dump(mode="json").get("product_tags", [])
+    if not product_tags:
+        return success_response([])
+
+    return success_response(
+        [ProductTagSchema.model_validate(tag).model_dump(mode="json") for tag in product_tags]
+    )
 
 @products_router.post(
     "/{product_id}/tags/{tag_id}",
     summary="Assign a tag to a product",
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def assign_tag_to_product(product_id: int, tag_id: int):
-    """Assign a tag to a product"""
+async def assign_tag_to_product(
+    product_id: int,
+    tag_id: int,
+    value: Optional[str] = Query(None, description="Optional tag value")
+):
+    """Assign a tag to a product with optional value"""
     await product_service.assign_tag_to_product(
         product_id=product_id,
-        tag_id=tag_id
+        tag_id=tag_id,
+        value=value
     )
-    return success_response({"message": "Tag assigned successfully"})
+    return success_response(
+        {"product_id": product_id, "tag_id": tag_id, "message": "Tag assigned successfully"}
+    )
 
 
 @products_router.delete(
@@ -396,4 +410,6 @@ async def assign_tag_to_product(product_id: int, tag_id: int):
 async def remove_tag_from_product(product_id: int, tag_id: int):
     """Remove a tag from a product"""
     await product_service.remove_tag_from_product(product_id, tag_id)
-    return success_response({"message": "Tag removed successfully"})
+    return success_response(
+        {"product_id": product_id, "tag_id": tag_id, "message": "Tag removed successfully"}
+    )

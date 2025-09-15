@@ -34,10 +34,11 @@ class ProductService:
         self._error_handler = ErrorHandler(__name__)
         self.tag_service = TagService(entity_type="product")
 
-    async def _build_product_query(self, query_params: ProductQuerySchema):
+    async def _build_product_query(self, query_params: ProductQuerySchema, session):
         """Build SQLAlchemy query with filters and relationships"""
+        # Start with base query
         query = select(Product)
-        
+
         # Include relationships based on query params
         if query_params.include_categories:
             query = query.options(selectinload(Product.categories))
@@ -45,43 +46,45 @@ class ProductService:
             query = query.options(
                 selectinload(Product.product_tags).selectinload(ProductTag.tag)
             )
-        
+
         # Apply filters
         conditions = []
-        
+        params = {}
+
         if query_params.category_ids:
             query = query.join(Product.categories).filter(
                 Category.id.in_(query_params.category_ids)
             )
-        
-        if query_params.tag_ids:
-            query = query.join(Product.product_tags).filter(
-                ProductTag.tag_id.in_(query_params.tag_ids)
-            )
-            
-        if query_params.tag_types:
-            query = query.join(Product.product_tags).join(ProductTag.tag).filter(
-                Tag.tag_type.in_(query_params.tag_types)
-            )
-        
+
+        # Handle new tag filtering
+        if query_params.tags:
+            tag_filter_result = self.tag_service.parse_tag_filters(query_params.tags)
+            if tag_filter_result['needs_joins'] and tag_filter_result['conditions']:
+                # Join with product_tags and tags tables if not already joined
+                query = query.join(Product.product_tags).join(ProductTag.tag)
+                # Add tag filter conditions as raw SQL
+                tag_conditions_str = " OR ".join(tag_filter_result['conditions'])
+                conditions.append(text(f"({tag_conditions_str})"))
+                params.update(tag_filter_result['params'])
+
         if query_params.min_price is not None:
             conditions.append(Product.base_price >= query_params.min_price)
-        
+
         if query_params.max_price is not None:
             conditions.append(Product.base_price <= query_params.max_price)
-        
+
         if conditions:
             query = query.filter(and_(*conditions))
-        
+
         # Apply cursor pagination
         if query_params.cursor is not None:
             query = query.filter(Product.id > query_params.cursor)
-            
+
         # Order and limit
         limit = query_params.limit if query_params.limit is not None else 20
         query = query.order_by(Product.id).limit(limit + 1)  # +1 to check if more exist
-        
-        return query
+
+        return query, params
 
     async def get_all_products(
         self,
@@ -100,8 +103,8 @@ class ProductService:
             query_params_copy.include_categories = load_categories
             query_params_copy.include_tags = load_tags
 
-            query = await self._build_product_query(query_params_copy)
-            result = await session.execute(query)
+            query, query_params_dict = await self._build_product_query(query_params_copy, session)
+            result = await session.execute(query, query_params_dict)
             products = result.scalars().unique().all()
 
             # Check if there are more results
@@ -556,13 +559,15 @@ class ProductService:
                 conditions.append("pc.category_id = ANY(:category_ids)")
             
             # Apply tag filters
-            if query_params.tag_ids:
-                joins.append("JOIN product_tags pt ON p.id = pt.product_id")
-                conditions.append("pt.tag_id = ANY(:tag_ids)")
-            elif query_params.tag_types:
-                joins.append("JOIN product_tags pt ON p.id = pt.product_id")
-                joins.append("JOIN tags t ON pt.tag_id = t.id")
-                conditions.append("t.tag_type = ANY(:tag_types)")
+            tag_params = {}
+            if query_params.tags:
+                tag_filter_result = self.tag_service.parse_tag_filters(query_params.tags)
+                if tag_filter_result['needs_joins'] and tag_filter_result['conditions']:
+                    joins.append("JOIN product_tags pt ON p.id = pt.product_id")
+                    joins.append("JOIN tags t ON pt.tag_id = t.id")
+                    tag_conditions_str = " OR ".join(tag_filter_result['conditions'])
+                    conditions.append(f"({tag_conditions_str})")
+                    tag_params.update(tag_filter_result['params'])
             
             # Apply cursor pagination
             if query_params.cursor is not None:
@@ -591,17 +596,18 @@ class ProductService:
             """
             
             # Execute the product query
+            query_execution_params = {
+                "min_price": query_params.min_price,
+                "max_price": query_params.max_price,
+                "category_ids": query_params.category_ids,
+                "cursor": query_params.cursor,
+                "limit": query_limit
+            }
+            query_execution_params.update(tag_params)
+
             product_result = await session.execute(
                 text(product_query),
-                {
-                    "min_price": query_params.min_price,
-                    "max_price": query_params.max_price,
-                    "category_ids": query_params.category_ids,
-                    "tag_ids": query_params.tag_ids,
-                    "tag_types": query_params.tag_types,
-                    "cursor": query_params.cursor,
-                    "limit": query_limit
-                }
+                query_execution_params
             )
             products_data = product_result.fetchall()
             
@@ -653,7 +659,7 @@ class ProductService:
             product_tags_dict = {}
             if query_params.include_tags and product_ids:
                 tag_query = """
-                    SELECT pt.product_id, t.id, t.tag_type, t.name, t.slug, t.description
+                    SELECT pt.product_id, t.id, t.tag_type, t.name, t.slug, t.description, pt.value
                     FROM product_tags pt
                     JOIN tags t ON pt.tag_id = t.id
                     WHERE pt.product_id = ANY(:product_ids)
@@ -673,7 +679,8 @@ class ProductService:
                         "tag_type": row.tag_type,
                         "name": row.name,
                         "slug": row.slug,
-                        "description": row.description
+                        "description": row.description,
+                        "value": row.value
                     })
             
             # If pricing is requested and we have a customer tier, get pricing info
@@ -821,13 +828,17 @@ class ProductService:
                     "created_at": product_row.created_at,
                     "updated_at": product_row.updated_at,
                     "categories": product_categories_dict.get(product_row.id, []),
-                    "product_tags": [ProductTagSchema(
-                        id=tag["id"],
-                        tag_type=tag["tag_type"],
-                        name=tag["name"],
-                        slug=tag["slug"],
-                        description=tag["description"]
-                    ) for tag in product_tags_dict.get(product_row.id, [])] if query_params.include_tags else [],
+                    "product_tags": [
+                        {
+                            "id": tag["id"],
+                            "tag_type": tag["tag_type"],
+                            "name": tag["name"],
+                            "slug": tag["slug"],
+                            "description": tag["description"],
+                            "value": tag.get("value")
+                        }
+                        for tag in product_tags_dict.get(product_row.id, [])
+                    ] if query_params.include_tags else [],
                     "pricing": None,
                     "inventory": None
                 }
@@ -902,9 +913,9 @@ class ProductService:
             query_params_copy = query_params.model_copy()
             query_params_copy.include_categories = load_categories
             query_params_copy.include_tags = load_tags
-            
-            query = await self._build_product_query(query_params_copy)
-            result = await session.execute(query)
+
+            query, query_params_dict = await self._build_product_query(query_params_copy, session)
+            result = await session.execute(query, query_params_dict)
             products = result.scalars().unique().all()
             
             # Check if there are more results

@@ -109,8 +109,7 @@ class StoreQuerySchema(BaseModel):
         20, ge=1, le=100, description="Maximum number of stores to return"
     )
     is_active: Optional[bool] = Field(True, description="Filter by store status")
-    tag_types: Optional[List[str]] = Field(None, description="Filter by tag types")
-    tag_ids: Optional[List[int]] = Field(None, description="Filter by specific tags")
+    tags: Optional[List[str]] = Field(None, description="Filter by tags with flexible syntax")
     include_distance: Optional[bool] = Field(
         True, description="Include distance calculations"
     )

@@ -97,6 +97,7 @@ python -m scripts/db/pricing_optimization
 python -m scripts.db.db_init --drop
 uvicorn main:app --reload
 venv\Scripts\activate
+python scripts/promote_user.py WPsYFrmF0PT9tmghpwiQSiTMs4n1
 
 ## things to do
 

@@ -130,8 +130,7 @@ class ProductQuerySchema(BaseModel):
         default=False, description="Whether to include tag information"
     )
     category_ids: Optional[List[int]] = None
-    tag_types: Optional[List[str]] = None      # Filter by tag types
-    tag_ids: Optional[List[int]] = None        # Filter by specific tags
+    tags: Optional[List[str]] = None           # Filter by tags with flexible syntax
     min_price: Optional[float] = None
     max_price: Optional[float] = None
     only_discounted: Optional[bool] = Field(

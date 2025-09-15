@@ -1,10 +1,11 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Union
 from sqlalchemy.future import select
 from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_, text
 from src.database.connection import AsyncSessionLocal
 from src.database.models.product import Tag  # Import the existing Tag model
 from src.api.tags.models import CreateTagSchema, UpdateTagSchema
-from src.shared.exceptions import ResourceNotFoundException, ConflictException
+from src.shared.exceptions import ResourceNotFoundException, ConflictException, ValidationException
 from sqlalchemy.exc import IntegrityError
 import re
 
@@ -290,3 +291,142 @@ class TagService:
             except IntegrityError as e:
                 await session.rollback()
                 raise
+
+    # Tag filtering functionality
+    def parse_tag_filters(self, tags_params: Optional[List[str]]) -> Dict[str, Any]:
+        """
+        Parse tag filter parameters with flexible syntax:
+        - 'organic' -> name:organic (default to name search)
+        - 'id:5' -> filter by tag ID
+        - 'name:organic' -> filter by tag name
+        - 'slug:product-analytic-car' -> filter by tag slug
+        - 'type:dietary' -> filter by tag type (maps to product_dietary/store_dietary)
+        - 'value:gluten-free' -> filter by tag association value
+
+        Logic: AND within each tags parameter, OR between multiple tags parameters
+        """
+        if not tags_params:
+            return {'conditions': [], 'params': {}, 'needs_joins': False}
+
+        # No hardcoded mappings - build dynamically
+
+        or_conditions = []  # Each element is an AND group
+        params = {}
+        param_counter = 0
+
+        for tags_param in tags_params:
+            if not tags_param or not tags_param.strip():
+                continue
+
+            # Split by comma for AND logic within parameter
+            filter_strings = [f.strip() for f in tags_param.split(',') if f.strip()]
+            if not filter_strings:
+                continue
+
+            and_conditions = []  # Conditions for this AND group
+
+            for filter_str in filter_strings:
+                condition, filter_params = self._parse_single_tag_filter(
+                    filter_str, param_counter
+                )
+                and_conditions.append(condition)
+                params.update(filter_params)
+                param_counter += len(filter_params)
+
+            if and_conditions:
+                # Join with AND
+                and_clause = " AND ".join(and_conditions)
+                or_conditions.append(f"({and_clause})")
+
+        return {
+            'conditions': or_conditions,  # Will be joined with OR
+            'params': params,
+            'needs_joins': True
+        }
+
+    def _parse_single_tag_filter(self, filter_str: str, param_offset: int) -> tuple[str, Dict[str, Any]]:
+        """Parse a single filter string and return SQL condition"""
+        table_prefix = "pt" if self.entity_type == "product" else "st"
+        tag_alias = "t"
+
+        # Check if it contains ':'
+        if ':' not in filter_str:
+            # Default to name search
+            param_name = f"tag_name_{param_offset}"
+            condition = f"{tag_alias}.name = :{param_name}"
+            params = {param_name: filter_str}
+            return condition, params
+
+        # Parse key:value format
+        try:
+            filter_key, filter_value = filter_str.split(':', 1)
+            filter_key = filter_key.strip().lower()
+            filter_value = filter_value.strip()
+
+            if not filter_value:
+                raise ValidationException(f"Filter value cannot be empty: {filter_str}")
+
+        except ValueError:
+            raise ValidationException(f"Invalid filter format: {filter_str}")
+
+        # Build condition based on filter type
+        if filter_key == 'id':
+            try:
+                tag_id = int(filter_value)
+                param_name = f"tag_id_{param_offset}"
+                condition = f"{tag_alias}.id = :{param_name}"
+                params = {param_name: tag_id}
+
+            except ValueError:
+                raise ValidationException(f"Tag ID must be numeric: {filter_value}")
+
+        elif filter_key == 'name':
+            param_name = f"tag_name_{param_offset}"
+            condition = f"{tag_alias}.name = :{param_name}"
+            params = {param_name: filter_value}
+
+        elif filter_key == 'slug':
+            param_name = f"tag_slug_{param_offset}"
+            condition = f"{tag_alias}.slug = :{param_name}"
+            params = {param_name: filter_value}
+
+        elif filter_key == 'type':
+            # Build full type name dynamically (e.g., dietary -> product_dietary)
+            mapped_type = f"{self.entity_type}_{filter_value.lower()}"
+            param_name = f"tag_type_{param_offset}"
+            condition = f"{tag_alias}.tag_type = :{param_name}"
+            params = {param_name: mapped_type}
+
+        elif filter_key == 'value':
+            param_name = f"tag_value_{param_offset}"
+            condition = f"{table_prefix}.value = :{param_name}"
+            params = {param_name: filter_value}
+
+        else:
+            valid_keys = ['id', 'name', 'slug', 'type', 'value']
+            raise ValidationException(
+                f"Invalid filter key: {filter_key}. Valid keys: {valid_keys}"
+            )
+
+        return condition, params
+
+    def build_tag_filter_query_conditions(self, base_conditions: List[str], tag_filter_result: Dict[str, Any]) -> tuple[List[str], Dict[str, Any]]:
+        """
+        Integrate tag filter conditions into existing query conditions
+
+        Args:
+            base_conditions: Existing WHERE conditions
+            tag_filter_result: Result from parse_tag_filters()
+
+        Returns:
+            Tuple of (updated_conditions, all_params)
+        """
+        if not tag_filter_result['conditions']:
+            return base_conditions, tag_filter_result['params']
+
+        # If we have tag filters, add them as OR conditions
+        tag_conditions_str = " OR ".join(tag_filter_result['conditions'])
+        tag_filter_condition = f"({tag_conditions_str})"
+
+        updated_conditions = base_conditions + [tag_filter_condition]
+        return updated_conditions, tag_filter_result['params']
