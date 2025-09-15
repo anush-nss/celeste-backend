@@ -14,7 +14,7 @@ class Cart(Base):
     )
 
     user_id: Mapped[str] = mapped_column(String(128), ForeignKey("users.firebase_uid", ondelete="CASCADE"), primary_key=True)
-    product_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    product_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), onupdate=text('NOW()'), nullable=False)

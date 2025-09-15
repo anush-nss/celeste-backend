@@ -1,6 +1,6 @@
-from typing import Optional, List
+from typing import Optional, List, cast
 from sqlalchemy.future import select
-from sqlalchemy import update
+from sqlalchemy import CursorResult, update
 from sqlalchemy.orm import selectinload
 from src.database.connection import AsyncSessionLocal
 from src.database.models.user import User
@@ -39,26 +39,13 @@ def _user_to_dict(user: User, include_addresses: bool = False, include_cart: boo
     if include_addresses:
         try:
             if hasattr(user, '__dict__') and 'addresses' in user.__dict__ and user.addresses is not None:
-                user_dict["addresses"] = [_address_to_dict(addr) for addr in user.addresses]
+                user_dict["addresses"] = [AddressSchema.model_validate(addr) for addr in user.addresses]
             else:
                 user_dict["addresses"] = []
         except Exception:
             user_dict["addresses"] = []
     
     return user_dict
-
-
-def _address_to_dict(address: Address) -> dict:
-    """Convert SQLAlchemy Address to dictionary"""
-    return {
-        "id": address.id,
-        "address": address.address,
-        "latitude": address.latitude,
-        "longitude": address.longitude,
-        "is_default": address.is_default,
-        "created_at": getattr(address, 'created_at', None),
-        "updated_at": getattr(address, 'updated_at', None)
-    }
 
 
 def _cart_to_dict(cart: Cart) -> dict:
@@ -167,97 +154,93 @@ class UserService:
             return None
 
     @handle_service_errors("adding to cart")
-    async def add_to_cart(self, user_id: str, product_id: str, quantity: int) -> dict:
-        if not user_id or not user_id.strip():
-            raise ValidationException(detail="Valid user ID is required")
-
-        if not product_id or not product_id.strip():
+    async def add_to_cart(self, user_id: str, item: AddToCartSchema) -> CartItemSchema | None:
+        if not item.product_id:
             raise ValidationException(detail="Valid product ID is required")
 
-        if quantity <= 0 or quantity > 1000:
+        if item.quantity <= 0 or item.quantity > 1000:
             raise ValidationException(detail="Quantity must be between 1 and 1000")
 
         async with AsyncSessionLocal() as session:
-            # Verify user exists
-            user_exists = await session.execute(
-                select(User).filter(User.firebase_uid == user_id.strip())
-            )
-            if not user_exists.scalars().first():
-                raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
-
-            # Use database-level atomic operation to update or insert
-            from sqlalchemy import text
-            # Try to update existing cart item
-            update_result = await session.execute(
-                text("""
-                    UPDATE cart 
-                    SET quantity = LEAST(quantity + :quantity, 1000)
-                    WHERE user_id = :user_id AND product_id = :product_id
-                """),
-                {
-                    "user_id": user_id.strip(),
-                    "product_id": product_id.strip(),
-                    "quantity": quantity
-                }
-            )
-            
-            # If no rows were updated, insert a new cart item
-            if update_result.rowcount == 0:
-                # Check if we would exceed the quantity limit
-                cart_item_query = await session.execute(
-                    select(Cart).filter_by(user_id=user_id.strip(), product_id=product_id.strip())
+            try:
+                # Verify user exists
+                user_exists = await session.execute(
+                    select(User).filter(User.firebase_uid == user_id.strip())
                 )
-                existing_item = cart_item_query.scalars().first()
+                if not user_exists.scalars().first():
+                    raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
+
+                # Use database-level atomic operation to update or insert
+                from sqlalchemy import text
+                # Try to update existing cart item
+                update_result = cast(
+                    CursorResult, 
+                    await session.execute(
+                        text("""
+                            UPDATE carts 
+                            SET quantity = LEAST(quantity + :quantity, 1000)
+                            WHERE user_id = :user_id AND product_id = :product_id
+                        """),
+                        {"user_id": user_id.strip(), "product_id": item.product_id, "quantity": item.quantity}
+                    )
+                )
                 
-                if existing_item:
-                    # Race condition - item was created between our check and update
-                    new_quantity = min(existing_item.quantity + quantity, 1000)
-                    existing_item.quantity = new_quantity
-                    await session.commit()
-                    await session.refresh(existing_item)
-                    item_to_return = existing_item
-                else:
+                await session.commit()
+                
+                # If no rows were updated, insert a new cart item
+                if update_result.rowcount == 0:
                     # Insert new cart item
                     item_to_return = Cart(
                         user_id=user_id.strip(),
-                        product_id=product_id.strip(),
-                        quantity=quantity
+                        product_id=item.product_id,
+                        quantity=item.quantity
                     )
                     session.add(item_to_return)
                     await session.commit()
                     await session.refresh(item_to_return)
-            else:
-                # Refresh the updated item
-                cart_item_query = await session.execute(
-                    select(Cart).filter_by(user_id=user_id.strip(), product_id=product_id.strip())
-                )
-                item_to_return = cart_item_query.scalars().first()
-                await session.refresh(item_to_return)
+                else:
+                    # Fetch the updated item
+                    cart_item_query = await session.execute(
+                        select(Cart).filter_by(user_id=user_id.strip(), product_id=item.product_id)
+                    )
+                    item_to_return = cart_item_query.scalars().first()
+                    if item_to_return:
+                        await session.refresh(item_to_return)
+                    else:
+                        # This shouldn't happen, but let's handle it gracefully
+                        raise ResourceNotFoundException(detail=f"Cart item not found after update")
 
-            return {
-                "user_id": item_to_return.user_id,
-                "product_id": item_to_return.product_id,
-                "quantity": item_to_return.quantity
-            }
+                return CartItemSchema.model_validate(item_to_return)
+            except Exception as e:
+                # Log the specific error for debugging
+                self._error_handler.logger.error(f"Error in add_to_cart: {str(e)}", extra={
+                    "user_id": user_id,
+                    "product_id": item.product_id,
+                    "quantity": item.quantity
+                })
+                raise
 
-    async def update_cart_item(self, user_id: str, product_id: str, quantity: int) -> dict:
+    async def update_cart_item(self, user_id: str, product_id: int, item: UpdateCartItemSchema) -> CartItemSchema | None:
+        quantity = item.quantity
         if quantity <= 0 or quantity > 1000:
             raise ValidationException(detail="Quantity must be between 1 and 1000")
             
         async with AsyncSessionLocal() as session:
             # Use database-level atomic operation to update
             from sqlalchemy import text
-            result = await session.execute(
+            result = cast(
+                    CursorResult,  await session.execute(
                 text("""
-                    UPDATE cart 
+                    UPDATE carts 
                     SET quantity = :quantity
                     WHERE user_id = :user_id AND product_id = :product_id
                 """),
-                {
-                    "user_id": user_id,
-                    "product_id": product_id,
-                    "quantity": quantity
-                }
+                    {
+                        "user_id": user_id,
+                        "product_id": product_id,
+                        "quantity": quantity
+                    }
+                )
             )
             
             await session.commit()
@@ -271,23 +254,26 @@ class UserService:
             )
             existing_item = cart_item.scalars().first()
             
-            return {"user_id": existing_item.user_id, "product_id": existing_item.product_id, "quantity": existing_item.quantity}
+            # Convert SQLAlchemy model to Pydantic schema
+            return CartItemSchema.model_validate(existing_item)
 
-    async def remove_from_cart(self, user_id: str, product_id: str, quantity: Optional[int] = None) -> dict:
+    async def remove_from_cart(self, user_id: str, product_id: int, quantity: Optional[int] = None) -> dict:
         async with AsyncSessionLocal() as session:
             from sqlalchemy import text
             
             if quantity is None:
                 # Remove completely
-                result = await session.execute(
+                result = cast(
+                    CursorResult, await session.execute(
                     text("""
-                        DELETE FROM cart 
+                        DELETE FROM carts 
                         WHERE user_id = :user_id AND product_id = :product_id
                     """),
-                    {
-                        "user_id": user_id,
-                        "product_id": product_id
-                    }
+                        {
+                            "user_id": user_id,
+                            "product_id": product_id
+                        }
+                    )
                 )
                 
                 await session.commit()
@@ -333,7 +319,7 @@ class UserService:
                     new_quantity = current_quantity - quantity
                     await session.execute(
                         text("""
-                            UPDATE cart 
+                            UPDATE carts 
                             SET quantity = :quantity
                             WHERE user_id = :user_id AND product_id = :product_id
                         """),
@@ -398,8 +384,7 @@ class UserService:
             address = result.scalars().first()
             if address:
                 # Convert SQLAlchemy model to dict, then to Pydantic schema
-                address_dict = _address_to_dict(address)
-                return AddressSchema.model_validate(address_dict)
+                return AddressSchema.model_validate(address)
             return None
 
     async def update_address(self, user_id: str, address_id: int, address_data: UpdateAddressSchema) -> AddressSchema | None:
@@ -413,13 +398,11 @@ class UserService:
             if not address:
                 raise ResourceNotFoundException(detail=f"Address with ID {address_id} not found for user {user_id}")
 
-            # Handle is_default logic atomically
             update_data = address_data.model_dump(exclude_unset=True)
-            if update_data.get("is_default") is True and not address.is_default:
-                # If this address is being set to default, unset others atomically
-                await session.execute(
-                    update(Address).where(Address.user_id == user_id).where(Address.id != address_id).values(is_default=False)
-                )
+            
+            # if no data to update, return early
+            if len(update_data) == 0:
+                raise ValidationException(detail="No data provided for update")
 
             # Update the specific address with all provided fields
             for field, value in update_data.items():
@@ -428,8 +411,7 @@ class UserService:
             await session.commit()
             await session.refresh(address)
             # Convert SQLAlchemy model to dict, then to Pydantic schema
-            address_dict = _address_to_dict(address)
-            return AddressSchema.model_validate(address_dict)
+            return AddressSchema.model_validate(address)
 
     async def delete_address(self, user_id: str, address_id: int) -> bool:
         async with AsyncSessionLocal() as session:
@@ -472,5 +454,4 @@ class UserService:
             # Refresh the specific address we're returning
             await session.refresh(address)
             # Convert SQLAlchemy model to dict, then to Pydantic schema
-            address_dict = _address_to_dict(address)
-            return AddressSchema.model_validate(address_dict)
+            return AddressSchema.model_validate(address)

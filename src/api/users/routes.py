@@ -4,7 +4,6 @@ from datetime import datetime
 
 from src.api.users.models import (
     UserSchema,
-    CreateUserSchema,
     UpdateUserSchema,
     AddToCartSchema,
     UpdateCartItemSchema,
@@ -16,28 +15,14 @@ from src.api.auth.models import DecodedToken
 from src.api.users.service import UserService
 from src.dependencies.auth import get_current_user, RoleChecker
 from src.config.constants import UserRole
-from src.shared.exceptions import ResourceNotFoundException, ForbiddenException
+from src.shared.exceptions import ResourceNotFoundException, ForbiddenException, UnauthorizedException, ValidationException
 from src.shared.responses import success_response
 
 users_router = APIRouter(prefix="/users", tags=["Users"])
 user_service = UserService()
 
 
-@users_router.post(
-    "/",
-    summary="Create a new user",
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
-)
-async def create_user(user_data: CreateUserSchema):
-    # This endpoint is public for initial user creation, but Firebase auth register is preferred.
-    # For simplicity, we'll generate a dummy UID here if not coming from Firebase auth.
-    # In a real app, this might be protected or integrated with Firebase auth more deeply.
-    import uuid
 
-    dummy_uid = str(uuid.uuid4())
-    new_user = await user_service.create_user(user_data, dummy_uid)
-    return success_response(new_user.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
 
 
 @users_router.get("/me", summary="Get current user profile")
@@ -48,7 +33,7 @@ async def get_user_profile(
 ):
     user_id = current_user.uid
     if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
+        raise UnauthorizedException(detail="User ID not found in token")
 
     user = await user_service.get_user_by_id(user_id, include_cart=include_cart, include_addresses=include_addresses)
 
@@ -63,15 +48,12 @@ async def update_user_profile(
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
     user_id = current_user.uid
-    print(current_user)
     if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
-
-    # Prevent phone number from being updated
-    if user_data.phone is not None:
-        del user_data.phone
+        raise UnauthorizedException(detail="User ID not found in token")
 
     updated_data = user_data.model_dump(exclude_unset=True)
+    if len(updated_data) == 0:
+        raise ValidationException(detail="No data provided for update")
     updated_user = await user_service.update_user(user_id, updated_data)
     if not updated_user:
         raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
@@ -86,43 +68,43 @@ async def add_to_cart(
 ):
     user_id = current_user.uid
     if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
+        raise UnauthorizedException(detail="User ID not found in token")
 
-    cart_item = await user_service.add_to_cart(user_id, item.product_id, item.quantity)
+    cart_item = await user_service.add_to_cart(user_id, item)
     if not cart_item:
         raise HTTPException(status_code=500, detail="Failed to add item to cart")
 
-    return success_response(cart_item)
+    return success_response(cart_item.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
 
 
 @users_router.put("/me/cart/{product_id}", summary="Update an item in the user's cart")
 async def update_cart_item(
-    product_id: str,
+    product_id: int,
     item: UpdateCartItemSchema,
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
     user_id = current_user.uid
     if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
+        raise UnauthorizedException(detail="User ID not found in token")
 
-    cart_item = await user_service.update_cart_item(user_id, product_id, item.quantity)
+    cart_item = await user_service.update_cart_item(user_id, product_id, item)
     if not cart_item:
         raise HTTPException(status_code=500, detail="Failed to update cart item")
 
-    return success_response(cart_item)
+    return success_response(cart_item.model_dump(mode="json"))
 
 
 @users_router.delete(
     "/me/cart/{product_id}", summary="Remove an item from the user's cart"
 )
 async def remove_from_cart(
-    product_id: str,
+    product_id: int,
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
     quantity: Optional[int] = Query(None, ge=1, description="Quantity to remove (if not specified, removes product completely)")
 ):
     user_id = current_user.uid
     if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
+        raise UnauthorizedException(detail="User ID not found in token")
 
     result = await user_service.remove_from_cart(user_id, product_id, quantity)
 
@@ -137,7 +119,7 @@ async def remove_from_cart(
 async def get_cart(current_user: Annotated[DecodedToken, Depends(get_current_user)]):
     user_id = current_user.uid
     if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
+        raise UnauthorizedException(detail="User ID not found in token")
 
     cart = await user_service.get_cart(user_id)
     return success_response(cart)
@@ -151,7 +133,7 @@ async def add_address(
 ):
     user_id = current_user.uid
     if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
+        raise UnauthorizedException(detail="User ID not found in token")
 
     new_address = await user_service.add_address(user_id, address_data)
     if not new_address:
@@ -166,7 +148,7 @@ async def get_addresses(
 ):
     user_id = current_user.uid
     if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
+        raise UnauthorizedException(detail="User ID not found in token")
 
     addresses = await user_service.get_addresses(user_id)
     return success_response([addr.model_dump(mode="json") for addr in addresses])
@@ -179,7 +161,7 @@ async def get_address_by_id(
 ):
     user_id = current_user.uid
     if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
+        raise UnauthorizedException(detail="User ID not found in token")
 
     address = await user_service.get_address_by_id(user_id, address_id)
     if not address:
@@ -196,7 +178,7 @@ async def update_address(
 ):
     user_id = current_user.uid
     if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
+        raise UnauthorizedException(detail="User ID not found in token")
 
     updated_address = await user_service.update_address(user_id, address_id, address_data)
     if not updated_address:
@@ -212,7 +194,7 @@ async def delete_address(
 ):
     user_id = current_user.uid
     if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
+        raise UnauthorizedException(detail="User ID not found in token")
 
     success = await user_service.delete_address(user_id, address_id)
     if not success:
@@ -228,7 +210,7 @@ async def set_default_address(
 ):
     user_id = current_user.uid
     if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
+        raise UnauthorizedException(detail="User ID not found in token")
 
     default_address = await user_service.set_default_address(user_id, address_id)
     if not default_address:

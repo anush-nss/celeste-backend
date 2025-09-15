@@ -51,10 +51,6 @@ class UpdateAddressSchema(BaseModel):
         description="Longitude coordinate",
         examples=[-118.2437]
     )]] = None
-    is_default: Optional[bool] = Field(
-        None,
-        description="Whether this should be the default address"
-    )
 
 
 class CartItemSchema(BaseModel):
@@ -63,10 +59,10 @@ class CartItemSchema(BaseModel):
         description="User Firebase UID",
         examples=["abc123def456"]
     )]
-    product_id: Annotated[str, Field(
-        min_length=1,
+    product_id: Annotated[int, Field(
+        gt=0,
         description="Product ID",
-        examples=["1"]
+        examples=[1]
     )]
     quantity: Annotated[int, Field(
         gt=0,
@@ -143,39 +139,17 @@ class UpdateUserSchema(BaseModel):
         description="Full name of the user",
         examples=["Jane Smith"]
     )]] = None
-    email: Optional[EmailStr] = Field(
-        default=None,
-        description="Email address",
-        examples=["jane.smith@example.com"]
-    )
-    phone: Optional[Annotated[str, Field(
-        min_length=10,
-        max_length=20,
-        description="Phone number with country code",
-        pattern=r'^\+\d{10,19}$',
-        examples=["+1987654321"]
-    )]] = None
     is_delivery: Optional[bool] = Field(
         default=None,
         description="Whether user is a delivery person"
     )
-    role: Optional[UserRole] = Field(
-        default=None,
-        description="Role of the user"
-    )
-    tier_id: Optional[int] = Field(
-        default=None,
-        ge=1,
-        description="Customer tier ID",
-        examples=[2]
-    )
 
 
 class AddToCartSchema(BaseModel):
-    product_id: Annotated[str, Field(
-        min_length=1,
+    product_id: Annotated[int, Field(
+        gt=0,
         description="Product ID to add to cart",
-        examples=["1"]
+        examples=[1]
     )]
     quantity: Annotated[int, Field(
         gt=0,
