@@ -13,6 +13,7 @@ from src.api.products.models import (
     ProductTagSchema,
     PricingInfoSchema,
 )
+from src.api.tags.models import TagSchema, CreateTagSchema, UpdateTagSchema
 from src.api.auth.models import DecodedToken
 from src.api.products.service import ProductService
 from src.api.pricing.service import PricingService
@@ -95,85 +96,10 @@ async def get_all_products(
     return success_response(result.model_dump(mode="json"))
 
 
-# ===== TAG MANAGEMENT ROUTES (must come before /{id} route) =====
-
-class CreateTagSchema(BaseModel):
-    tag_type: str = Field(..., min_length=1, max_length=50, description="Type of tag (dietary, allergen, analytics, etc.)")
-    name: str = Field(..., min_length=1, max_length=100, description="Display name of the tag")
-    slug: str = Field(..., min_length=1, max_length=100, description="URL-friendly identifier")
-    description: Optional[str] = Field(None, max_length=500, description="Optional description")
-
-
-class UpdateTagSchema(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
-    description: Optional[str] = Field(None, max_length=500)
-    is_active: Optional[bool] = None
+# ===== PRODUCT TAG CRUD ROUTES =====
 
 
 
-
-
-class TagResponseSchema(BaseModel):
-    id: int
-    tag_type: str
-    name: str
-    slug: str
-    description: Optional[str] = None
-    is_active: bool
-    created_at: datetime
-    
-    model_config = ConfigDict(from_attributes=True)
-
-
-@products_router.post(
-    "/tags",
-    summary="Create a new tag",
-    response_model=TagResponseSchema,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
-)
-async def create_tag(tag_data: CreateTagSchema):
-    """Create a new tag for products"""
-    new_tag = await product_service.create_tag(
-        tag_type=tag_data.tag_type,
-        name=tag_data.name,
-        slug=tag_data.slug,
-        description=tag_data.description
-    )
-    return success_response(
-        TagResponseSchema.model_validate(new_tag).model_dump(mode="json"), 
-        status_code=status.HTTP_201_CREATED
-    )
-
-
-@products_router.get(
-    "/tags",
-    summary="Get all tags, optionally filtered by type",
-    response_model=List[TagResponseSchema],
-)
-async def get_tags(
-    tag_type: Optional[str] = Query(None, description="Filter by tag type"),
-    is_active: Optional[bool] = Query(True, description="Filter by active status")
-):
-    """Get all tags, optionally filtered by type"""
-    if tag_type:
-        tags = await product_service.get_tags_by_type(tag_type)
-    else:
-        # Get all active tags
-        async with AsyncSessionLocal() as session:
-            from sqlalchemy.future import select
-            from src.database.models.product import Tag
-            
-            query = select(Tag)
-            if is_active is not None:
-                query = query.filter(Tag.is_active == is_active)
-            query = query.order_by(Tag.tag_type, Tag.name)
-            
-            result = await session.execute(query)
-            tags = result.scalars().all()
-    
-    tag_responses = [TagResponseSchema.model_validate(tag) for tag in tags]
-    return success_response([tag.model_dump(mode="json") for tag in tag_responses])
 
 
 @products_router.get(
@@ -198,7 +124,7 @@ async def get_tag_types():
 @products_router.get(
     "/tags/{tag_id}",
     summary="Get a tag by ID",
-    response_model=TagResponseSchema,
+    response_model=TagSchema,
 )
 async def get_tag_by_id(tag_id: int):
     """Get a specific tag by ID"""
@@ -212,13 +138,13 @@ async def get_tag_by_id(tag_id: int):
         if not tag:
             raise ResourceNotFoundException(detail=f"Tag with ID {tag_id} not found")
         
-        return success_response(TagResponseSchema.model_validate(tag).model_dump(mode="json"))
+        return success_response(TagSchema.model_validate(tag).model_dump(mode="json"))
 
 
 @products_router.put(
     "/tags/{tag_id}",
     summary="Update a tag",
-    response_model=TagResponseSchema,
+    response_model=TagSchema,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
 async def update_tag(tag_id: int, tag_data: UpdateTagSchema):
@@ -241,7 +167,7 @@ async def update_tag(tag_id: int, tag_data: UpdateTagSchema):
         await session.commit()
         await session.refresh(tag)
         
-        return success_response(TagResponseSchema.model_validate(tag).model_dump(mode="json"))
+        return success_response(TagSchema.model_validate(tag).model_dump(mode="json"))
 
 
 @products_router.delete(
@@ -266,6 +192,47 @@ async def delete_tag(tag_id: int):
         await session.commit()
         
         return success_response({"id": tag_id, "message": "Tag deactivated successfully"})
+
+
+# ===== PRODUCT TAG CRUD ROUTES (must come before /{id} route) =====
+
+@products_router.post(
+    "/tags",
+    summary="Create a new product tag",
+    response_model=TagSchema,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def create_product_tag(tag_data: CreateTagSchema):
+    """Create a new tag for products (Admin only)."""
+    # Use tag_type as suffix, defaulting to "general" if not provided
+    tag_type_suffix = tag_data.tag_type or "general"
+    new_tag = await product_service.create_product_tag(
+        name=tag_data.name,
+        tag_type_suffix=tag_type_suffix,
+        slug=tag_data.slug,
+        description=tag_data.description
+    )
+    return success_response(
+        TagSchema.model_validate(new_tag).model_dump(mode="json"),
+        status_code=status.HTTP_201_CREATED
+    )
+
+
+@products_router.get(
+    "/tags",
+    summary="Get all product tags",
+    response_model=List[TagSchema],
+)
+async def get_product_tags(
+    is_active: Optional[bool] = Query(True, description="Filter by active status"),
+    tag_type_suffix: Optional[str] = Query(None, description="Filter by tag type suffix (e.g., 'color', 'size')"),
+):
+    """Get all product tags."""
+    tags = await product_service.get_product_tags(is_active=is_active if is_active is not None else True, tag_type_suffix=tag_type_suffix)
+    return success_response(
+        [TagSchema.model_validate(tag).model_dump(mode="json") for tag in tags]
+    )
 
 
 # ===== PRODUCT ROUTES =====
@@ -371,6 +338,8 @@ async def delete_product(id: int):
     return success_response({"id": id, "message": "Product deleted successfully"})
 
 
+
+
 # ===== PRODUCT-TAG ASSIGNMENT ROUTES =====
 
 @products_router.get(
@@ -378,7 +347,7 @@ async def delete_product(id: int):
     summary="Get all tags assigned to a product",
     response_model=Dict[str, List[ProductTagSchema]],
 )
-async def get_product_tags(product_id: int):
+async def get_product_tags_by_id(product_id: int):
     """Get all tags assigned to a product, grouped by tag type"""
     product = await product_service.get_product_by_id(
         product_id, include_categories=False, include_tags=True

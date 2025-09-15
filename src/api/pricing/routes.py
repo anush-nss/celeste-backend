@@ -196,12 +196,9 @@ async def delete_price_list_line(line_id: int):
 )
 async def assign_price_list_to_tier(tier_id: int, price_list_id: int):
     """Assign a price list to a tier"""
-    success = await pricing_service.assign_price_list_to_tier(tier_id, price_list_id)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to assign price list to tier"
-        )
+    # The service now raises proper exceptions (ResourceNotFoundException, ConflictException)
+    # These will be handled by the global exception handler to return proper HTTP status codes
+    await pricing_service.assign_price_list_to_tier(tier_id, price_list_id)
     return success_response({
         "tier_id": tier_id,
         "price_list_id": price_list_id,

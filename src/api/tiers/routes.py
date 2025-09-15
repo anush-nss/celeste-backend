@@ -235,9 +235,9 @@ async def auto_update_user_tier(user_id: str):
 )
 async def manually_update_user_tier(user_id: str, new_tier_id: int):
     """Manually update a user's tier (Admin only)"""
-    success = await tier_service.update_user_tier(user_id, new_tier_id)
-    if not success:
-        raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
+    # The service now raises proper exceptions (ResourceNotFoundException)
+    # These will be handled by the global exception handler to return proper HTTP status codes
+    await tier_service.update_user_tier(user_id, new_tier_id)
     return success_response(
         {
             "user_id": user_id,

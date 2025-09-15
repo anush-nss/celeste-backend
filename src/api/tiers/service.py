@@ -270,15 +270,33 @@ class TierService:
     async def update_user_tier(self, user_id: str, new_tier_id: int) -> bool:
         """Update a user's tier"""
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(User).where(User.firebase_uid == user_id))
-            user = result.scalars().first()
-            
-            if not user:
-                return False
-            
-            user.tier_id = new_tier_id
-            await session.commit()
-            return True
+            try:
+                # Check if user exists
+                user_result = await session.execute(select(User).where(User.firebase_uid == user_id))
+                user = user_result.scalars().first()
+
+                if not user:
+                    raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
+
+                # Check if tier exists
+                tier_result = await session.execute(select(CustomerTier).where(CustomerTier.id == new_tier_id))
+                tier = tier_result.scalars().first()
+
+                if not tier:
+                    raise ResourceNotFoundException(detail=f"Tier with ID {new_tier_id} not found")
+
+                user.tier_id = new_tier_id
+                await session.commit()
+                return True
+
+            except IntegrityError as e:
+                await session.rollback()
+                # This shouldn't happen now that we check existence first, but just in case
+                error_detail = str(e.orig)
+                if "tier_id" in error_detail and "is not present" in error_detail:
+                    raise ResourceNotFoundException(detail=f"Tier with ID {new_tier_id} not found")
+                else:
+                    raise
 
     async def get_user_statistics(self, user_id: str) -> Dict:
         """Get user statistics for tier evaluation"""

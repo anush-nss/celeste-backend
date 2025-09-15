@@ -3,7 +3,8 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy import and_, or_, text
 from src.database.connection import AsyncSessionLocal
-from src.database.models.product import Product, Tag, ProductTag
+from src.database.models.product import Product, ProductTag, Tag
+from src.api.tags.service import TagService
 from src.database.models.category import Category
 from src.api.products.models import (
     ProductSchema,
@@ -30,6 +31,7 @@ class ProductService:
 
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
+        self.tag_service = TagService(entity_type="product")
 
     async def _build_product_query(self, query_params: ProductQuerySchema):
         """Build SQLAlchemy query with filters and relationships"""
@@ -962,82 +964,37 @@ class ProductService:
                 pagination=pagination
             )
 
-    # Tag management methods
-    async def create_tag(self, tag_type: str, name: str, slug: str, description: Optional[str] = None) -> Tag:
-        """Create a new tag"""
-        async with AsyncSessionLocal() as session:
-            new_tag = Tag(
-                tag_type=tag_type,
-                name=name,
-                slug=slug,
-                description=description
-            )
-            session.add(new_tag)
-            await session.commit()
-            await session.refresh(new_tag)
-            return new_tag
+    # Tag management methods - delegated to shared TagService
+    async def create_product_tag(self, name: str, tag_type_suffix: str, slug: Optional[str] = None, description: Optional[str] = None) -> Tag:
+        """Create a new product tag with specific type (e.g., 'color', 'size')"""
+        from src.api.tags.models import CreateTagSchema
+        tag_data = CreateTagSchema(
+            tag_type=tag_type_suffix,  # Will become "product_{tag_type_suffix}"
+            name=name,
+            slug=slug,
+            description=description
+        )
+        return await self.tag_service.create_tag(tag_data)
 
-    async def get_tags_by_type(self, tag_type: str) -> List[Tag]:
-        """Get all tags of a specific type"""
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Tag).filter(Tag.tag_type == tag_type, Tag.is_active == True)
-            )
-            return list(result.scalars().all())
+    async def get_product_tags(self, is_active: bool = True, tag_type_suffix: Optional[str] = None) -> List[Tag]:
+        """Get product tags, optionally filtered by type suffix (e.g., 'color', 'size')"""
+        return await self.tag_service.get_tags_by_type(is_active, tag_type_suffix)
 
-    async def assign_tag_to_product(self, product_id: int, tag_id: int):
-        """Assign a tag to a product"""
-        async with AsyncSessionLocal() as session:
-            try:
-                product_tag = ProductTag(
-                    product_id=product_id,
-                    tag_id=tag_id,
-                    created_by="system"
-                )
-                session.add(product_tag)
-                await session.commit()
-                
-                # Invalidate cache
-                products_cache.invalidate_product_cache(str(product_id))
-                cache_invalidation_manager.invalidate_entity(Collections.PRODUCTS, str(product_id))
-            except IntegrityError as e:
-                await session.rollback()
-                error_detail = str(e.orig)
-                if "product_id" in error_detail and "is not present" in error_detail:
-                    raise ResourceNotFoundException(detail=f"Product with ID {product_id} not found")
-                elif "tag_id" in error_detail and "is not present" in error_detail:
-                    raise ResourceNotFoundException(detail=f"Tag with ID {tag_id} not found")
-                elif "duplicate key" in error_detail and "product_tags_pkey" in error_detail:
-                    raise ConflictException(detail=f"Product {product_id} already has tag {tag_id}")
-                else:
-                    # Re-raise if it's a different integrity error
-                    raise
+    async def assign_tag_to_product(self, product_id: int, tag_id: int, value: Optional[str] = None):
+        """Assign a tag to a product using shared TagService"""
+        await self.tag_service.assign_tag_to_entity(product_id, tag_id, value)
 
-    async def remove_tag_from_product(self, product_id: int, tag_id: int):
-        """Remove a tag from a product"""
-        async with AsyncSessionLocal() as session:
-            try:
-                result = await session.execute(
-                    select(ProductTag).filter(
-                        ProductTag.product_id == product_id,
-                        ProductTag.tag_id == tag_id
-                    )
-                )
-                product_tag = result.scalars().first()
-                
-                if not product_tag:
-                    raise ResourceNotFoundException(
-                        detail=f"Tag {tag_id} not found on product {product_id}"
-                    )
-                
-                await session.delete(product_tag)
-                await session.commit()
-                
-                # Invalidate cache
-                products_cache.invalidate_product_cache(str(product_id))
-                cache_invalidation_manager.invalidate_entity(Collections.PRODUCTS, str(product_id))
-                
-            except IntegrityError as e:
-                await session.rollback()
-                # Re-raise if it's an integrity error
-                raise
+        # Invalidate cache
+        products_cache.invalidate_product_cache(str(product_id))
+        cache_invalidation_manager.invalidate_entity(Collections.PRODUCTS, str(product_id))
+
+    async def remove_tag_from_product(self, product_id: int, tag_id: int) -> bool:
+        """Remove a tag from a product using shared TagService"""
+        success = await self.tag_service.remove_tag_from_entity(product_id, tag_id)
+
+        if success:
+            # Invalidate cache
+            products_cache.invalidate_product_cache(str(product_id))
+            cache_invalidation_manager.invalidate_entity(Collections.PRODUCTS, str(product_id))
+
+        return success

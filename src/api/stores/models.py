@@ -1,14 +1,13 @@
-from datetime import datetime, time
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, EmailStr, validator
 from src.config.constants import (
-    StoreFeatures,
     MIN_LATITUDE,
     MAX_LATITUDE,
     MIN_LONGITUDE,
     MAX_LONGITUDE,
-    HOUR_FORMAT,
 )
+from src.api.shared.tags.models import EntityTagSchema
 
 
 class LocationSchema(BaseModel):
@@ -21,36 +20,17 @@ class LocationSchema(BaseModel):
 
 
 class ContactSchema(BaseModel):
-    phone: Optional[str] = Field(None, description="Store phone number")
     email: Optional[EmailStr] = Field(None, description="Store email address")
+    phone: Optional[str] = Field(None, description="Store phone number")
 
 
-class BusinessHoursSchema(BaseModel):
-    open: Optional[str] = Field(
-        None,
-        pattern=r"^([0-1][0-9]|2[0-3]):[0-5][0-9]$",
-        description="Opening time in HH:MM format",
-    )
-    close: Optional[str] = Field(
-        None,
-        pattern=r"^([0-1][0-9]|2[0-3]):[0-5][0-9]$",
-        description="Closing time in HH:MM format",
-    )
-    closed: bool = Field(False, description="Whether the store is closed on this day")
-
-
-class StoreHoursSchema(BaseModel):
-    monday: Optional[BusinessHoursSchema] = None
-    tuesday: Optional[BusinessHoursSchema] = None
-    wednesday: Optional[BusinessHoursSchema] = None
-    thursday: Optional[BusinessHoursSchema] = None
-    friday: Optional[BusinessHoursSchema] = None
-    saturday: Optional[BusinessHoursSchema] = None
-    sunday: Optional[BusinessHoursSchema] = None
+class StoreTagSchema(EntityTagSchema):
+    """Store-specific tag schema"""
+    pass
 
 
 class StoreSchema(BaseModel):
-    id: Optional[str] = None
+    id: Optional[int] = None
     name: str = Field(..., min_length=1, max_length=200, description="Store name")
     description: Optional[str] = Field(
         None, max_length=1000, description="Store description"
@@ -58,13 +38,11 @@ class StoreSchema(BaseModel):
     address: str = Field(
         ..., min_length=1, max_length=500, description="Complete store address"
     )
-    location: LocationSchema
-    contact: Optional[ContactSchema] = None
-    hours: Optional[StoreHoursSchema] = None
-    features: Optional[List[StoreFeatures]] = Field(
-        default_factory=list, description="Store features and amenities"
-    )
-    isActive: bool = Field(True, description="Whether the store is active")
+    latitude: float = Field(..., ge=MIN_LATITUDE, le=MAX_LATITUDE, description="Latitude in degrees")
+    longitude: float = Field(..., ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="Longitude in degrees")
+    email: Optional[str] = Field(None, description="Store email address")
+    phone: Optional[str] = Field(None, description="Store phone number")
+    is_active: bool = Field(True, description="Whether the store is active")
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -72,10 +50,9 @@ class StoreSchema(BaseModel):
     distance: Optional[float] = Field(
         None, description="Distance from search location in km"
     )
-    is_open_now: Optional[bool] = Field(
-        None, description="Whether the store is currently open"
-    )
-    next_change: Optional[str] = Field(None, description="Next opening/closing time")
+    store_tags: Optional[List[Dict[str, Any]]] = None  # Raw store_tags data
+
+    model_config = {"from_attributes": True}
 
 
 class CreateStoreSchema(BaseModel):
@@ -86,13 +63,12 @@ class CreateStoreSchema(BaseModel):
     address: str = Field(
         ..., min_length=1, max_length=500, description="Complete store address"
     )
-    location: LocationSchema
-    contact: Optional[ContactSchema] = None
-    hours: Optional[StoreHoursSchema] = None
-    features: Optional[List[StoreFeatures]] = Field(
-        default_factory=list, description="Store features"
-    )
-    isActive: Optional[bool] = Field(True, description="Whether the store is active")
+    latitude: float = Field(..., ge=MIN_LATITUDE, le=MAX_LATITUDE, description="Latitude in degrees")
+    longitude: float = Field(..., ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="Longitude in degrees")
+    email: Optional[str] = Field(None, description="Store email address")
+    phone: Optional[str] = Field(None, description="Store phone number")
+    tag_ids: List[int] = Field(default=[], description="IDs of tags to assign")
+    is_active: Optional[bool] = Field(True, description="Whether the store is active")
 
 
 class UpdateStoreSchema(BaseModel):
@@ -105,11 +81,12 @@ class UpdateStoreSchema(BaseModel):
     address: Optional[str] = Field(
         None, min_length=1, max_length=500, description="Complete store address"
     )
-    location: Optional[LocationSchema] = None
-    contact: Optional[ContactSchema] = None
-    hours: Optional[StoreHoursSchema] = None
-    features: Optional[List[StoreFeatures]] = None
-    isActive: Optional[bool] = None
+    latitude: Optional[float] = Field(None, ge=MIN_LATITUDE, le=MAX_LATITUDE, description="Latitude in degrees")
+    longitude: Optional[float] = Field(None, ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="Longitude in degrees")
+    email: Optional[str] = Field(None, description="Store email address")
+    phone: Optional[str] = Field(None, description="Store phone number")
+    tag_ids: Optional[List[int]] = None
+    is_active: Optional[bool] = None
 
 
 class StoreQuerySchema(BaseModel):
@@ -131,15 +108,14 @@ class StoreQuerySchema(BaseModel):
     limit: Optional[int] = Field(
         20, ge=1, le=100, description="Maximum number of stores to return"
     )
-    isActive: Optional[bool] = Field(True, description="Filter by store status")
-    features: Optional[List[StoreFeatures]] = Field(
-        None, description="Filter by store features"
-    )
-    includeDistance: Optional[bool] = Field(
+    is_active: Optional[bool] = Field(True, description="Filter by store status")
+    tag_types: Optional[List[str]] = Field(None, description="Filter by tag types")
+    tag_ids: Optional[List[int]] = Field(None, description="Filter by specific tags")
+    include_distance: Optional[bool] = Field(
         True, description="Include distance calculations"
     )
-    includeOpenStatus: Optional[bool] = Field(
-        True, description="Include open/closed status"
+    include_tags: Optional[bool] = Field(
+        False, description="Include tag information"
     )
 
     @validator("radius")

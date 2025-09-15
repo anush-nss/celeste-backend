@@ -3,7 +3,8 @@ from decimal import Decimal
 from typing import Any, List, Optional, Dict
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import and_, or_, desc
+from sqlalchemy import and_, or_, desc, text
+from sqlalchemy.exc import IntegrityError
 
 from src.database.connection import AsyncSessionLocal
 # Import all models to ensure relationships are properly registered
@@ -199,19 +200,46 @@ class PricingService:
     async def assign_price_list_to_tier(self, tier_id: int, price_list_id: int) -> bool:
         """Assign a price list to a tier"""
         async with AsyncSessionLocal() as session:
-            # Check if association already exists
-            existing = await session.execute(
-                select(TierPriceList).where(
-                    and_(TierPriceList.tier_id == tier_id, TierPriceList.price_list_id == price_list_id)
+            try:
+                # Check if tier exists
+                tier_result = await session.execute(
+                    select(Tier).where(Tier.id == tier_id)
                 )
-            )
-            if existing.scalars().first():
-                return True  # Already exists
-            
-            association = TierPriceList(tier_id=tier_id, price_list_id=price_list_id)
-            session.add(association)
-            await session.commit()
-            return True
+                if not tier_result.scalars().first():
+                    raise ResourceNotFoundException(detail=f"Tier with ID {tier_id} not found")
+
+                # Check if price list exists
+                price_list_result = await session.execute(
+                    select(PriceList).where(PriceList.id == price_list_id)
+                )
+                if not price_list_result.scalars().first():
+                    raise ResourceNotFoundException(detail=f"Price list with ID {price_list_id} not found")
+
+                # Check if association already exists
+                existing = await session.execute(
+                    select(TierPriceList).where(
+                        and_(TierPriceList.tier_id == tier_id, TierPriceList.price_list_id == price_list_id)
+                    )
+                )
+                if existing.scalars().first():
+                    from src.shared.exceptions import ConflictException
+                    raise ConflictException(detail=f"Price list {price_list_id} is already assigned to tier {tier_id}")
+
+                association = TierPriceList(tier_id=tier_id, price_list_id=price_list_id)
+                session.add(association)
+                await session.commit()
+                return True
+
+            except IntegrityError as e:
+                await session.rollback()
+                # This shouldn't happen now that we check existence first, but just in case
+                error_detail = str(e.orig)
+                if "tier_id" in error_detail and "is not present" in error_detail:
+                    raise ResourceNotFoundException(detail=f"Tier with ID {tier_id} not found")
+                elif "price_list_id" in error_detail and "is not present" in error_detail:
+                    raise ResourceNotFoundException(detail=f"Price list with ID {price_list_id} not found")
+                else:
+                    raise
 
     async def remove_price_list_from_tier(self, tier_id: int, price_list_id: int) -> bool:
         """Remove a price list from a tier"""
