@@ -6,6 +6,7 @@ from src.api.tags.models import CreateTagSchema
 from src.database.connection import AsyncSessionLocal
 from src.database.models.product import Product, ProductTag, Tag
 from src.api.tags.service import TagService
+from src.api.inventory.service import InventoryService
 from src.database.models.category import Category
 from src.api.products.models import (
     ProductSchema,
@@ -15,6 +16,7 @@ from src.api.products.models import (
     EnhancedProductSchema,
     PaginatedProductsResponse,
     PricingInfoSchema,
+    InventoryInfoSchema,
     ProductTagSchema,
 )
 from src.api.categories.models import CategorySchema
@@ -33,6 +35,7 @@ class ProductService:
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
         self.tag_service = TagService(entity_type="product")
+        self.inventory_service = InventoryService()
 
     async def _build_product_query(self, query_params: ProductQuerySchema, session):
         """Build SQLAlchemy query with filters and relationships"""
@@ -243,15 +246,20 @@ class ProductService:
         self,
         product_id: int,
         include_categories: bool = True,
-        include_tags: bool = True
-    ) -> ProductSchema | None:
-        """Get product by ID with relationships"""
+        include_tags: bool = True,
+        store_id: Optional[int] = None,
+    ) -> EnhancedProductSchema | None:
+        """Get product by ID with relationships and optional inventory."""
         if product_id <= 0:
             raise ValidationException(detail="Product ID must be a positive integer")
 
-        cached_product = products_cache.get_product(str(product_id))
-        if cached_product:
-            return ProductSchema.model_validate(cached_product)
+        # Caching for enhanced product schema needs to be handled carefully,
+        # especially with dynamic data like inventory. For now, we bypass cache
+        # if store_id is provided.
+        if not store_id:
+            cached_product = products_cache.get_product(str(product_id))
+            if cached_product:
+                return EnhancedProductSchema.model_validate(cached_product)
 
         async with AsyncSessionLocal() as session:
             query = select(Product).filter(Product.id == product_id)
@@ -275,13 +283,28 @@ class ProductService:
                     include_rels.add('product_tags')
 
                 pydantic_product = safe_model_validate(
-                    ProductSchema,
+                    EnhancedProductSchema,
                     product,
                     max_depth=3
                 )
 
-                # Cache the product
-                products_cache.set_product(str(product_id), pydantic_product.model_dump(mode="json"))
+                # Fetch and add inventory if store_id is provided
+                if store_id:
+                    inventory_item = await self.inventory_service.get_inventory_by_product_and_store(
+                        product_id, store_id
+                    )
+                    if inventory_item:
+                        pydantic_product.inventory = InventoryInfoSchema(
+                            in_stock=inventory_item.quantity_available > 0,
+                            quantity_available=inventory_item.quantity_available,
+                            quantity_on_hold=inventory_item.quantity_on_hold,
+                            quantity_reserved=inventory_item.quantity_reserved,
+                        )
+
+                # Cache the product only if it doesn't contain dynamic store-specific data
+                if not store_id:
+                    products_cache.set_product(str(product_id), pydantic_product.model_dump(mode="json"))
+
                 return pydantic_product
 
             return None
@@ -540,6 +563,7 @@ class ProductService:
         self,
         query_params: ProductQuerySchema,
         customer_tier: Optional[int] = None,
+        store_id: Optional[int] = None,
     ) -> PaginatedProductsResponse:
         """Get products with pagination and pricing using optimized SQL query"""
         async with AsyncSessionLocal() as session:
@@ -628,6 +652,15 @@ class ProductService:
             
             # Get product IDs for pricing query
             product_ids = [row.id for row in actual_products_data]
+
+            # Fetch inventory if a store_id is provided
+            inventory_info_dict = {}
+            if store_id and product_ids:
+                inventory_items = await self.inventory_service.get_inventory_for_products_in_store(
+                    product_ids, store_id
+                )
+                for item in inventory_items:
+                    inventory_info_dict[item.product_id] = item
             
             # If categories are requested, fetch them in a single query
             product_categories_dict = {}
@@ -845,6 +878,16 @@ class ProductService:
                 
                 # Create enhanced product schema
                 enhanced_product = EnhancedProductSchema(**product_dict)
+
+                # Add inventory if available
+                if store_id and product_row.id in inventory_info_dict:
+                    inventory_info = inventory_info_dict[product_row.id]
+                    enhanced_product.inventory = InventoryInfoSchema(
+                        in_stock=inventory_info.quantity_available > 0,
+                        quantity_available=inventory_info.quantity_available,
+                        quantity_on_hold=inventory_info.quantity_on_hold,
+                        quantity_reserved=inventory_info.quantity_reserved,
+                    )
                 
                 # Add pricing if available
                 if query_params.include_pricing and product_row.id in pricing_info_dict:

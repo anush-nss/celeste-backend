@@ -120,8 +120,14 @@ class ProductQuerySchema(BaseModel):
     cursor: Optional[int] = Field(
         None, description="Cursor for pagination (product ID to start from)"
     )
+    store_id: Optional[int] = Field(
+        None, description="Store ID for inventory and store-specific data"
+    )
     include_pricing: Optional[bool] = Field(
         default=True, description="Whether to include pricing calculations"
+    )
+    include_inventory: Optional[bool] = Field(
+        default=True, description="Whether to include inventory information (requires store_id)"
     )
     include_categories: Optional[bool] = Field(
         default=False, description="Whether to include category information"

@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, status, Query
-from typing import Annotated, List, Optional
+from typing import List, Optional
 from src.api.inventory.models import (
     InventorySchema,
     CreateInventorySchema,
     UpdateInventorySchema,
+    AdjustInventorySchema,
 )
 from src.api.inventory.service import InventoryService
 from src.dependencies.auth import RoleChecker, get_current_user
@@ -22,29 +23,28 @@ inventory_service = InventoryService()
     dependencies=[Depends(get_current_user)],
 )
 async def get_all_inventory(
-    productId: Optional[str] = Query(None, description="Filter by product ID"),
-    storeId: Optional[str] = Query(None, description="Filter by store ID"),
+    product_id: Optional[int] = Query(None, description="Filter by product ID"),
+    store_id: Optional[int] = Query(None, description="Filter by store ID"),
 ):
-    query_params = {}
-    if productId is not None:
-        query_params["product_id"] = productId
-    if storeId is not None:
-        query_params["store_id"] = storeId
-    inventory_items = await inventory_service.get_all_inventory(**query_params)
-    return success_response([item.model_dump(mode="json") for item in inventory_items])
+    inventory_items = await inventory_service.get_all_inventory(
+        product_id=product_id, store_id=store_id
+    )
+    return success_response(inventory_items)
 
 
 @inventory_router.get(
-    "/{id}",
+    "/{inventory_id}",
     summary="Get an inventory item by ID",
     response_model=InventorySchema,
     dependencies=[Depends(get_current_user)],
 )
-async def get_inventory_by_id(id: str):
-    inventory_item = await inventory_service.get_inventory_by_id(id)
+async def get_inventory_by_id(inventory_id: int):
+    inventory_item = await inventory_service.get_inventory_by_id(inventory_id)
     if not inventory_item:
-        raise ResourceNotFoundException(detail=f"Inventory item with ID {id} not found")
-    return success_response(inventory_item.model_dump(mode="json"))
+        raise ResourceNotFoundException(
+            detail=f"Inventory item with ID {inventory_id} not found"
+        )
+    return success_response(inventory_item)
 
 
 @inventory_router.post(
@@ -56,32 +56,48 @@ async def get_inventory_by_id(id: str):
 )
 async def create_inventory(inventory_data: CreateInventorySchema):
     new_inventory = await inventory_service.create_inventory(inventory_data)
-    return success_response(
-        new_inventory.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
-    )
+    return success_response(new_inventory, status_code=status.HTTP_201_CREATED)
 
 
 @inventory_router.put(
-    "/{id}",
+    "/{inventory_id}",
     summary="Update an inventory item",
     response_model=InventorySchema,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def update_inventory(id: str, inventory_data: UpdateInventorySchema):
-    updated_inventory = await inventory_service.update_inventory(id, inventory_data)
-    if not updated_inventory:
-        raise ResourceNotFoundException(detail=f"Inventory item with ID {id} not found")
-    return success_response(updated_inventory.model_dump(mode="json"))
+async def update_inventory(inventory_id: int, inventory_data: UpdateInventorySchema):
+    updated_inventory = await inventory_service.update_inventory(
+        inventory_id, inventory_data
+    )
+    return success_response(updated_inventory)
+
+
+@inventory_router.post(
+    "/adjust",
+    summary="Adjust inventory stock levels",
+    response_model=InventorySchema,
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def adjust_inventory(adjustment_data: AdjustInventorySchema):
+    """
+    Atomically adjust inventory levels for a product at a specific store.
+    - `available_change`: Change in the number of items available for sale.
+    - `on_hold_change`: Change in the number of items held for pending orders.
+    - `reserved_change`: Change in the number of items reserved for confirmed orders.
+    """
+    updated_inventory = await inventory_service.adjust_inventory_stock(adjustment_data)
+    return success_response(updated_inventory)
 
 
 @inventory_router.delete(
-    "/{id}",
+    "/{inventory_id}",
     summary="Delete an inventory item",
+    status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def delete_inventory(id: str):
-    if not await inventory_service.delete_inventory(id):
-        raise ResourceNotFoundException(detail=f"Inventory item with ID {id} not found")
-    return success_response(
-        {"id": id, "message": "Inventory item deleted successfully"}
-    )
+async def delete_inventory(inventory_id: int):
+    if not await inventory_service.delete_inventory(inventory_id):
+        raise ResourceNotFoundException(
+            detail=f"Inventory item with ID {inventory_id} not found"
+        )
+    return success_response(None, status_code=status.HTTP_204_NO_CONTENT)

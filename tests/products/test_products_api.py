@@ -1,4 +1,5 @@
 import pytest
+from unittest import mock
 import pytest_asyncio
 from httpx import AsyncClient
 import asyncio
@@ -11,25 +12,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from tests.get_dev_token import get_dev_token
 from src.config.constants import UserRole
 from tests.constants import BASE_URL, ADMIN_UID, CUSTOMER_UID
-
-@pytest_asyncio.fixture(scope="module", autouse=True)
-async def setup_test_users():
-    """Ensure test users have proper roles assigned before running tests."""
-    from src.api.auth.service import AuthService
-    
-    auth_service = AuthService()
-    
-    try:
-        # Set admin role for admin user
-        auth_service.set_user_role(ADMIN_UID, UserRole.ADMIN)
-    except Exception as e:
-        print(f"Warning: Could not set admin role for {ADMIN_UID}: {e}")
-    
-    try:
-        # Set customer role for customer user
-        auth_service.set_user_role(CUSTOMER_UID, UserRole.CUSTOMER)
-    except Exception as e:
-        print(f"Warning: Could not set customer role for {CUSTOMER_UID}: {e}")
 
 @pytest.fixture(scope="module")
 def event_loop():
@@ -78,11 +60,14 @@ async def anonymous_client():
         yield client
 
 @pytest.mark.asyncio
+@mock.patch('src.dependencies.firebase.auth', create=True)
+@mock.patch('firebase_admin.initialize_app')
 class TestProductsAPI:
     """Test suite for the Products API, including RBAC. All tests are independent."""
 
-    async def test_get_all_products(self, customer_client: AsyncClient, admin_client: AsyncClient, anonymous_client: AsyncClient):
+    async def test_get_all_products(self, mock_initialize_app, mock_auth, customer_client: AsyncClient, admin_client: AsyncClient, anonymous_client: AsyncClient):
         """Tests GET /products for both customer and admin roles."""
+        mock_auth.verify_id_token.return_value = {'uid': CUSTOMER_UID, 'role': UserRole.CUSTOMER}
         for client in [customer_client, admin_client, anonymous_client]:
             response = await client.get("/products/")
             assert response.status_code == 200
@@ -90,21 +75,23 @@ class TestProductsAPI:
             assert "products" in data["data"]
             assert "pagination" in data["data"]
 
-    async def test_customer_cannot_create_product(self, customer_client: AsyncClient):
+    async def test_customer_cannot_create_product(self, mock_initialize_app, mock_auth, customer_client: AsyncClient):
         """Tests that a customer cannot create a product."""
-        product_data = {"name": "Customer Product", "brand": "CustBrand", "price": 10.0, "unit": "item", "categoryId": "cat1"}
+        mock_auth.verify_id_token.return_value = {'uid': CUSTOMER_UID, 'role': UserRole.CUSTOMER}
+        product_data = {"name": "Customer Product", "brand": "CustBrand", "base_price": 10.0, "unit_measure": "item", "category_ids": [1]}
         response = await customer_client.post("/products/", json=product_data)
         assert response.status_code == 403
 
-    async def test_anonymous_cannot_modify_product(self, admin_client: AsyncClient, anonymous_client: AsyncClient):
+    async def test_anonymous_cannot_modify_product(self, mock_initialize_app, mock_auth, admin_client: AsyncClient, anonymous_client: AsyncClient):
         """Tests that an anonymous user cannot create, update, or delete a product."""
         # 1. ARRANGE: Create a product as an admin
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         product_data = {
             "name": "Product for Anonymous Test",
             "brand": "TestBrand",
-            "price": 99.99,
-            "unit": "piece",
-            "categoryId": "anon-test-category",
+            "base_price": 99.99,
+            "unit_measure": "piece",
+            "category_ids": [],
         }
         response = await admin_client.post("/products/", json=product_data)
         assert response.status_code == 201
@@ -115,7 +102,7 @@ class TestProductsAPI:
         assert response.status_code == 403  # Forbidden
 
         # 3. ACT & ASSERT: As an anonymous user, attempt to update the product
-        update_data = {"price": 129.99}
+        update_data = {"base_price": 129.99}
         response = await anonymous_client.put(f"/products/{product_id}", json=update_data)
         assert response.status_code == 403  # Forbidden
 
@@ -127,22 +114,24 @@ class TestProductsAPI:
         response = await admin_client.delete(f"/products/{product_id}")
         assert response.status_code == 200
 
-    async def test_customer_cannot_modify_product(self, admin_client: AsyncClient, customer_client: AsyncClient):
+    async def test_customer_cannot_modify_product(self, mock_initialize_app, mock_auth, admin_client: AsyncClient, customer_client: AsyncClient):
         """Tests that a customer cannot update or delete a product created by an admin."""
         # 1. ARRANGE: Create a product as an admin
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         product_data = {
             "name": "Product for Modify Test",
             "brand": "TestBrand",
-            "price": 99.99,
-            "unit": "piece",
-            "categoryId": "permissions-test-category",
+            "base_price": 99.99,
+            "unit_measure": "piece",
+            "category_ids": [],
         }
         response = await admin_client.post("/products/", json=product_data)
         assert response.status_code == 201
         product_id = response.json()["data"]["id"]
 
         # 2. ACT & ASSERT: As a customer, attempt to update the product
-        update_data = {"price": 129.99}
+        mock_auth.verify_id_token.return_value = {'uid': CUSTOMER_UID, 'role': UserRole.CUSTOMER}
+        update_data = {"base_price": 129.99}
         response = await customer_client.put(f"/products/{product_id}", json=update_data)
         assert response.status_code == 403
 
@@ -151,18 +140,20 @@ class TestProductsAPI:
         assert response.status_code == 403
 
         # 4. CLEANUP: Delete the product as an admin to leave the system clean
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         response = await admin_client.delete(f"/products/{product_id}")
         assert response.status_code == 200
 
 
-    async def test_admin_can_manage_product_lifecycle(self, admin_client: AsyncClient):
+    async def test_admin_can_manage_product_lifecycle(self, mock_initialize_app, mock_auth, admin_client: AsyncClient):
         """Tests the full CRUD lifecycle for a product as an admin."""
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         create_data = {
             "name": "Admin Lifecycle Product",
             "brand": "AdminBrand",
-            "price": 250.00,
-            "unit": "piece",
-            "categoryId": "lifecycle-category",
+            "base_price": 250.00,
+            "unit_measure": "piece",
+            "category_ids": [],
         }
         product_id = None
         
@@ -180,11 +171,11 @@ class TestProductsAPI:
         assert fetched_product["id"] == product_id
 
         # 3. UPDATE
-        update_data = {"price": 245.50}
+        update_data = {"base_price": 245.50}
         response = await admin_client.put(f"/products/{product_id}", json=update_data)
         assert response.status_code == 200
         updated_product = response.json()["data"]
-        assert updated_product["price"] == 245.50
+        assert updated_product["base_price"] == 245.50
 
         # 4. DELETE
         response = await admin_client.delete(f"/products/{product_id}")

@@ -10,6 +10,8 @@ from src.database.models.associations import product_categories
 
 if TYPE_CHECKING:
     from src.database.models.category import Category
+    from src.database.models.inventory import Inventory
+
 
 class Product(Base):
     __tablename__ = "products"
@@ -41,6 +43,11 @@ class Product(Base):
     product_tags: Mapped[List["ProductTag"]] = relationship(
         "ProductTag", 
         back_populates="product"
+    )
+    inventory_levels: Mapped[List["Inventory"]] = relationship(
+        "Inventory",
+        back_populates="product",
+        cascade="all, delete-orphan"
     )
 
 
