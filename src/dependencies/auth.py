@@ -1,6 +1,6 @@
 from fastapi import Depends, Security, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from src.dependencies.firebase import auth
+from firebase_admin import auth
 from typing import Annotated, List, Optional
 from src.shared.database import get_firebase_auth
 from src.shared.exceptions import UnauthorizedException, ForbiddenException
