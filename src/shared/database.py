@@ -37,7 +37,6 @@ class AsyncDatabaseClient:
             return
 
         self._initialized = True
-        self._initialize_firebase()
 
         # Async Firestore client
         self._async_client: Optional[firestore.AsyncClient] = None
@@ -54,19 +53,7 @@ class AsyncDatabaseClient:
         self._collections: Dict[str, Any] = {}
         self._async_collections: Dict[str, Any] = {}
 
-    def _initialize_firebase(self):
-        """Initialize Firebase Admin SDK"""
-        service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-
-        if not service_account_path:
-            raise ValueError(
-                "GOOGLE_APPLICATION_CREDENTIALS environment variable not set."
-            )
-
-        # Initialize Firebase Admin SDK (only if not already initialized)
-        if not firebase_admin._apps:
-            cred = credentials.Certificate(service_account_path)
-            firebase_admin.initialize_app(cred)
+    
 
     async def get_async_client(self) -> firestore.AsyncClient:
         """Get async Firestore client"""

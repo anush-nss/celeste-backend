@@ -1,116 +1,94 @@
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
-from src.config.constants import PriceListType, DiscountType
+from enum import Enum
+
+# Use enums directly in models since we're not using the old constants
+class DiscountType(str, Enum):
+    PERCENTAGE = "percentage"
+    FLAT = "flat" 
+    FIXED_PRICE = "fixed_price"
 
 
 class PriceListSchema(BaseModel):
-    id: Optional[str] = None
-    name: str = Field(
-        ...,
-        min_length=1,
-        description="Price list name (e.g., 'VIP Discount', 'Bulk Pricing')",
-    )
-    priority: int = Field(
-        ..., ge=1, description="Priority order (1 = highest priority)"
-    )
-    active: bool = Field(default=True, description="Whether this price list is active")
+    id: Optional[int] = None
+    name: str = Field(..., min_length=1, description="Price list name")
+    description: Optional[str] = None
+    priority: int = Field(default=0, description="Priority order (higher = more priority)")
     valid_from: datetime = Field(..., description="When this price list becomes valid")
-    valid_until: Optional[datetime] = Field(
-        None, description="When this price list expires (null = never expires)"
-    )
+    valid_until: Optional[datetime] = Field(None, description="When this price list expires")
+    is_active: bool = Field(default=True, description="Whether this price list is active")
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
 
 class CreatePriceListSchema(BaseModel):
     name: str = Field(..., min_length=1, description="Price list name")
-    priority: int = Field(
-        ..., ge=1, description="Priority order (1 = highest priority)"
-    )
-    active: bool = Field(default=True, description="Whether this price list is active")
-    valid_from: datetime = Field(..., description="When this price list becomes valid")
-    valid_until: Optional[datetime] = Field(
-        None, description="When this price list expires"
-    )
+    description: Optional[str] = None
+    priority: int = Field(default=0, description="Priority order")
+    valid_from: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
+    is_active: bool = Field(default=True, description="Whether this price list is active")
 
 
 class UpdatePriceListSchema(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, description="Price list name")
-    priority: Optional[int] = Field(None, ge=1, description="Priority order")
-    active: Optional[bool] = Field(
-        None, description="Whether this price list is active"
-    )
-    valid_from: Optional[datetime] = Field(
-        None, description="When this price list becomes valid"
-    )
-    valid_until: Optional[datetime] = Field(
-        None, description="When this price list expires"
-    )
+    name: Optional[str] = Field(None, min_length=1)
+    description: Optional[str] = None
+    priority: Optional[int] = None
+    valid_from: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
+    is_active: Optional[bool] = None
 
 
 class PriceListLineSchema(BaseModel):
-    id: Optional[str] = None
-    price_list_id: str = Field(..., description="Reference to price list")
-    type: PriceListType = Field(..., description="Type of price list line")
-    product_id: Optional[str] = Field(
-        None, description="Product ID (required if type='product')"
-    )
-    category_id: Optional[str] = Field(
-        None, description="Category ID (required if type='category')"
-    )
-    discount_type: DiscountType = Field(..., description="Discount type")
-    amount: float = Field(
-        ..., ge=0, description="Discount amount (percentage or flat amount)"
-    )
-    min_product_qty: int = Field(
-        default=1, ge=1, description="Minimum quantity required"
-    )
-    max_product_qty: Optional[int] = Field(
-        None, ge=1, description="Maximum quantity allowed (null = no limit)"
-    )
+    id: Optional[int] = None
+    price_list_id: Optional[int] = None
+    product_id: Optional[int] = Field(None, description="Specific product (null = all products)")
+    category_id: Optional[int] = Field(None, description="Product category (null = all categories)")
+    discount_type: DiscountType = Field(..., description="Type of discount")
+    discount_value: float = Field(..., ge=0, description="Discount amount or percentage")
+    max_discount_amount: Optional[float] = Field(None, description="Maximum discount cap for percentage discounts")
+    min_quantity: int = Field(default=1, ge=1, description="Minimum quantity required")
+    min_order_amount: Optional[float] = Field(None, description="Minimum order amount required")
+    is_active: bool = Field(default=True, description="Whether this line is active")
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
 
 class CreatePriceListLineSchema(BaseModel):
-    type: PriceListType = Field(..., description="Type of price list line")
-    product_id: Optional[str] = Field(
-        None, description="Product ID (required if type='product')"
-    )
-    category_id: Optional[str] = Field(
-        None, description="Category ID (required if type='category')"
-    )
-    discount_type: DiscountType = Field(..., description="Discount type")
-    amount: float = Field(..., ge=0, description="Discount amount")
-    min_product_qty: int = Field(
-        default=1, ge=1, description="Minimum quantity required"
-    )
-    max_product_qty: Optional[int] = Field(
-        None, ge=1, description="Maximum quantity allowed"
-    )
-
-    def validate_type_fields(self):
-        """Validate that required fields are provided based on type"""
-        if self.type == PriceListType.PRODUCT and not self.product_id:
-            raise ValueError("product_id is required when type is 'product'")
-        if self.type == PriceListType.CATEGORY and not self.category_id:
-            raise ValueError("category_id is required when type is 'category'")
-        if self.type == PriceListType.ALL and (self.product_id or self.category_id):
-            raise ValueError(
-                "product_id and category_id must be null when type is 'all'"
-            )
+    product_id: Optional[int] = Field(None, description="Specific product ID")
+    category_id: Optional[int] = Field(None, description="Category ID")
+    discount_type: DiscountType = Field(..., description="Type of discount")
+    discount_value: float = Field(..., ge=0, description="Discount amount or percentage")
+    max_discount_amount: Optional[float] = None
+    min_quantity: int = Field(default=1, ge=1)
+    min_order_amount: Optional[float] = None
+    is_active: bool = Field(default=True)
 
 
 class UpdatePriceListLineSchema(BaseModel):
-    type: Optional[PriceListType] = Field(None, description="Type of price list line")
-    product_id: Optional[str] = Field(None, description="Product ID")
-    category_id: Optional[str] = Field(None, description="Category ID")
-    discount_type: Optional[DiscountType] = Field(None, description="Discount type")
-    amount: Optional[float] = Field(None, ge=0, description="Discount amount")
-    min_product_qty: Optional[int] = Field(
-        None, ge=1, description="Minimum quantity required"
-    )
-    max_product_qty: Optional[int] = Field(
-        None, ge=1, description="Maximum quantity allowed"
-    )
+    product_id: Optional[int] = None
+    category_id: Optional[int] = None
+    discount_type: Optional[DiscountType] = None
+    discount_value: Optional[float] = Field(None, ge=0)
+    max_discount_amount: Optional[float] = None
+    min_quantity: Optional[int] = Field(None, ge=1)
+    min_order_amount: Optional[float] = None
+    is_active: Optional[bool] = None
+
+
+class ProductPricingSchema(BaseModel):
+    """Schema for individual product pricing calculation result"""
+    product_id: int
+    quantity: int
+    base_price: float
+    final_price: float
+    total_price: float
+    savings: float
+    applied_discounts: List[dict] = Field(default_factory=list)
+
+
+class TierPriceListAssignmentSchema(BaseModel):
+    """Schema for assigning price lists to tiers"""
+    tier_id: int
+    price_list_id: int

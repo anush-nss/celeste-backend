@@ -1,34 +1,39 @@
 from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from src.config.constants import OrderStatus
 
 
 class OrderItemSchema(BaseModel):
-    productId: str
-    name: str
-    price: float = Field(..., ge=0)
-    quantity: int = Field(..., gt=0)
+    id: int
+    product_id: int
+    quantity: int
+    price: float
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class OrderSchema(BaseModel):
-    id: Optional[str] = None
-    userId: str
-    items: List[OrderItemSchema]
-    totalAmount: float = Field(..., ge=0)
-    discountApplied: Optional[str] = None
-    promotionApplied: Optional[str] = None
+    id: int
+    user_id: int
+    store_id: int
+    total_amount: float
     status: OrderStatus
-    createdAt: Optional[datetime] = None
-    updatedAt: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    items: List[OrderItemSchema]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreateOrderItemSchema(BaseModel):
+    product_id: int = Field(..., gt=0)
+    quantity: int = Field(..., gt=0)
 
 
 class CreateOrderSchema(BaseModel):
-    items: List[OrderItemSchema]
-    totalAmount: float = Field(..., ge=0)
-    discountApplied: Optional[str] = None
-    promotionApplied: Optional[str] = None
-    status: OrderStatus = OrderStatus.PENDING
+    store_id: int
+    items: List[CreateOrderItemSchema]
 
 
 class UpdateOrderSchema(BaseModel):

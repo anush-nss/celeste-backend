@@ -8,6 +8,8 @@ from src.config.cache_config import cache_config
 from src.shared.utils import get_logger
 import hashlib
 
+from src.api.pricing.models import PriceListLineSchema, PriceListSchema
+
 logger = get_logger(__name__)
 
 
@@ -100,30 +102,36 @@ class PricingCache:
         ttl = cache_config.get_ttl("bulk_pricing")
         return self.cache.set(key, pricing_data, ttl_seconds=ttl)
 
-    def get_price_lists(self, active_only: bool = False) -> Optional[List]:
+    def get_price_lists(self, active_only: bool = False) -> Optional[List[PriceListSchema]]:
         """Get cached price lists"""
         key = self.get_price_lists_key(active_only)
-        return self.cache.get(key)
+        cached_data = self.cache.get(key)
+        if cached_data:
+            return [PriceListSchema(**item) for item in cached_data]
+        return None
 
-    def set_price_lists(self, price_lists: List, active_only: bool = False) -> bool:
+    def set_price_lists(self, price_lists: List[PriceListSchema], active_only: bool = False) -> bool:
         """Cache price lists with configured TTL"""
         key = self.get_price_lists_key(active_only)
         ttl = cache_config.get_ttl("price_lists")
-        return self.cache.set(key, price_lists, ttl_seconds=ttl)
+        return self.cache.set(key, [pl.model_dump() for pl in price_lists], ttl_seconds=ttl)
 
-    def get_price_list_lines(self, price_list_id: str) -> Optional[List]:
+    def get_price_list_lines(self, price_list_id: str) -> Optional[List[PriceListLineSchema]]:
         """Get cached price list lines"""
         key = self.get_price_list_lines_key(price_list_id)
-        return self.cache.get(key)
+        cached_data = self.cache.get(key)
+        if cached_data:
+            return [PriceListLineSchema(**item) for item in cached_data]
+        return None
 
-    def set_price_list_lines(self, price_list_id: str, lines: List) -> bool:
+    def set_price_list_lines(self, price_list_id: str, lines: List[PriceListLineSchema]) -> bool:
         """Cache price list lines with configured TTL"""
         key = self.get_price_list_lines_key(price_list_id)
         ttl = cache_config.get_ttl("price_list_lines")
-        return self.cache.set(key, lines, ttl_seconds=ttl)
+        return self.cache.set(key, [line.model_dump() for line in lines], ttl_seconds=ttl)
 
     # Cache invalidation methods
-    def invalidate_pricing_cache(self, scope: str = None) -> int:
+    def invalidate_pricing_cache(self, scope: Optional[str] = None) -> int:
         """Invalidate pricing-related caches with selective scope"""
         # Default scope if not provided
         if scope is None:

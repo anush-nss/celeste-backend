@@ -3,7 +3,6 @@ Centralized cache invalidation manager for all domains
 """
 
 from typing import Optional, Dict, Any, List, Callable
-from enum import Enum
 from src.shared.utils import get_logger
 from src.config.constants import Collections, CacheScopes
 from src.config.cache_config import cache_config
@@ -11,7 +10,7 @@ from src.config.cache_config import cache_config
 logger = get_logger(__name__)
 
 
-# Use the constants from config for backward compatibility
+# Use the constants from config
 CacheInvalidationScope = CacheScopes
 
 
@@ -155,9 +154,9 @@ class CacheInvalidationManager:
         """Convenience method for product invalidation"""
         return self.invalidate_entity(Collections.PRODUCTS, product_id, CacheScopes.CROSS_DOMAIN)
     
-    def invalidate_category(self, category_id: Optional[str] = None) -> int:
+    def invalidate_category(self, category_id: Optional[int] = None) -> int:
         """Convenience method for category invalidation"""
-        return self.invalidate_entity(Collections.CATEGORIES, category_id, CacheScopes.CROSS_DOMAIN)
+        return self.invalidate_entity(Collections.CATEGORIES, str(category_id), CacheScopes.CROSS_DOMAIN)
     
     def invalidate_tier(self, tier_id: Optional[str] = None) -> int:
         """Convenience method for tier invalidation"""

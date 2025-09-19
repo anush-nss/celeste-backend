@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends, status, Query, HTTPException
-from typing import Annotated, List, Optional
+from typing import Annotated, List, Optional, Union
 from src.api.stores.models import (
     StoreSchema,
     CreateStoreSchema,
     UpdateStoreSchema,
     StoreQuerySchema,
     StoreLocationResponse,
-    StoreFeatures,
+    StoreTagSchema,
 )
+from src.api.tags.models import CreateTagSchema, TagSchema, UpdateTagSchema
 from src.api.stores.service import StoreService
 from src.dependencies.auth import RoleChecker
 from src.config.constants import (
@@ -27,6 +28,123 @@ from src.shared.responses import success_response
 stores_router = APIRouter(prefix="/stores", tags=["Stores"])
 store_service = StoreService()
 
+
+# ===== STORE TAG CRUD ROUTES (must come before /{id} route) =====
+
+@stores_router.post(
+    "/tags",
+    summary="Create one or more new store tags",
+    response_model=Union[TagSchema, List[TagSchema]],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def create_store_tags(payload: Union[CreateTagSchema, List[CreateTagSchema]]):
+    """Create one or more new tags for stores (Admin only)."""
+    is_list = isinstance(payload, list)
+    tags_to_create = payload if is_list else [payload]
+
+    if not tags_to_create:
+        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+
+    created_tags = await store_service.create_store_tags(tags_to_create)
+
+    if is_list:
+        return success_response(
+            [t.model_dump(mode="json") for t in created_tags], status_code=status.HTTP_201_CREATED
+        )
+    else:
+        return success_response(
+            created_tags[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+        )
+
+
+@stores_router.get(
+    "/tags",
+    summary="Get all store tags",
+    response_model=List[TagSchema],
+)
+async def get_store_tags(
+    is_active: Optional[bool] = Query(True, description="Filter by active status"),
+    tag_type_suffix: Optional[str] = Query(None, description="Filter by tag type suffix (e.g., 'features', 'amenities')"),
+):
+    """Get all store tags."""
+    tags = await store_service.get_store_tags(is_active=is_active if is_active is not None else True, tag_type_suffix=tag_type_suffix)
+    return success_response(
+        [TagSchema.model_validate(tag).model_dump(mode="json") for tag in tags]
+    )
+
+
+@stores_router.get(
+    "/tags/types",
+    summary="Get all available store tag types",
+    response_model=List[str],
+)
+async def get_store_tag_types():
+    """Get all unique tag types for stores only"""
+    from src.database.connection import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy.future import select
+        from sqlalchemy import distinct
+        from src.database.models.product import Tag
+
+        query = select(distinct(Tag.tag_type)).filter(
+            Tag.is_active == True,
+            Tag.tag_type.like('store_%')
+        ).order_by(Tag.tag_type)
+        result = await session.execute(query)
+        tag_types = result.scalars().all()
+
+    return success_response(list(tag_types))
+
+
+@stores_router.get(
+    "/tags/{tag_id}",
+    summary="Get a store tag by ID",
+    response_model=TagSchema,
+)
+async def get_store_tag_by_id(tag_id: int):
+    """Get a specific store tag by ID"""
+    tag = await store_service.tag_service.get_tag_by_id(tag_id)
+
+    if not tag:
+        raise ResourceNotFoundException(detail=f"Store tag with ID {tag_id} not found")
+
+    return success_response(TagSchema.model_validate(tag).model_dump(mode="json"))
+
+
+@stores_router.put(
+    "/tags/{tag_id}",
+    summary="Update a store tag",
+    response_model=TagSchema,
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def update_store_tag(tag_id: int, tag_data: UpdateTagSchema):
+    """Update an existing store tag"""
+    updated_tag = await store_service.tag_service.update_tag(tag_id, tag_data)
+
+    if not updated_tag:
+        raise ResourceNotFoundException(detail=f"Store tag with ID {tag_id} not found")
+
+    return success_response(TagSchema.model_validate(updated_tag).model_dump(mode="json"))
+
+
+@stores_router.delete(
+    "/tags/{tag_id}",
+    summary="Delete a store tag",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def delete_store_tag(tag_id: int):
+    """Delete a store tag (soft delete by setting is_active to False)"""
+    success = await store_service.tag_service.deactivate_tag(tag_id)
+
+    if not success:
+        raise ResourceNotFoundException(detail=f"Store tag with ID {tag_id} not found")
+
+    return success_response({"id": tag_id, "message": "Store tag deactivated successfully"})
+
+
+# ===== STORE ROUTES =====
 
 @stores_router.get("/", summary="Get all stores with optional location filtering", response_model=StoreLocationResponse)
 async def get_all_stores(
@@ -48,15 +166,15 @@ async def get_all_stores(
         le=MAX_STORES_LIMIT,
         description="Maximum number of stores to return",
     ),
-    isActive: Optional[bool] = Query(True, description="Filter by store status"),
-    features: Optional[List[StoreFeatures]] = Query(
-        None, description="Filter by store features"
+    is_active: Optional[bool] = Query(True, description="Filter by store status"),
+    tags: Optional[List[str]] = Query(
+        None, description="Filter by tags (flexible syntax: 'organic', 'id:5', 'type:amenities', 'value:wifi')"
     ),
-    includeDistance: Optional[bool] = Query(
+    include_distance: Optional[bool] = Query(
         True, description="Include distance calculations (requires lat/lon)"
     ),
-    includeOpenStatus: Optional[bool] = Query(
-        False, description="Include open/closed status"
+    include_tags: Optional[bool] = Query(
+        False, description="Include tag information"
     ),
 ):
     """
@@ -84,25 +202,24 @@ async def get_all_stores(
         longitude=longitude,
         radius=radius,
         limit=limit,
-        isActive=isActive,
-        features=features,
-        includeDistance=includeDistance if (latitude is not None and longitude is not None) else False,
-        includeOpenStatus=includeOpenStatus,
+        is_active=is_active,
+        tags=tags,
+        include_distance=include_distance if (latitude is not None and longitude is not None) else False,
+        include_tags=include_tags,
     )
 
-    try:
-        # If location AND radius provided, use location-based search for filtering
-        # If only location provided, use get_all_stores with distance calculations
-        if latitude is not None and longitude is not None and radius is not None:
-            result = await store_service.get_stores_by_location(query_params)
-        else:
-            result = await store_service.get_all_stores(query_params)
-        
+    # If location AND radius provided, use location-based search for filtering
+    # If only location provided, use get_all_stores with distance calculations
+    if latitude is not None and longitude is not None and radius is not None:
+        stores_list = await store_service.get_stores_by_location(query_params)
+        # get_stores_by_location returns List[Dict[str, Any]], so return it directly
+        return success_response(stores_list, status_code=status.HTTP_200_OK)
+    else:
+        result = await store_service.get_all_stores(query_params)
+        # get_all_stores returns StoreLocationResponse, so convert to JSON
         return success_response(
             result.model_dump(mode="json"), status_code=status.HTTP_200_OK
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 @stores_router.get(
@@ -129,14 +246,14 @@ async def get_nearby_stores(
         le=MAX_STORES_LIMIT,
         description="Max stores to return",
     ),
-    features: Optional[List[StoreFeatures]] = Query(
-        None, description="Required store features"
+    tags: Optional[List[str]] = Query(
+        None, description="Filter by tags (flexible syntax: 'organic', 'id:5', 'type:amenities', 'value:wifi')"
     ),
-    includeDistance: Optional[bool] = Query(
+    include_distance: Optional[bool] = Query(
         True, description="Include distance calculations"
     ),
-    includeOpenStatus: Optional[bool] = Query(
-        True, description="Include business hours status"
+    include_tags: Optional[bool] = Query(
+        False, description="Include tag information"
     ),
 ):
     """
@@ -151,34 +268,30 @@ async def get_nearby_stores(
         longitude=longitude,
         radius=radius,
         limit=limit,
-        isActive=True,  # Only active stores for nearby search
-        features=features,
-        includeDistance=includeDistance,
-        includeOpenStatus=includeOpenStatus,
+        is_active=True,  # Only active stores for nearby search
+        tags=tags,
+        include_distance=include_distance,
+        include_tags=include_tags,
     )
 
-    try:
-        result = await store_service.get_stores_by_location(query_params)
-        return success_response(
-            result.model_dump(mode="json"), status_code=status.HTTP_200_OK
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    result = await store_service.get_stores_by_location(query_params)
+    return success_response(
+        result, status_code=status.HTTP_200_OK
+    )
 
 
 @stores_router.get("/{store_id}", summary="Get store by ID", response_model=StoreSchema)
 async def get_store_by_id(
-    store_id: str,
-    includeInventory: Optional[bool] = Query(
-        False, description="Include inventory for the store"
+    store_id: int,
+    include_tags: Optional[bool] = Query(
+        False, description="Include tag information"
     ),
 ):
     """Get detailed information about a specific store."""
-    store = await store_service.get_store_by_id(store_id)
+    store = await store_service.get_store_by_id(store_id, include_tags=include_tags)
     if not store:
         raise ResourceNotFoundException(detail=f"Store with ID {store_id} not found")
 
-    # TODO: Implement inventory inclusion logic if needed
     return success_response(
         store.model_dump(mode="json"), status_code=status.HTTP_200_OK
     )
@@ -188,7 +301,7 @@ async def get_store_by_id(
     "/{store_id}/distance", summary="Calculate distance to specific store"
 )
 async def get_store_distance(
-    store_id: str,
+    store_id: int,
     latitude: float = Query(
         ..., ge=MIN_LATITUDE, le=MAX_LATITUDE, description="User latitude"
     ),
@@ -206,13 +319,10 @@ async def get_store_distance(
     if not store:
         raise ResourceNotFoundException(detail=f"Store with ID {store_id} not found")
 
-    if not store.location:
-        raise HTTPException(status_code=400, detail="Store location not available")
-
     from src.shared.geo_utils import GeoUtils
 
     distance = GeoUtils.calculate_distance(
-        latitude, longitude, store.location.latitude, store.location.longitude
+        latitude, longitude, store.latitude, store.longitude
     )
 
     return success_response(
@@ -221,8 +331,8 @@ async def get_store_distance(
             "store_name": store.name,
             "user_location": {"latitude": latitude, "longitude": longitude},
             "store_location": {
-                "latitude": store.location.latitude,
-                "longitude": store.location.longitude,
+                "latitude": store.latitude,
+                "longitude": store.longitude,
             },
             "distance_km": round(distance, 1),
             "store_address": store.address,
@@ -244,13 +354,10 @@ async def create_store(store_data: CreateStoreSchema):
     - **Location storage**: Stores latitude and longitude coordinates
     - **Validation**: Full input validation with location bounds checking
     """
-    try:
-        new_store = await store_service.create_store(store_data)
-        return success_response(
-            new_store.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    new_store = await store_service.create_store(store_data)
+    return success_response(
+        new_store.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+    )
 
 
 @stores_router.put(
@@ -259,24 +366,21 @@ async def create_store(store_data: CreateStoreSchema):
     response_model=StoreSchema,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def update_store(store_id: str, store_data: UpdateStoreSchema):
+async def update_store(store_id: int, store_data: UpdateStoreSchema):
     """
     Update an existing store (Admin only).
 
     - **Location update**: Updates latitude and longitude coordinates if location changes
     - **Partial updates**: Only updates provided fields
     """
-    try:
-        updated_store = await store_service.update_store(store_id, store_data)
-        if not updated_store:
-            raise ResourceNotFoundException(
-                detail=f"Store with ID {store_id} not found"
-            )
-        return success_response(
-            updated_store.model_dump(mode="json"), status_code=status.HTTP_200_OK
+    updated_store = await store_service.update_store(store_id, store_data)
+    if not updated_store:
+        raise ResourceNotFoundException(
+            detail=f"Store with ID {store_id} not found"
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return success_response(
+        updated_store.model_dump(mode="json"), status_code=status.HTTP_200_OK
+    )
 
 
 @stores_router.delete(
@@ -284,7 +388,7 @@ async def update_store(store_id: str, store_data: UpdateStoreSchema):
     summary="Delete a store",
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def delete_store(store_id: str):
+async def delete_store(store_id: int):
     """
     Delete a store (Admin only).
 
@@ -295,4 +399,58 @@ async def delete_store(store_id: str):
     return success_response(
         {"store_id": store_id, "message": "Store deleted successfully"},
         status_code=status.HTTP_200_OK,
+    )
+
+
+# Store-Tag assignment routes (tag CRUD is handled by /tags API)
+
+@stores_router.post(
+    "/{store_id}/tags/{tag_id}",
+    summary="Assign a tag to a store",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def assign_tag_to_store(
+    store_id: int,
+    tag_id: int,
+    value: Optional[str] = Query(None, description="Optional tag value"),
+):
+    """Assign a tag to a store (Admin only)."""
+    await store_service.assign_tag_to_store(store_id, tag_id, value)
+    return success_response(
+        {"store_id": store_id, "tag_id": tag_id, "message": "Tag assigned successfully"}
+    )
+
+
+@stores_router.delete(
+    "/{store_id}/tags/{tag_id}",
+    summary="Remove a tag from a store",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def remove_tag_from_store(store_id: int, tag_id: int):
+    """Remove a tag from a store (Admin only)."""
+    if not await store_service.remove_tag_from_store(store_id, tag_id):
+        raise ResourceNotFoundException(
+            detail=f"Tag {tag_id} is not assigned to store {store_id}"
+        )
+    return success_response(
+        {"store_id": store_id, "tag_id": tag_id, "message": "Tag removed successfully"}
+    )
+
+
+@stores_router.get(
+    "/{store_id}/tags",
+    summary="Get all tags assigned to a store",
+    response_model=List[StoreTagSchema],
+)
+async def get_store_tags_by_id(store_id: int):
+    """Get all tags assigned to a specific store."""
+    store = await store_service.get_store_by_id(store_id, include_tags=True)
+    if not store:
+        raise ResourceNotFoundException(detail=f"Store with ID {store_id} not found")
+    
+    if not store.store_tags:
+        return success_response([])
+    
+    return success_response(
+        [StoreTagSchema.model_validate(tag).model_dump(mode="json") for tag in store.store_tags]
     )

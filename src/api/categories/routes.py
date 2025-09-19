@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, status
-from typing import Annotated, List
+from fastapi import APIRouter, Depends, status, Query, HTTPException
+from typing import Annotated, List, Union
 from src.api.categories.models import (
-    CategorySchema,
     CreateCategorySchema,
     UpdateCategorySchema,
+    CategoryQuerySchema,
+    CategorySchema,
 )
 from src.api.categories.service import CategoryService
 from src.dependencies.auth import RoleChecker
@@ -18,25 +19,25 @@ category_service = CategoryService()
 @categories_router.get(
     "/", summary="Get all categories", response_model=List[CategorySchema]
 )
-async def get_all_categories():
-    categories = await category_service.get_all_categories()
+async def get_all_categories(query: CategoryQuerySchema = Query(True, description="Whether to include subcategories in the response")):
+    categories = await category_service.get_all_categories(include_subcategories=query.include_subcategories)
     return success_response([c.model_dump(mode="json") for c in categories])
 
 
 @categories_router.get(
     "/{id}", summary="Get a category by ID", response_model=CategorySchema
 )
-async def get_category_by_id(id: str):
+async def get_category_by_id(id: int): # Changed id type to int
     category = await category_service.get_category_by_id(id)
     if not category:
         raise ResourceNotFoundException(detail=f"Category with ID {id} not found")
-    return success_response(category.model_dump())
+    return success_response(category.model_dump(mode="json"))
 
 
 @categories_router.post(
     "/",
-    summary="Create a new category",
-    response_model=CategorySchema,
+    summary="Create one or more new categories",
+    response_model=Union[CategorySchema, List[CategorySchema]],
     status_code=status.HTTP_201_CREATED,
     dependencies=[
         Depends(
@@ -46,11 +47,23 @@ async def get_category_by_id(id: str):
         )
     ],
 )
-async def create_category(category_data: CreateCategorySchema):
-    new_category = await category_service.create_category(category_data)
-    return success_response(
-        new_category.model_dump(), status_code=status.HTTP_201_CREATED
-    )
+async def create_categories(payload: Union[CreateCategorySchema, List[CreateCategorySchema]]):
+    is_list = isinstance(payload, list)
+    categories_to_create = payload if is_list else [payload]
+    
+    if not categories_to_create:
+        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+
+    created_categories = await category_service.create_categories(categories_to_create)
+    
+    if is_list:
+        return success_response(
+            [c.model_dump(mode="json") for c in created_categories], status_code=status.HTTP_201_CREATED
+        )
+    else:
+        return success_response(
+            created_categories[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+        )
 
 
 @categories_router.put(
@@ -59,11 +72,11 @@ async def create_category(category_data: CreateCategorySchema):
     response_model=CategorySchema,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def update_category(id: str, category_data: UpdateCategorySchema):
+async def update_category(id: int, category_data: UpdateCategorySchema): # Changed id type to int
     updated_category = await category_service.update_category(id, category_data)
     if not updated_category:
         raise ResourceNotFoundException(detail=f"Category with ID {id} not found")
-    return success_response(updated_category.model_dump())
+    return success_response(updated_category.model_dump(mode="json"))
 
 
 @categories_router.delete(
@@ -71,7 +84,7 @@ async def update_category(id: str, category_data: UpdateCategorySchema):
     summary="Delete a category",
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def delete_category(id: str):
+async def delete_category(id: int): # Changed id type to int
     if not await category_service.delete_category(id):
         raise ResourceNotFoundException(detail=f"Category with ID {id} not found")
     return success_response({"id": id, "message": "Category deleted successfully"})

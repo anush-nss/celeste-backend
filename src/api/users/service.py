@@ -1,234 +1,457 @@
-from typing import Optional
-from src.shared.database import get_async_db, get_async_collection
-from src.api.users.models import CreateUserSchema, UserSchema, CartItemSchema
+from typing import Optional, List, cast
+from sqlalchemy.future import select
+from sqlalchemy import CursorResult, update
+from sqlalchemy.orm import selectinload
+from src.database.connection import AsyncSessionLocal
+from src.database.models.user import User
+from src.database.models.cart import Cart
+from src.database.models.address import Address
+# Import all models to ensure relationships are properly registered
+import src.database.models
+from src.api.users.models import CreateUserSchema, UserSchema, AddToCartSchema, UpdateCartItemSchema, AddressSchema, UpdateAddressSchema, CartItemSchema
 from src.config.constants import UserRole, DEFAULT_FALLBACK_TIER
 from src.api.tiers.service import TierService
-from src.shared.exceptions import ResourceNotFoundException
+from src.shared.exceptions import ResourceNotFoundException, ConflictException, ValidationException
+from src.shared.sqlalchemy_utils import safe_model_validate, safe_model_validate_list
+from src.shared.error_handler import ErrorHandler, handle_service_errors
+from sqlalchemy.exc import IntegrityError
+
+
+def _user_to_dict(user: User, include_addresses: bool = False, include_cart: bool = False) -> dict:
+    """Convert SQLAlchemy User to dictionary, handling relationships properly"""
+    user_dict = {
+        "firebase_uid": user.firebase_uid,
+        "name": user.name,
+        "email": user.email,
+        "phone": user.phone,
+        "role": user.role,
+        "tier_id": user.tier_id,
+        "total_orders": getattr(user, 'total_orders', 0),
+        "lifetime_value": getattr(user, 'lifetime_value', 0.0),
+        "created_at": getattr(user, 'created_at', None),
+        "last_order_at": getattr(user, 'last_order_at', None),
+        "is_delivery": getattr(user, 'is_delivery', None),
+        "addresses": None,
+        "cart": None
+    }
+    
+    # Only add addresses if they are loaded and requested
+    if include_addresses:
+        try:
+            if hasattr(user, '__dict__') and 'addresses' in user.__dict__ and user.addresses is not None:
+                user_dict["addresses"] = [AddressSchema.model_validate(addr) for addr in user.addresses]
+            else:
+                user_dict["addresses"] = []
+        except Exception:
+            user_dict["addresses"] = []
+    
+    return user_dict
+
+
+def _cart_to_dict(cart: Cart) -> dict:
+    """Convert SQLAlchemy Cart to dictionary"""
+    return {
+        "user_id": cart.user_id,
+        "product_id": cart.product_id,
+        "quantity": cart.quantity,
+        "created_at": getattr(cart, 'created_at', None),
+        "updated_at": getattr(cart, 'updated_at', None)
+    }
 
 
 class UserService:
     def __init__(self):
         self.tier_service = TierService()
+        self._error_handler = ErrorHandler(__name__)
 
-    async def get_users_collection(self):
-        return await get_async_collection("users")
-
+    @handle_service_errors("creating user")
     async def create_user(self, user_data: CreateUserSchema, uid: str) -> UserSchema:
-        user_dict = user_data.model_dump()
-        user_dict["id"] = uid
+        if not uid or not uid.strip():
+            raise ValidationException(detail="Valid Firebase UID is required")
 
-        # The role and customer_tier fields are already set by default in the models
-        # but ensure they are stored as string values in Firestore
-        if "role" in user_dict and hasattr(user_dict["role"], "value"):
-            user_dict["role"] = user_dict["role"].value
-        elif "role" not in user_dict or user_dict["role"] is None:
-            user_dict["role"] = UserRole.CUSTOMER.value
+        if not user_data.name or not user_data.name.strip():
+            raise ValidationException(detail="Valid user name is required")
 
-        # Set default customer tier when creating user
-        default_tier = await self.tier_service.get_default_tier()
-        user_dict["customer_tier"] = default_tier
+        async with AsyncSessionLocal() as session:
+            # Check if user already exists
+            existing_user = await session.execute(
+                select(User).filter(User.firebase_uid == uid.strip())
+            )
+            if existing_user.scalars().first():
+                raise ConflictException(detail=f"User with UID {uid} already exists")
 
-        users_collection = await self.get_users_collection()
-        await users_collection.document(uid).set(user_dict)
-        created_user_doc = await users_collection.document(uid).get()
-        created_dict = created_user_doc.to_dict()
-        if created_dict:  # Ensure created_dict is not None
-            return UserSchema(**created_dict)
-        else:
-            # Handle the case where the document doesn't exist after creation
-            raise Exception("Failed to create user")
+            # Try to set default customer tier when creating user, but allow null if no tiers exist
+            default_tier = None
+            try:
+                default_tier = await self.tier_service.get_default_tier()
+            except Exception:
+                # If no tiers exist, leave tier_id as None
+                pass
 
-    async def get_user_by_id(self, user_id: str) -> UserSchema | None:
-        users_collection = await self.get_users_collection()
-        user_doc = await users_collection.document(user_id).get()
-        if user_doc.exists:
-            user_dict = user_doc.to_dict()
-            if user_dict:  # Ensure user_dict is not None
-                return UserSchema(**user_dict)
-        return None
+            new_user = User(
+                firebase_uid=uid.strip(),
+                name=user_data.name.strip(),
+                email=user_data.email,
+                phone=user_data.phone,
+                role=user_data.role.value,
+                tier_id=default_tier,
+            )
+            session.add(new_user)
+            await session.commit()
+            await session.refresh(new_user)
+
+            # Convert SQLAlchemy model to dict, then to Pydantic schema
+            user_dict = _user_to_dict(new_user)
+            return UserSchema.model_validate(user_dict)
+
+    @handle_service_errors("retrieving user by ID")
+    async def get_user_by_id(self, user_id: str, include_cart: bool = False, include_addresses: bool = False) -> UserSchema | None:
+        if not user_id or not user_id.strip():
+            raise ValidationException(detail="Valid user ID is required")
+
+        async with AsyncSessionLocal() as session:
+            query = select(User).filter(User.firebase_uid == user_id.strip())
+
+            if include_addresses:
+                query = query.options(selectinload(User.addresses))
+
+            result = await session.execute(query)
+            user = result.scalars().first()
+
+            if user:
+                # Convert SQLAlchemy model to Pydantic schema using safe converter
+                include_rels = {'addresses'} if include_addresses else set()
+                user_schema_data = safe_model_validate(
+                    UserSchema,
+                    user,
+                    include_relationships=include_rels
+                )
+
+                if include_cart: # Only fetch and assign if include_cart is True
+                    cart_result = await session.execute(
+                        select(Cart).filter(Cart.user_id == user_id.strip())
+                    )
+                    cart_items = cart_result.scalars().all()
+                    user_schema_data.cart = safe_model_validate_list(CartItemSchema, cart_items)
+
+                return user_schema_data
+            return None
 
     async def update_user(self, user_id: str, user_data: dict) -> UserSchema | None:
-        users_collection = await self.get_users_collection()
-        await users_collection.document(user_id).update(user_data)
-        updated_user_doc = await users_collection.document(user_id).get()
-        if updated_user_doc.exists:
-            updated_dict = updated_user_doc.to_dict()
-            if updated_dict:
-                return UserSchema(**updated_dict)
-        return None
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User).filter(User.firebase_uid == user_id))
+            user = result.scalars().first()
+            if user:
+                for key, value in user_data.items():
+                    if key == "role" and isinstance(value, UserRole):
+                        setattr(user, key, value.value) # Store enum value as string
+                    else:
+                        setattr(user, key, value)
+                await session.commit()
+                await session.refresh(user)
+                # Convert SQLAlchemy model to Pydantic schema using safe converter
+                return safe_model_validate(UserSchema, user)
+            return None
 
-    async def add_to_cart(self, user_id: str, product_id: str, quantity: int) -> dict:
-        user = await self.get_user_by_id(user_id)
-        if not user:
-            raise Exception(f"User with ID {user_id} not found")
+    @handle_service_errors("adding to cart")
+    async def add_to_cart(self, user_id: str, item: AddToCartSchema) -> CartItemSchema | None:
+        if not item.product_id:
+            raise ValidationException(detail="Valid product ID is required")
 
-        # Initialize cart if it doesn't exist
-        if not user.cart:
-            user.cart = []
+        if item.quantity <= 0 or item.quantity > 1000:
+            raise ValidationException(detail="Quantity must be between 1 and 1000")
 
-        # Check if product already in cart
-        cart_item = None
-        for existing_item in user.cart:
-            if existing_item.productId == product_id:
-                existing_item.quantity += quantity
-                cart_item = existing_item
-                break
+        async with AsyncSessionLocal() as session:
+            try:
+                # Verify user exists
+                user_exists = await session.execute(
+                    select(User).filter(User.firebase_uid == user_id.strip())
+                )
+                if not user_exists.scalars().first():
+                    raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
 
-        # If not in cart, create new cart item
-        if not cart_item:
-            cart_item = CartItemSchema(
-                productId=product_id,
-                quantity=quantity,
-            )
-            user.cart.append(cart_item)
-
-        # Update user in database
-        user_dict = user.model_dump()
-        users_collection = await self.get_users_collection()
-        await users_collection.document(user_id).update({"cart": user_dict["cart"]})
-
-        return cart_item.model_dump()
-
-    async def update_cart_item(
-        self, user_id: str, product_id: str, quantity: int
-    ) -> dict:
-        user = await self.get_user_by_id(user_id)
-        if not user:
-            raise Exception(f"User with ID {user_id} not found")
-
-        # Find the cart item
-        cart_item = None
-        if user.cart:
-            for existing_item in user.cart:
-                if existing_item.productId == product_id:
-                    existing_item.quantity = quantity
-                    cart_item = existing_item
-                    break
-
-        if not cart_item:
-            raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
-
-        # Update user in database
-        user_dict = user.model_dump()
-        users_collection = await self.get_users_collection()
-        await users_collection.document(user_id).update({"cart": user_dict["cart"]})
-
-        return cart_item.model_dump()
-
-    async def remove_from_cart(self, user_id: str, product_id: str, quantity: Optional[int] = None) -> dict:
-        user = await self.get_user_by_id(user_id)
-        if not user:
-            raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
-
-        # Find the cart item
-        cart_item = None
-        item_index = None
-        
-        if user.cart:
-            for i, item in enumerate(user.cart):
-                if item.productId == product_id:
-                    cart_item = item
-                    item_index = i
-                    break
-        
-        if not cart_item or item_index is None:
-            raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
-
-        result = {"action": "", "previous_quantity": cart_item.quantity}
-        
-        # Ensure user.cart exists before modifying
-        if not user.cart:
-            raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
-        
-        if quantity is None:
-            # Complete removal - remove product entirely
-            user.cart.pop(item_index)
-            result["action"] = "removed_completely"
-            result["new_quantity"] = 0
-        else:
-            # Partial removal - reduce quantity
-            if quantity >= cart_item.quantity:
-                # If requested quantity >= current quantity, remove completely
-                user.cart.pop(item_index)
-                result["action"] = "removed_completely" 
-                result["new_quantity"] = 0
-                result["note"] = f"Requested quantity ({quantity}) >= available quantity ({cart_item.quantity}), removed completely"
-            else:
-                # Reduce quantity
-                cart_item.quantity -= quantity
-                result["action"] = "quantity_reduced"
-                result["new_quantity"] = cart_item.quantity
-                result["quantity_removed"] = quantity
-
-        # Update user in database
-        user_dict = user.model_dump()
-        users_collection = await self.get_users_collection()
-        await users_collection.document(user_id).update({"cart": user_dict["cart"]})
-
-        return result
-
-    async def get_cart(self, user_id: str) -> list:
-        user = await self.get_user_by_id(user_id)
-        if not user:
-            raise Exception(f"User with ID {user_id} not found")
-
-        # Return cart items as dictionaries
-        if user.cart:
-            cart_items = []
-            for item in user.cart:
-                # If item is already a dict (from Firestore), use it directly
-                if isinstance(item, dict):
-                    cart_items.append(item)
+                # Use database-level atomic operation to update or insert
+                from sqlalchemy import text
+                # Try to update existing cart item
+                update_result = cast(
+                    CursorResult, 
+                    await session.execute(
+                        text("""
+                            UPDATE carts 
+                            SET quantity = LEAST(quantity + :quantity, 1000)
+                            WHERE user_id = :user_id AND product_id = :product_id
+                        """),
+                        {"user_id": user_id.strip(), "product_id": item.product_id, "quantity": item.quantity}
+                    )
+                )
+                
+                await session.commit()
+                
+                # If no rows were updated, insert a new cart item
+                if update_result.rowcount == 0:
+                    # Insert new cart item
+                    item_to_return = Cart(
+                        user_id=user_id.strip(),
+                        product_id=item.product_id,
+                        quantity=item.quantity
+                    )
+                    session.add(item_to_return)
+                    await session.commit()
+                    await session.refresh(item_to_return)
                 else:
-                    # If item is a CartItemSchema object, convert to dict
-                    cart_items.append(item.model_dump())
-            return cart_items
-        return []
+                    # Fetch the updated item
+                    cart_item_query = await session.execute(
+                        select(Cart).filter_by(user_id=user_id.strip(), product_id=item.product_id)
+                    )
+                    item_to_return = cart_item_query.scalars().first()
+                    if item_to_return:
+                        await session.refresh(item_to_return)
+                    else:
+                        # This shouldn't happen, but let's handle it gracefully
+                        raise ResourceNotFoundException(detail=f"Cart item not found after update")
 
-    async def add_to_wishlist(self, user_id: str, product_id: str) -> bool:
-        user = await self.get_user_by_id(user_id)
-        if not user:
-            raise Exception(f"User with ID {user_id} not found")
+                return CartItemSchema.model_validate(item_to_return)
+            except Exception as e:
+                # Log the specific error for debugging
+                self._error_handler.logger.error(f"Error in add_to_cart: {str(e)}", extra={
+                    "user_id": user_id,
+                    "product_id": item.product_id,
+                    "quantity": item.quantity
+                })
+                raise
 
-        # Initialize wishlist if it doesn't exist
-        if not user.wishlist:
-            user.wishlist = []
+    async def update_cart_item(self, user_id: str, product_id: int, item: UpdateCartItemSchema) -> CartItemSchema | None:
+        quantity = item.quantity
+        if quantity <= 0 or quantity > 1000:
+            raise ValidationException(detail="Quantity must be between 1 and 1000")
+            
+        async with AsyncSessionLocal() as session:
+            # Use database-level atomic operation to update
+            from sqlalchemy import text
+            result = cast(
+                    CursorResult,  await session.execute(
+                text("""
+                    UPDATE carts 
+                    SET quantity = :quantity
+                    WHERE user_id = :user_id AND product_id = :product_id
+                """),
+                    {
+                        "user_id": user_id,
+                        "product_id": product_id,
+                        "quantity": quantity
+                    }
+                )
+            )
+            
+            await session.commit()
+            
+            if result.rowcount == 0:
+                raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
+            
+            # Fetch the updated item
+            cart_item = await session.execute(
+                select(Cart).filter_by(user_id=user_id, product_id=product_id)
+            )
+            existing_item = cart_item.scalars().first()
+            
+            # Convert SQLAlchemy model to Pydantic schema
+            return CartItemSchema.model_validate(existing_item)
 
-        # Add product to wishlist if not already there
-        if product_id not in user.wishlist:
-            user.wishlist.append(product_id)
+    async def remove_from_cart(self, user_id: str, product_id: int, quantity: Optional[int] = None) -> dict:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text
+            
+            if quantity is None:
+                # Remove completely
+                result = cast(
+                    CursorResult, await session.execute(
+                    text("""
+                        DELETE FROM carts 
+                        WHERE user_id = :user_id AND product_id = :product_id
+                    """),
+                        {
+                            "user_id": user_id,
+                            "product_id": product_id
+                        }
+                    )
+                )
+                
+                await session.commit()
+                
+                if result.rowcount == 0:
+                    raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
+                
+                return {
+                    "action": "removed_completely",
+                    "previous_quantity": 0,  # We don't know the previous quantity in this approach
+                    "new_quantity": 0
+                }
+            else:
+                # Partial removal - update quantity
+                # First get current quantity
+                cart_item = await session.execute(
+                    select(Cart).filter_by(user_id=user_id, product_id=product_id)
+                )
+                existing_item = cart_item.scalars().first()
+                
+                if not existing_item:
+                    raise ResourceNotFoundException(detail=f"Product {product_id} not found in user's cart")
+                
+                current_quantity = existing_item.quantity
+                result = {"action": "", "previous_quantity": current_quantity}
+                
+                if quantity >= current_quantity:
+                    # Remove completely
+                    await session.execute(
+                        text("""
+                            DELETE FROM cart 
+                            WHERE user_id = :user_id AND product_id = :product_id
+                        """),
+                        {
+                            "user_id": user_id,
+                            "product_id": product_id
+                        }
+                    )
+                    result["action"] = "removed_completely"
+                    result["new_quantity"] = 0
+                else:
+                    # Reduce quantity
+                    new_quantity = current_quantity - quantity
+                    await session.execute(
+                        text("""
+                            UPDATE carts 
+                            SET quantity = :quantity
+                            WHERE user_id = :user_id AND product_id = :product_id
+                        """),
+                        {
+                            "user_id": user_id,
+                            "product_id": product_id,
+                            "quantity": new_quantity
+                        }
+                    )
+                    result["action"] = "quantity_reduced"
+                    result["new_quantity"] = new_quantity
+                    result["quantity_removed"] = quantity
+                
+                await session.commit()
+                return result
 
-        # Update user in database
-        user_dict = user.model_dump()
-        users_collection = await self.get_users_collection()
-        await users_collection.document(user_id).update(
-            {"wishlist": user_dict["wishlist"]}
-        )
+    async def get_cart(self, user_id: str) -> List[dict]:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Cart).filter_by(user_id=user_id)
+            )
+            cart_items = result.scalars().all()
+            return [{
+                "user_id": item.user_id,
+                "product_id": item.product_id,
+                "quantity": item.quantity
+            } for item in cart_items]
 
-        return True
+    async def add_address(self, user_id: str, address_data: AddressSchema) -> AddressSchema:
+        async with AsyncSessionLocal() as session:
+            # If new address is default, atomically set all other addresses for this user to not default
+            if address_data.is_default:
+                await session.execute(
+                    update(Address).where(Address.user_id == user_id).values(is_default=False)
+                )
 
-    async def remove_from_wishlist(self, user_id: str, product_id: str) -> bool:
-        user = await self.get_user_by_id(user_id)
-        if not user:
-            raise Exception(f"User with ID {user_id} not found")
+            new_address = Address(
+                user_id=user_id,
+                address=address_data.address,
+                latitude=address_data.latitude,
+                longitude=address_data.longitude,
+                is_default=address_data.is_default
+            )
+            session.add(new_address)
+            await session.commit()
+            await session.refresh(new_address)
+            return AddressSchema.model_validate(new_address)
 
-        # Remove product from wishlist
-        if user.wishlist:
-            if product_id in user.wishlist:
-                user.wishlist.remove(product_id)
+    async def get_addresses(self, user_id: str) -> List[AddressSchema]:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Address).filter_by(user_id=user_id)
+            )
+            addresses = result.scalars().all()
+            return safe_model_validate_list(AddressSchema, addresses)
 
-        # Update user in database
-        user_dict = user.model_dump()
-        users_collection = await self.get_users_collection()
-        await users_collection.document(user_id).update(
-            {"wishlist": user_dict["wishlist"]}
-        )
+    async def get_address_by_id(self, user_id: str, address_id: int) -> AddressSchema | None:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Address).filter_by(user_id=user_id, id=address_id)
+            )
+            address = result.scalars().first()
+            if address:
+                # Convert SQLAlchemy model to dict, then to Pydantic schema
+                return AddressSchema.model_validate(address)
+            return None
 
-        return True
+    async def update_address(self, user_id: str, address_id: int, address_data: UpdateAddressSchema) -> AddressSchema | None:
+        async with AsyncSessionLocal() as session:
+            # First verify the address exists and belongs to the user
+            result = await session.execute(
+                select(Address).filter_by(user_id=user_id, id=address_id)
+            )
+            address = result.scalars().first()
 
-    async def get_wishlist(self, user_id: str) -> list:
-        user = await self.get_user_by_id(user_id)
-        if not user:
-            raise Exception(f"User with ID {user_id} not found")
+            if not address:
+                raise ResourceNotFoundException(detail=f"Address with ID {address_id} not found for user {user_id}")
 
-        return user.wishlist if user.wishlist else []
+            update_data = address_data.model_dump(exclude_unset=True)
+            
+            # if no data to update, return early
+            if len(update_data) == 0:
+                raise ValidationException(detail="No data provided for update")
+
+            # Update the specific address with all provided fields
+            for field, value in update_data.items():
+                setattr(address, field, value)
+
+            await session.commit()
+            await session.refresh(address)
+            # Convert SQLAlchemy model to dict, then to Pydantic schema
+            return AddressSchema.model_validate(address)
+
+    async def delete_address(self, user_id: str, address_id: int) -> bool:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Address).filter_by(user_id=user_id, id=address_id)
+            )
+            address = result.scalars().first()
+
+            if not address:
+                return False
+
+            await session.delete(address)
+            await session.commit()
+            return True
+
+    async def set_default_address(self, user_id: str, address_id: int) -> AddressSchema | None:
+        async with AsyncSessionLocal() as session:
+            # Atomically unset current default address and set new default in one transaction
+            # First verify the address exists and belongs to the user
+            result = await session.execute(
+                select(Address).filter_by(user_id=user_id, id=address_id)
+            )
+            address = result.scalars().first()
+
+            if not address:
+                raise ResourceNotFoundException(detail=f"Address with ID {address_id} not found for user {user_id}")
+
+            # Atomically update all addresses for this user:
+            # 1. Set the specified address as default
+            # 2. Set all other addresses as non-default
+            await session.execute(
+                update(Address).where(Address.user_id == user_id).where(Address.id == address_id).values(is_default=True)
+            )
+            await session.execute(
+                update(Address).where(Address.user_id == user_id).where(Address.id != address_id).values(is_default=False)
+            )
+
+            await session.commit()
+            
+            # Refresh the specific address we're returning
+            await session.refresh(address)
+            # Convert SQLAlchemy model to dict, then to Pydantic schema
+            return AddressSchema.model_validate(address)
