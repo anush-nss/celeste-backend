@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, status, HTTPException
 from typing import List
+from src.api.auth.models import DecodedToken
 from src.api.orders.models import OrderSchema, CreateOrderSchema, UpdateOrderSchema
 from src.api.orders.service import OrderService
 from src.dependencies.auth import get_current_user, RoleChecker
 from src.config.constants import UserRole
 from src.shared.exceptions import ResourceNotFoundException, ForbiddenException
 from src.shared.responses import success_response
-from src.api.users.models import DecodedToken
 
 orders_router = APIRouter(prefix="/orders", tags=["Orders"])
 order_service = OrderService()
@@ -17,7 +17,7 @@ async def get_orders(current_user: DecodedToken = Depends(get_current_user)):
     if current_user.role == UserRole.ADMIN:
         orders = await order_service.get_all_orders()
     else:
-        orders = await order_service.get_all_orders(user_id=current_user.id)
+        orders = await order_service.get_all_orders(user_id=current_user.uid)
     return success_response(orders)
 
 
@@ -31,7 +31,7 @@ async def get_order_by_id(
     if not order:
         raise ResourceNotFoundException(detail=f"Order with ID {order_id} not found")
 
-    if current_user.role != UserRole.ADMIN and order.user_id != current_user.id:
+    if current_user.role != UserRole.ADMIN and order.user_id != current_user.uid:
         raise ForbiddenException("You do not have permission to access this order.")
 
     return success_response(order)
@@ -47,7 +47,7 @@ async def create__order(
     order_data: CreateOrderSchema,
     current_user: DecodedToken = Depends(get_current_user),
 ):
-    new_order = await order_service.create_order(order_data, current_user.id)
+    new_order = await order_service.create_order(order_data, current_user.uid)
     return success_response(new_order, status_code=status.HTTP_201_CREATED)
 
 

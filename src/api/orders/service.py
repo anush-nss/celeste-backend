@@ -18,7 +18,7 @@ class OrderService:
         self.inventory_service = InventoryService()
 
     @handle_service_errors("retrieving orders")
-    async def get_all_orders(self, user_id: Optional[int] = None) -> List[OrderSchema]:
+    async def get_all_orders(self, user_id: Optional[str] = None) -> List[OrderSchema]:
         async with AsyncSessionLocal() as session:
             query = select(Order).options(selectinload(Order.items))
             if user_id:
@@ -40,7 +40,7 @@ class OrderService:
 
     @handle_service_errors("creating order")
     async def create_order(
-        self, order_data: CreateOrderSchema, user_id: int
+        self, order_data: CreateOrderSchema, user_id: str
     ) -> OrderSchema:
         async with AsyncSessionLocal() as session:
             async with session.begin():

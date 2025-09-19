@@ -81,7 +81,7 @@ class InventoryService:
     @handle_service_errors("updating inventory")
     async def update_inventory(
         self, inventory_id: int, inventory_data: UpdateInventorySchema
-    ) -> InventorySchema | None:
+    ) -> InventorySchema:
         """Update an existing inventory item's stock levels."""
         async with AsyncSessionLocal() as session:
             # Use SELECT ... FOR UPDATE to lock the row
@@ -122,42 +122,41 @@ class InventoryService:
     ) -> InventorySchema:
         """Atomically adjust stock, hold, or reserved quantities."""
         async with AsyncSessionLocal() as session:
-            async with session.begin():
-                # Lock the specific inventory row for the duration of the transaction
-                result = await session.execute(
-                    select(Inventory).filter_by(
-                        product_id=adjustment_data.product_id,
-                        store_id=adjustment_data.store_id
-                    ).with_for_update()
+            # Lock the specific inventory row for the duration of the transaction
+            result = await session.execute(
+                select(Inventory).filter_by(
+                    product_id=adjustment_data.product_id,
+                    store_id=adjustment_data.store_id
+                ).with_for_update()
+            )
+            inventory = result.scalars().first()
+
+            if not inventory:
+                raise ResourceNotFoundException(
+                    f"Inventory for product {adjustment_data.product_id} at store {adjustment_data.store_id} not found."
                 )
-                inventory = result.scalars().first()
 
-                if not inventory:
-                    raise ResourceNotFoundException(
-                        f"Inventory for product {adjustment_data.product_id} at store {adjustment_data.store_id} not found."
-                    )
+            # Calculate proposed changes
+            new_available = inventory.quantity_available + adjustment_data.available_change
+            new_on_hold = inventory.quantity_on_hold + adjustment_data.on_hold_change
+            new_reserved = inventory.quantity_reserved + adjustment_data.reserved_change
 
-                # Calculate proposed changes
-                new_available = inventory.quantity_available + adjustment_data.available_change
-                new_on_hold = inventory.quantity_on_hold + adjustment_data.on_hold_change
-                new_reserved = inventory.quantity_reserved + adjustment_data.reserved_change
+            # Validate that no quantity goes below zero
+            if new_available < 0:
+                raise ValidationException("Insufficient stock for this operation.")
+            if new_on_hold < 0:
+                raise ValidationException("Cannot release more items than are on hold.")
+            if new_reserved < 0:
+                raise ValidationException("Cannot release more items than are reserved.")
 
-                # Validate that no quantity goes below zero
-                if new_available < 0:
-                    raise ValidationException("Insufficient stock for this operation.")
-                if new_on_hold < 0:
-                    raise ValidationException("Cannot release more items than are on hold.")
-                if new_reserved < 0:
-                    raise ValidationException("Cannot release more items than are reserved.")
+            # Apply changes
+            inventory.quantity_available = new_available
+            inventory.quantity_on_hold = new_on_hold
+            inventory.quantity_reserved = new_reserved
 
-                # Apply changes
-                inventory.quantity_available = new_available
-                inventory.quantity_on_hold = new_on_hold
-                inventory.quantity_reserved = new_reserved
-
-                await session.commit()
-                await session.refresh(inventory)
-                return InventorySchema.model_validate(inventory)
+            await session.commit()
+            await session.refresh(inventory)
+            return InventorySchema.model_validate(inventory)
 
     async def place_hold(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
         """Place a hold on inventory for an order."""
@@ -223,6 +222,24 @@ class InventoryService:
                 select(Inventory).filter(
                     Inventory.product_id.in_(product_ids),
                     Inventory.store_id == store_id
+                )
+            )
+            inventory_items = result.scalars().all()
+            return [InventorySchema.model_validate(item) for item in inventory_items]
+
+    @handle_service_errors("retrieving inventory for products in multiple stores")
+    async def get_inventory_for_products_in_stores(
+        self, product_ids: List[int], store_ids: List[int]
+    ) -> List[InventorySchema]:
+        """Get inventory for a list of products across multiple stores efficiently."""
+        if not product_ids or not store_ids:
+            return []
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Inventory).filter(
+                    Inventory.product_id.in_(product_ids),
+                    Inventory.store_id.in_(store_ids)
                 )
             )
             inventory_items = result.scalars().all()

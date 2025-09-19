@@ -17,7 +17,7 @@ class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(128), ForeignKey("users.firebase_uid"), nullable=False)
     store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), nullable=False)
     total_amount: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.PENDING, nullable=False)

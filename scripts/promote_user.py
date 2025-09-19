@@ -2,28 +2,57 @@ import os
 import sys
 import asyncio
 import argparse
-from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials
+import google.auth
 
-# Add project root to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Add the project root to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.api.users.service import UserService
 from src.api.auth.service import AuthService
 from src.config.constants import UserRole
 
+# Import all database models to ensure SQLAlchemy relationships are properly registered
+from src.database.models.user import User
+from src.database.models.address import Address
+from src.database.models.cart import Cart
+from src.database.models.category import Category
+from src.database.models.product import Product, Tag, ProductTag
+from src.database.models.associations import product_categories
+from src.database.models.store import Store
+from src.database.models.store_tag import StoreTag
+from src.database.models.tier import Tier
+from src.database.models.tier_benefit import Benefit, tier_benefits
+from src.database.models.price_list import PriceList
+from src.database.models.price_list_line import PriceListLine
+from src.database.models.tier_price_list import TierPriceList
+from src.database.models.inventory import Inventory
+from src.database.models.order import Order, OrderItem
+
 def initialize_firebase():
     """Initialize Firebase Admin SDK"""
-    load_dotenv()
-    service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-
-    if not service_account_path:
-        raise ValueError("GOOGLE_APPLICATION_CREDENTIALS environment variable not set.")
-
     if not firebase_admin._apps:
-        cred = credentials.Certificate(service_account_path)
-        firebase_admin.initialize_app(cred)
+        is_local = os.getenv("DEPLOYMENT", "cloud") == "local"
+
+        if is_local:
+            # Local dev: must use service account key
+            service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            if not service_account_path:
+                raise ValueError("GOOGLE_APPLICATION_CREDENTIALS environment variable not set.")
+            cred = credentials.Certificate(service_account_path)
+            firebase_admin.initialize_app(cred)
+        else:
+            # Cloud Run (or any Google-managed environment): use ADC
+            try:
+                cred, project_id = google.auth.default()
+            except Exception as e:
+                raise RuntimeError(f"Failed to get default credentials: {e}")
+
+            if not project_id:
+                raise ValueError("Project ID could not be inferred from environment.")
+
+            firebase_admin.initialize_app(credential=credentials.ApplicationDefault(), options={"projectId": project_id})
 
 async def promote_user(uid: str):
     """Promote a user to ADMIN."""

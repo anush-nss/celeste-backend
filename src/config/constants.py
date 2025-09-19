@@ -17,6 +17,7 @@ class OrderStatus(str, Enum):
     SHIPPED = "shipped"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
+    CONFIRMED = "confirmed"
 
 
 # Default fallback tier when no default tier is found in database

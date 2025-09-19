@@ -29,7 +29,7 @@ async def get_all_inventory(
     inventory_items = await inventory_service.get_all_inventory(
         product_id=product_id, store_id=store_id
     )
-    return success_response(inventory_items)
+    return success_response([item.model_dump(mode="json") for item in inventory_items])
 
 
 @inventory_router.get(
@@ -44,7 +44,7 @@ async def get_inventory_by_id(inventory_id: int):
         raise ResourceNotFoundException(
             detail=f"Inventory item with ID {inventory_id} not found"
         )
-    return success_response(inventory_item)
+    return success_response(inventory_item.model_dump(mode="json"))
 
 
 @inventory_router.post(
@@ -56,7 +56,7 @@ async def get_inventory_by_id(inventory_id: int):
 )
 async def create_inventory(inventory_data: CreateInventorySchema):
     new_inventory = await inventory_service.create_inventory(inventory_data)
-    return success_response(new_inventory, status_code=status.HTTP_201_CREATED)
+    return success_response(new_inventory.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
 
 
 @inventory_router.put(
@@ -69,7 +69,7 @@ async def update_inventory(inventory_id: int, inventory_data: UpdateInventorySch
     updated_inventory = await inventory_service.update_inventory(
         inventory_id, inventory_data
     )
-    return success_response(updated_inventory)
+    return success_response(updated_inventory.model_dump(mode="json"))
 
 
 @inventory_router.post(
@@ -86,7 +86,7 @@ async def adjust_inventory(adjustment_data: AdjustInventorySchema):
     - `reserved_change`: Change in the number of items reserved for confirmed orders.
     """
     updated_inventory = await inventory_service.adjust_inventory_stock(adjustment_data)
-    return success_response(updated_inventory)
+    return success_response(updated_inventory.model_dump(mode="json"))
 
 
 @inventory_router.delete(

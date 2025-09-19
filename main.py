@@ -1,3 +1,7 @@
+from src.database.connection import initialize_firebase
+
+initialize_firebase()
+
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer

@@ -75,14 +75,13 @@ class PricingInfoSchema(BaseModel):
 
 
 class InventoryInfoSchema(BaseModel):
-    """Future inventory information placeholder"""
+    """Inventory information for a specific store"""
 
-    in_stock: Optional[bool] = Field(None, description="Whether product is in stock")
-    quantity_available: Optional[int] = Field(None, description="Available quantity")
-    reserved_quantity: Optional[int] = Field(None, description="Reserved quantity")
-    reorder_level: Optional[int] = Field(
-        None, description="Minimum stock level for reordering"
-    )
+    store_id: int = Field(..., description="Store ID")
+    in_stock: bool = Field(..., description="Whether product is in stock")
+    quantity_available: int = Field(..., description="Available quantity")
+    quantity_on_hold: int = Field(..., description="Quantity on hold")
+    quantity_reserved: int = Field(..., description="Reserved quantity")
 
 
 class EnhancedProductSchema(BaseModel):
@@ -106,8 +105,8 @@ class EnhancedProductSchema(BaseModel):
     pricing: Optional[PricingInfoSchema] = Field(
         None, description="Pricing information with applied discounts"
     )
-    inventory: Optional[InventoryInfoSchema] = Field(
-        None, description="Inventory information (future expansion)"
+    inventory: Optional[List[InventoryInfoSchema]] = Field(
+        None, description="Inventory information for multiple stores"
     )
     
     model_config = ConfigDict(from_attributes=True)
@@ -120,8 +119,8 @@ class ProductQuerySchema(BaseModel):
     cursor: Optional[int] = Field(
         None, description="Cursor for pagination (product ID to start from)"
     )
-    store_id: Optional[int] = Field(
-        None, description="Store ID for inventory and store-specific data"
+    store_id: Optional[List[int]] = Field(
+        None, description="Store IDs for multi-store inventory data"
     )
     include_pricing: Optional[bool] = Field(
         default=True, description="Whether to include pricing calculations"
