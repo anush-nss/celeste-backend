@@ -1,3 +1,7 @@
+from src.database.connection import initialize_firebase
+
+initialize_firebase()
+
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
@@ -10,6 +14,7 @@ from src.api.inventory.routes import inventory_router
 from src.api.stores.routes import stores_router
 from src.api.pricing.routes import pricing_router
 from src.api.tiers.routes import router as tiers_router
+from src.api.tags.routes import tags_router
 from src.middleware.error import http_exception_handler
 from src.shared.utils import get_logger
 from src.middleware.timing import add_process_time_header
@@ -33,6 +38,7 @@ app.include_router(inventory_router)
 app.include_router(stores_router)
 app.include_router(pricing_router)
 app.include_router(tiers_router)
+app.include_router(tags_router)
 
 # Include dev router only in development environment
 if os.getenv("ENVIRONMENT") == "development":

@@ -1,39 +1,63 @@
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, ConfigDict
+
+
+# New PostgreSQL schemas
+class ProductTagSchema(BaseModel):
+    id: int
+    tag_type: str                     # 'dietary', 'analytics', etc.
+    name: str
+    slug: str
+    description: Optional[str] = None
+    value: Optional[str] = None       # from product_tags table
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProductSchema(BaseModel):
-    id: Optional[str] = None
+    id: Optional[int] = None
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     brand: str = Field(..., min_length=1)
-    price: float = Field(..., ge=0)
-    unit: str
-    categoryId: str
-    imageUrl: Optional[HttpUrl] = None
-    createdAt: Optional[datetime] = None
-    updatedAt: Optional[datetime] = None
+    base_price: float = Field(..., ge=0)
+    unit_measure: str
+    image_urls: List[str] = []        # First image is primary
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    
+    # Relationships (loaded when needed)
+    categories: Optional[List[Dict[str, Any]]] = None  # Will be CategorySchema when imported
+    product_tags: Optional[List[Dict[str, Any]]] = None  # Raw product_tags data
+    
+    model_config = ConfigDict(from_attributes=True)
+    
+    @property
+    def primary_image_url(self) -> Optional[str]:
+        """Get the primary (first) image URL"""
+        return self.image_urls[0] if self.image_urls else None
 
 
 class CreateProductSchema(BaseModel):
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     brand: str = Field(..., min_length=1)
-    price: float = Field(..., ge=0)
-    unit: str
-    categoryId: str
-    imageUrl: Optional[HttpUrl] = None
+    base_price: float = Field(..., ge=0)
+    unit_measure: str
+    image_urls: List[str] = []
+    category_ids: List[int] = []      # IDs of categories to assign
+    tag_ids: List[int] = []           # IDs of tags to assign
 
 
 class UpdateProductSchema(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1)
     description: Optional[str] = None
     brand: Optional[str] = Field(None, min_length=1)
-    price: Optional[float] = Field(None, ge=0)
-    unit: Optional[str] = None
-    categoryId: Optional[str] = None
-    imageUrl: Optional[HttpUrl] = None
+    base_price: Optional[float] = Field(None, ge=0)
+    unit_measure: Optional[str] = None
+    image_urls: Optional[List[str]] = None
+    category_ids: Optional[List[int]] = None
+    tag_ids: Optional[List[int]] = None
 
 
 class PricingInfoSchema(BaseModel):
@@ -51,52 +75,69 @@ class PricingInfoSchema(BaseModel):
 
 
 class InventoryInfoSchema(BaseModel):
-    """Future inventory information placeholder"""
+    """Inventory information for a specific store"""
 
-    in_stock: Optional[bool] = Field(None, description="Whether product is in stock")
-    quantity_available: Optional[int] = Field(None, description="Available quantity")
-    reserved_quantity: Optional[int] = Field(None, description="Reserved quantity")
-    reorder_level: Optional[int] = Field(
-        None, description="Minimum stock level for reordering"
-    )
+    store_id: int = Field(..., description="Store ID")
+    in_stock: bool = Field(..., description="Whether product is in stock")
+    quantity_available: int = Field(..., description="Available quantity")
+    quantity_on_hold: int = Field(..., description="Quantity on hold")
+    quantity_reserved: int = Field(..., description="Reserved quantity")
 
 
 class EnhancedProductSchema(BaseModel):
     """Enhanced product schema with pricing and inventory information"""
 
-    id: Optional[str] = None
+    id: Optional[int] = None
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     brand: str = Field(..., min_length=1)
-    price: float = Field(..., ge=0, description="Base price of the product")
-    unit: str
-    categoryId: str
-    imageUrl: Optional[HttpUrl] = None
-    createdAt: Optional[datetime] = None
-    updatedAt: Optional[datetime] = None
+    base_price: float = Field(..., ge=0, description="Base price of the product")
+    unit_measure: str
+    image_urls: List[str] = []        # First image is primary
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    # Relationships
+    categories: Optional[List[Dict[str, Any]]] = None
+    product_tags: Optional[List[Dict[str, Any]]] = None
 
     # Enhanced fields
     pricing: Optional[PricingInfoSchema] = Field(
         None, description="Pricing information with applied discounts"
     )
-    inventory: Optional[InventoryInfoSchema] = Field(
-        None, description="Inventory information (future expansion)"
+    inventory: Optional[List[InventoryInfoSchema]] = Field(
+        None, description="Inventory information for multiple stores"
     )
+    
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProductQuerySchema(BaseModel):
     limit: Optional[int] = Field(
         default=20, le=100, description="Number of products to return (max 100)"
     )
-    cursor: Optional[str] = Field(
+    cursor: Optional[int] = Field(
         None, description="Cursor for pagination (product ID to start from)"
+    )
+    store_id: Optional[List[int]] = Field(
+        None, description="Store IDs for multi-store inventory data"
     )
     include_pricing: Optional[bool] = Field(
         default=True, description="Whether to include pricing calculations"
     )
-    categoryId: Optional[str] = None
-    minPrice: Optional[float] = None
-    maxPrice: Optional[float] = None
+    include_inventory: Optional[bool] = Field(
+        default=True, description="Whether to include inventory information (requires store_id)"
+    )
+    include_categories: Optional[bool] = Field(
+        default=False, description="Whether to include category information"
+    )
+    include_tags: Optional[bool] = Field(
+        default=False, description="Whether to include tag information"
+    )
+    category_ids: Optional[List[int]] = None
+    tags: Optional[List[str]] = None           # Filter by tags with flexible syntax
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
     only_discounted: Optional[bool] = Field(
         default=False, description="Return only products with discounts applied"
     )
@@ -111,8 +152,8 @@ class PaginatedProductsResponse(BaseModel):
         description="Pagination metadata",
         examples=[
             {
-                "current_cursor": "product_id_123",
-                "next_cursor": "product_id_456",
+                "current_cursor": 123,
+                "next_cursor": 456,
                 "has_more": True,
                 "total_returned": 20,
             }

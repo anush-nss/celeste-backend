@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, status, HTTPException
-from typing import Annotated, List
+from typing import List
+from src.api.auth.models import DecodedToken
 from src.api.orders.models import OrderSchema, CreateOrderSchema, UpdateOrderSchema
 from src.api.orders.service import OrderService
 from src.dependencies.auth import get_current_user, RoleChecker
@@ -12,37 +13,28 @@ order_service = OrderService()
 
 
 @orders_router.get("/", summary="Retrieve orders", response_model=List[OrderSchema])
-async def get_orders(current_user: Annotated[dict, Depends(get_current_user)]):
-    if current_user.get("role") == UserRole.ADMIN.value:
-        orders = await order_service.get_all_orders()  # Admins see all orders
+async def get_orders(current_user: DecodedToken = Depends(get_current_user)):
+    if current_user.role == UserRole.ADMIN:
+        orders = await order_service.get_all_orders()
     else:
-        user_id = current_user.get("uid")
-        if not user_id:
-            raise HTTPException(status_code=400, detail="User ID not found in token")
-        orders = await order_service.get_all_orders(
-            user_id=user_id
-        )  # Customers see only their own
-    return success_response([o.model_dump() for o in orders])
+        orders = await order_service.get_all_orders(user_id=current_user.uid)
+    return success_response(orders)
 
 
 @orders_router.get(
-    "/{id}", summary="Retrieve a specific order", response_model=OrderSchema
+    "/{order_id}", summary="Retrieve a specific order", response_model=OrderSchema
 )
 async def get_order_by_id(
-    id: str, current_user: Annotated[dict, Depends(get_current_user)]
+    order_id: int, current_user: DecodedToken = Depends(get_current_user)
 ):
-    order = await order_service.get_order_by_id(id)
+    order = await order_service.get_order_by_id(order_id)
     if not order:
-        raise ResourceNotFoundException(detail=f"Order with ID {id} not found")
+        raise ResourceNotFoundException(detail=f"Order with ID {order_id} not found")
 
-    user_id = current_user.get("uid")
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
-
-    if current_user.get("role") != UserRole.ADMIN.value and order.userId != user_id:
+    if current_user.role != UserRole.ADMIN and order.user_id != current_user.uid:
         raise ForbiddenException("You do not have permission to access this order.")
 
-    return success_response(order.model_dump())
+    return success_response(order)
 
 
 @orders_router.post(
@@ -51,36 +43,20 @@ async def get_order_by_id(
     response_model=OrderSchema,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_order(
+async def create__order(
     order_data: CreateOrderSchema,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: DecodedToken = Depends(get_current_user),
 ):
-    user_id = current_user.get("uid")
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token")
-    new_order = await order_service.create_order(order_data, user_id)
-    return success_response(new_order.model_dump(), status_code=status.HTTP_201_CREATED)
+    new_order = await order_service.create_order(order_data, current_user.uid)
+    return success_response(new_order, status_code=status.HTTP_201_CREATED)
 
 
 @orders_router.put(
-    "/{id}",
+    "/{order_id}/status",
     summary="Update an order status",
     response_model=OrderSchema,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def update_order(id: str, order_data: UpdateOrderSchema):
-    updated_order = await order_service.update_order(id, order_data)
-    if not updated_order:
-        raise ResourceNotFoundException(detail=f"Order with ID {id} not found")
-    return success_response(updated_order.model_dump())
-
-
-@orders_router.delete(
-    "/{id}",
-    summary="Delete an order",
-    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
-)
-async def delete_order(id: str):
-    if not await order_service.delete_order(id):
-        raise ResourceNotFoundException(detail=f"Order with ID {id} not found")
-    return success_response({"id": id, "message": "Order deleted successfully"})
+async def update_order_status(order_id: int, order_data: UpdateOrderSchema):
+    updated_order = await order_service.update_order_status(order_id, order_data)
+    return success_response(updated_order)

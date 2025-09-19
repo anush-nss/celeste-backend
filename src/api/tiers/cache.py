@@ -44,7 +44,7 @@ class TiersCache:
     def set_tier(self, tier_id: str, tier_data: dict) -> bool:
         """Cache tier data with configured TTL"""
         key = self.get_tier_key(tier_id)
-        ttl = cache_config.get_ttl("categories")  # Use categories TTL for tiers
+        ttl = cache_config.get_ttl("tiers")  # Use tiers TTL for tiers
         return self.cache.set(key, tier_data, ttl_seconds=ttl)
 
     def get_tier_by_code(self, tier_code: str) -> Optional[dict]:
@@ -55,7 +55,7 @@ class TiersCache:
     def set_tier_by_code(self, tier_code: str, tier_data: dict) -> bool:
         """Cache tier data by code with configured TTL"""
         key = self.get_tier_by_code_key(tier_code)
-        ttl = cache_config.get_ttl("categories")
+        ttl = cache_config.get_ttl("tiers")
         return self.cache.set(key, tier_data, ttl_seconds=ttl)
 
     def get_all_tiers(self) -> Optional[List]:
@@ -66,7 +66,7 @@ class TiersCache:
     def set_all_tiers(self, tiers: List) -> bool:
         """Cache all tiers with configured TTL"""
         key = self.get_all_tiers_key()
-        ttl = cache_config.get_ttl("categories")
+        ttl = cache_config.get_ttl("tiers")
         return self.cache.set(key, tiers, ttl_seconds=ttl)
 
     def get_default_tier(self) -> Optional[str]:
@@ -77,7 +77,7 @@ class TiersCache:
     def set_default_tier(self, tier_code: str) -> bool:
         """Cache default tier with configured TTL"""
         key = self.get_default_tier_key()
-        ttl = cache_config.get_ttl("categories")
+        ttl = cache_config.get_ttl("tiers")
         return self.cache.set(key, tier_code, ttl_seconds=ttl)
 
     # Cache invalidation methods
