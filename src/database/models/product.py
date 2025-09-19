@@ -20,11 +20,13 @@ class Product(Base):
         Index('idx_product_name', 'name'),
         Index('idx_product_brand', 'brand'),
         Index('idx_product_price', 'base_price'),
+        Index('idx_product_ref', 'ref'),
         Index('idx_products_brand_price', 'brand', 'base_price'),
         Index('idx_products_created_at', 'created_at'),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     brand: Mapped[str] = mapped_column(String(100), nullable=False, index=True)

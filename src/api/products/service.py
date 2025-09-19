@@ -170,6 +170,7 @@ class ProductService:
                 for product_row in actual_products:
                     enhanced_product = EnhancedProductSchema(
                         id=product_row.id,
+                        ref=product_row.ref,
                         name=product_row.name,
                         description=product_row.description,
                         brand=product_row.brand,
@@ -214,6 +215,7 @@ class ProductService:
                 for product_row in actual_products:
                     enhanced_product = EnhancedProductSchema(
                         id=product_row.id,
+                        ref=product_row.ref,
                         name=product_row.name,
                         description=product_row.description,
                         brand=product_row.brand,
@@ -314,6 +316,65 @@ class ProductService:
 
             return None
 
+    @handle_service_errors("retrieving product by ref")
+    async def get_product_by_ref(
+        self,
+        product_ref: str,
+        include_categories: bool = True,
+        include_tags: bool = True,
+        store_id: Optional[int] = None,
+    ) -> EnhancedProductSchema | None:
+        """Get product by ref with relationships and optional inventory."""
+        if not product_ref or not product_ref.strip():
+            raise ValidationException(detail="Product ref cannot be empty")
+
+        product_ref = product_ref.strip()
+
+        async with AsyncSessionLocal() as session:
+            query = select(Product).filter(Product.ref == product_ref)
+
+            # Include relationships
+            if include_categories:
+                query = query.options(selectinload(Product.categories))
+            if include_tags:
+                query = query.options(
+                    selectinload(Product.product_tags).selectinload(ProductTag.tag)
+                )
+
+            result = await session.execute(query)
+            product = result.scalars().first()
+
+            if product:
+                include_rels = set()
+                if include_categories:
+                    include_rels.add('categories')
+                if include_tags:
+                    include_rels.add('product_tags')
+
+                pydantic_product = safe_model_validate(
+                    EnhancedProductSchema,
+                    product,
+                    max_depth=3
+                )
+
+                # Fetch and add inventory if store_id is provided
+                if store_id:
+                    inventory_item = await self.inventory_service.get_inventory_by_product_and_store(
+                        product.id, store_id
+                    )
+                    if inventory_item:
+                        pydantic_product.inventory = [InventoryInfoSchema(
+                            store_id=inventory_item.store_id,
+                            in_stock=inventory_item.quantity_available > 0,
+                            quantity_available=inventory_item.quantity_available,
+                            quantity_on_hold=inventory_item.quantity_on_hold,
+                            quantity_reserved=inventory_item.quantity_reserved,
+                        )]
+
+                return pydantic_product
+
+            return None
+
     @handle_service_errors("creating product")
     async def create_product(self, product_data: CreateProductSchema) -> ProductSchema:
         """Create a new product with categories and tags"""
@@ -330,16 +391,44 @@ class ProductService:
         if not product_data.unit_measure or not product_data.unit_measure.strip():
             raise ValidationException(detail="Product unit measure is required")
 
+        # Validate ref if provided
+        if product_data.ref:
+            if not product_data.ref.strip():
+                raise ValidationException(detail="Product ref cannot be empty")
+
         async with AsyncSessionLocal() as session:
-            # Create the product
-            new_product = Product(
-                name=product_data.name.strip(),
-                description=product_data.description.strip() if product_data.description else None,
-                brand=product_data.brand.strip(),
-                base_price=product_data.base_price,
-                unit_measure=product_data.unit_measure.strip(),
-                image_urls=product_data.image_urls or []
-            )
+            # Check if ref already exists
+            if product_data.ref:
+                existing_ref = await session.execute(
+                    select(Product).filter(Product.ref == product_data.ref.strip())
+                )
+                if existing_ref.scalars().first():
+                    raise ConflictException(detail=f"Product with ref '{product_data.ref}' already exists")
+
+            # Check if ID is manually specified and already exists
+            if product_data.id:
+                existing_id = await session.execute(
+                    select(Product).filter(Product.id == product_data.id)
+                )
+                if existing_id.scalars().first():
+                    raise ConflictException(detail=f"Product with ID {product_data.id} already exists")
+
+            # Create the product with optional ID and ref
+            product_kwargs = {
+                "name": product_data.name.strip(),
+                "description": product_data.description.strip() if product_data.description else None,
+                "brand": product_data.brand.strip(),
+                "base_price": product_data.base_price,
+                "unit_measure": product_data.unit_measure.strip(),
+                "image_urls": product_data.image_urls or [],
+                "ref": product_data.ref.strip() if product_data.ref else None
+            }
+
+            # Add manual ID if specified
+            if product_data.id:
+                product_kwargs["id"] = product_data.id
+
+            new_product = Product(**product_kwargs)
             session.add(new_product)
             await session.commit()
             await session.refresh(new_product)
@@ -502,10 +591,43 @@ class ProductService:
             all_tag_ids = {tid for p in products_data for tid in p.tag_ids}
             product_names = {p.name for p in products_data}
 
+            # Collect refs and IDs for validation
+            product_refs = {p.ref for p in products_data if p.ref and p.ref.strip()}
+            product_ids = {p.id for p in products_data if p.id}
+
+            # Check for duplicate refs in the request
+            ref_counts = {}
+            for p in products_data:
+                if p.ref and p.ref.strip():
+                    ref = p.ref.strip()
+                    ref_counts[ref] = ref_counts.get(ref, 0) + 1
+                    if ref_counts[ref] > 1:
+                        raise ValidationException(detail=f"Duplicate ref '{ref}' found in request")
+
+            # Check for duplicate IDs in the request
+            id_counts = {}
+            for p in products_data:
+                if p.id:
+                    id_counts[p.id] = id_counts.get(p.id, 0) + 1
+                    if id_counts[p.id] > 1:
+                        raise ValidationException(detail=f"Duplicate ID {p.id} found in request")
+
             # Check for existing product names
             existing_products = (await session.execute(select(Product).filter(Product.name.in_(product_names)))).scalars().all()
             if existing_products:
                 raise ConflictException(f"Products with these names already exist: {[p.name for p in existing_products]}")
+
+            # Check for existing refs
+            if product_refs:
+                existing_refs = (await session.execute(select(Product).filter(Product.ref.in_(product_refs)))).scalars().all()
+                if existing_refs:
+                    raise ConflictException(f"Products with these refs already exist: {[p.ref for p in existing_refs]}")
+
+            # Check for existing IDs
+            if product_ids:
+                existing_ids = (await session.execute(select(Product).filter(Product.id.in_(product_ids)))).scalars().all()
+                if existing_ids:
+                    raise ConflictException(f"Products with these IDs already exist: {[p.id for p in existing_ids]}")
 
             # Check for existing categories
             if all_category_ids:
@@ -520,10 +642,18 @@ class ProductService:
                     raise ResourceNotFoundException("One or more tags not found.")
 
             # Step 2: Create Product ORM objects
-            new_products = [Product(**data.model_dump(exclude={'category_ids', 'tag_ids'})) for data in products_data]
-            
+            new_products = []
+            for data in products_data:
+                product_kwargs = data.model_dump(exclude={'category_ids', 'tag_ids'})
+
+                # Clean up ref field (strip whitespace, set to None if empty)
+                if 'ref' in product_kwargs and product_kwargs['ref']:
+                    product_kwargs['ref'] = product_kwargs['ref'].strip() or None
+
+                new_products.append(Product(**product_kwargs))
+
             session.add_all(new_products)
-            await session.flush()  # Assigns IDs
+            await session.flush()  # Assigns IDs (or uses manual IDs if provided)
 
             # Step 3: Create associations using bulk inserts
             product_category_associations = []
@@ -1028,6 +1158,7 @@ class ProductService:
                 for product_row in actual_products:
                     enhanced_product = EnhancedProductSchema(
                         id=product_row.id,
+                        ref=product_row.ref,
                         name=product_row.name,
                         description=product_row.description,
                         brand=product_row.brand,
@@ -1072,6 +1203,7 @@ class ProductService:
                 for product_row in actual_products:
                     enhanced_product = EnhancedProductSchema(
                         id=product_row.id,
+                        ref=product_row.ref,
                         name=product_row.name,
                         description=product_row.description,
                         brand=product_row.brand,

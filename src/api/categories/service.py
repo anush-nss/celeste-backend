@@ -104,6 +104,14 @@ class CategoryService:
             if existing.scalars().first():
                 raise ConflictException(detail=f"Category with name '{category_data.name}' already exists")
 
+            # Check if ID is manually specified and already exists
+            if category_data.id:
+                existing_id = await session.execute(
+                    select(Category).filter(Category.id == category_data.id)
+                )
+                if existing_id.scalars().first():
+                    raise ConflictException(detail=f"Category with ID {category_data.id} already exists")
+
             # Validate parent category if provided
             if category_data.parent_category_id:
                 parent = await session.execute(
@@ -114,13 +122,20 @@ class CategoryService:
                         detail=f"Parent category with ID {category_data.parent_category_id} not found"
                     )
 
-            new_category = Category(
-                name=category_data.name.strip(),
-                description=category_data.description.strip() if category_data.description else None,
-                sort_order=category_data.sort_order,
-                image_url=category_data.image_url,
-                parent_category_id=category_data.parent_category_id
-            )
+            # Create category with optional ID
+            category_kwargs = {
+                "name": category_data.name.strip(),
+                "description": category_data.description.strip() if category_data.description else None,
+                "sort_order": category_data.sort_order,
+                "image_url": category_data.image_url,
+                "parent_category_id": category_data.parent_category_id
+            }
+
+            # Add manual ID if specified
+            if category_data.id:
+                category_kwargs["id"] = category_data.id
+
+            new_category = Category(**category_kwargs)
             session.add(new_category)
             await session.commit()
             await session.refresh(new_category)

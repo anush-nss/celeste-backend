@@ -17,6 +17,7 @@ class ProductTagSchema(BaseModel):
 
 class ProductSchema(BaseModel):
     id: Optional[int] = None
+    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     brand: str = Field(..., min_length=1)
@@ -39,6 +40,8 @@ class ProductSchema(BaseModel):
 
 
 class CreateProductSchema(BaseModel):
+    id: Optional[int] = Field(None, description="Optional manual ID specification")
+    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     brand: str = Field(..., min_length=1)
@@ -50,6 +53,7 @@ class CreateProductSchema(BaseModel):
 
 
 class UpdateProductSchema(BaseModel):
+    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: Optional[str] = Field(None, min_length=1)
     description: Optional[str] = None
     brand: Optional[str] = Field(None, min_length=1)
@@ -88,6 +92,7 @@ class EnhancedProductSchema(BaseModel):
     """Enhanced product schema with pricing and inventory information"""
 
     id: Optional[int] = None
+    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     brand: str = Field(..., min_length=1)

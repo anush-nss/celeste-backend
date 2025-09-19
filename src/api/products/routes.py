@@ -17,7 +17,7 @@ from src.api.tags.models import TagSchema, CreateTagSchema, UpdateTagSchema
 from src.api.auth.models import DecodedToken
 from src.api.products.service import ProductService
 from src.api.pricing.service import PricingService
-from src.dependencies.auth import RoleChecker, get_current_user
+from src.dependencies.auth import RoleChecker, get_current_user, get_optional_user
 from src.dependencies.tiers import get_user_tier
 from src.config.constants import UserRole
 from src.shared.exceptions import ResourceNotFoundException
@@ -221,13 +221,16 @@ async def create_product_tags(payload: Union[CreateTagSchema, List[CreateTagSche
 
     created_tags = await product_service.create_product_tags(tags_to_create)
 
+    # Convert SQLAlchemy Tag objects to Pydantic TagSchema objects
+    tag_schemas = [TagSchema.model_validate(tag) for tag in created_tags]
+
     if is_list:
         return success_response(
-            [t.model_dump(mode="json") for t in created_tags], status_code=status.HTTP_201_CREATED
+            [t.model_dump(mode="json") for t in tag_schemas], status_code=status.HTTP_201_CREATED
         )
     else:
         return success_response(
-            created_tags[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+            tag_schemas[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
         )
 
 
@@ -248,6 +251,66 @@ async def get_product_tags(
 
 
 # ===== PRODUCT ROUTES =====
+
+@products_router.get(
+    "/ref/{ref}",
+    summary="Get a product by reference/SKU with smart pricing",
+    response_model=EnhancedProductSchema,
+)
+async def get_product_by_ref(
+    ref: str,
+    include_pricing: Optional[bool] = Query(
+        True, description="Include pricing calculations"
+    ),
+    quantity: Optional[int] = Query(1, description="Quantity for bulk pricing"),
+    store_id: Optional[int] = Query(None, description="Store ID for inventory info"),
+    current_user: Annotated[Optional[DecodedToken], Depends(get_optional_user)] = None,
+):
+    """
+    Get a single product by reference/SKU with OPTIMIZED pricing (sub-30ms target)
+    Uses new optimized service methods for maximum performance
+    """
+    product = await product_service.get_product_by_ref(
+        ref, include_categories=True, include_tags=True, store_id=store_id
+    )
+
+    if not product:
+        raise ResourceNotFoundException(detail=f"Product with ref '{ref}' not found")
+
+    # Extract user tier for pricing
+    user_tier = None
+    if current_user:
+        user_tier = getattr(current_user, 'tier_id', None)
+
+    # If pricing is requested and we have user tier, add pricing info
+    if include_pricing and user_tier and product:
+        # Get category IDs for pricing calculation
+        product_category_ids = [cat.get('id') for cat in (product.categories or [])]
+
+        pricing_result = await pricing_service.calculate_product_price(
+            product_id=product.id,
+            product_category_ids=product_category_ids,
+            user_tier_id=user_tier,
+            quantity=quantity or 1
+        )
+
+        # Convert to enhanced schema with pricing
+        enhanced_product = EnhancedProductSchema(**product.model_dump(mode="json"))
+        if pricing_result:
+            discount_percentage = (pricing_result.savings / pricing_result.base_price) * 100 if pricing_result.base_price > 0 else 0
+            enhanced_product.pricing = PricingInfoSchema(
+                base_price=pricing_result.base_price,
+                final_price=pricing_result.final_price,
+                discount_applied=pricing_result.savings,
+                discount_percentage=discount_percentage,
+                applied_price_lists=[pl["price_list_name"] for pl in pricing_result.applied_discounts]
+            )
+
+        return success_response(enhanced_product.model_dump(mode="json"))
+
+    # Return basic product without pricing
+    return success_response(product.model_dump(mode="json"))
+
 
 @products_router.get(
     "/{id}",
