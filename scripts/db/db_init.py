@@ -21,6 +21,8 @@ from src.database.models.tier_benefit import Benefit, tier_benefits
 from src.database.models.price_list import PriceList
 from src.database.models.price_list_line import PriceListLine
 from src.database.models.tier_price_list import TierPriceList
+from src.database.models.inventory import Inventory
+from src.database.models.order import Order, OrderItem
 
 async def init_db(drop_tables: bool = False):
     async with engine.begin() as conn:

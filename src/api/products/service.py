@@ -6,6 +6,7 @@ from src.api.tags.models import CreateTagSchema
 from src.database.connection import AsyncSessionLocal
 from src.database.models.product import Product, ProductTag, Tag
 from src.api.tags.service import TagService
+from src.api.inventory.service import InventoryService
 from src.database.models.category import Category
 from src.api.products.models import (
     ProductSchema,
@@ -15,6 +16,7 @@ from src.api.products.models import (
     EnhancedProductSchema,
     PaginatedProductsResponse,
     PricingInfoSchema,
+    InventoryInfoSchema,
     ProductTagSchema,
 )
 from src.api.categories.models import CategorySchema
@@ -33,6 +35,7 @@ class ProductService:
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
         self.tag_service = TagService(entity_type="product")
+        self.inventory_service = InventoryService()
 
     async def _build_product_query(self, query_params: ProductQuerySchema, session):
         """Build SQLAlchemy query with filters and relationships"""
@@ -60,9 +63,13 @@ class ProductService:
         if query_params.tags:
             tag_filter_result = self.tag_service.parse_tag_filters(query_params.tags)
             if tag_filter_result['needs_joins'] and tag_filter_result['conditions']:
-                # Join with product_tags and tags tables if not already joined
-                query = query.join(Product.product_tags).join(ProductTag.tag)
-                # Add tag filter conditions as raw SQL
+                # Join with explicit aliases to match tag service expectations
+                from sqlalchemy.orm import aliased
+                pt = aliased(ProductTag, name='pt')
+                t = aliased(Tag, name='t')
+
+                query = query.join(pt, Product.id == pt.product_id).join(t, pt.tag_id == t.id)
+                # Add tag filter conditions as raw SQL with proper aliases
                 tag_conditions_str = " OR ".join(tag_filter_result['conditions'])
                 conditions.append(text(f"({tag_conditions_str})"))
                 params.update(tag_filter_result['params'])
@@ -243,15 +250,20 @@ class ProductService:
         self,
         product_id: int,
         include_categories: bool = True,
-        include_tags: bool = True
-    ) -> ProductSchema | None:
-        """Get product by ID with relationships"""
+        include_tags: bool = True,
+        store_id: Optional[int] = None,
+    ) -> EnhancedProductSchema | None:
+        """Get product by ID with relationships and optional inventory."""
         if product_id <= 0:
             raise ValidationException(detail="Product ID must be a positive integer")
 
-        cached_product = products_cache.get_product(str(product_id))
-        if cached_product:
-            return ProductSchema.model_validate(cached_product)
+        # Caching for enhanced product schema needs to be handled carefully,
+        # especially with dynamic data like inventory. For now, we bypass cache
+        # if store_id is provided.
+        if not store_id:
+            cached_product = products_cache.get_product(str(product_id))
+            if cached_product:
+                return EnhancedProductSchema.model_validate(cached_product)
 
         async with AsyncSessionLocal() as session:
             query = select(Product).filter(Product.id == product_id)
@@ -275,13 +287,29 @@ class ProductService:
                     include_rels.add('product_tags')
 
                 pydantic_product = safe_model_validate(
-                    ProductSchema,
+                    EnhancedProductSchema,
                     product,
                     max_depth=3
                 )
 
-                # Cache the product
-                products_cache.set_product(str(product_id), pydantic_product.model_dump(mode="json"))
+                # Fetch and add inventory if store_id is provided
+                if store_id:
+                    inventory_item = await self.inventory_service.get_inventory_by_product_and_store(
+                        product_id, store_id
+                    )
+                    if inventory_item:
+                        pydantic_product.inventory = [InventoryInfoSchema(
+                            store_id=inventory_item.store_id,
+                            in_stock=inventory_item.quantity_available > 0,
+                            quantity_available=inventory_item.quantity_available,
+                            quantity_on_hold=inventory_item.quantity_on_hold,
+                            quantity_reserved=inventory_item.quantity_reserved,
+                        )]
+
+                # Cache the product only if it doesn't contain dynamic store-specific data
+                if not store_id:
+                    products_cache.set_product(str(product_id), pydantic_product.model_dump(mode="json"))
+
                 return pydantic_product
 
             return None
@@ -540,6 +568,7 @@ class ProductService:
         self,
         query_params: ProductQuerySchema,
         customer_tier: Optional[int] = None,
+        store_ids: Optional[List[int]] = None,
     ) -> PaginatedProductsResponse:
         """Get products with pagination and pricing using optimized SQL query"""
         async with AsyncSessionLocal() as session:
@@ -628,6 +657,18 @@ class ProductService:
             
             # Get product IDs for pricing query
             product_ids = [row.id for row in actual_products_data]
+
+            # Fetch inventory if store_ids are provided
+            inventory_info_dict = {}
+            if store_ids and product_ids:
+                inventory_items = await self.inventory_service.get_inventory_for_products_in_stores(
+                    product_ids, store_ids
+                )
+                # Group inventory by product_id
+                for item in inventory_items:
+                    if item.product_id not in inventory_info_dict:
+                        inventory_info_dict[item.product_id] = []
+                    inventory_info_dict[item.product_id].append(item)
             
             # If categories are requested, fetch them in a single query
             product_categories_dict = {}
@@ -845,6 +886,19 @@ class ProductService:
                 
                 # Create enhanced product schema
                 enhanced_product = EnhancedProductSchema(**product_dict)
+
+                # Add inventory if available
+                if store_ids and product_row.id in inventory_info_dict:
+                    inventory_list = []
+                    for inventory_info in inventory_info_dict[product_row.id]:
+                        inventory_list.append(InventoryInfoSchema(
+                            store_id=inventory_info.store_id,
+                            in_stock=inventory_info.quantity_available > 0,
+                            quantity_available=inventory_info.quantity_available,
+                            quantity_on_hold=inventory_info.quantity_on_hold,
+                            quantity_reserved=inventory_info.quantity_reserved,
+                        ))
+                    enhanced_product.inventory = inventory_list
                 
                 # Add pricing if available
                 if query_params.include_pricing and product_row.id in pricing_info_dict:

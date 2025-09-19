@@ -1,4 +1,6 @@
 import pytest
+from unittest import mock
+import firebase_admin
 import pytest_asyncio
 from httpx import AsyncClient
 import asyncio
@@ -11,25 +13,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from tests.get_dev_token import get_dev_token
 from src.config.constants import UserRole
 from tests.constants import BASE_URL, ADMIN_UID, CUSTOMER_UID
-
-@pytest_asyncio.fixture(scope="module", autouse=True)
-async def setup_test_users():
-    """Ensure test users have proper roles assigned before running tests."""
-    from src.api.auth.service import AuthService
-    
-    auth_service = AuthService()
-    
-    try:
-        # Set admin role for admin user
-        auth_service.set_user_role(ADMIN_UID, UserRole.ADMIN)
-    except Exception as e:
-        print(f"Warning: Could not set admin role for {ADMIN_UID}: {e}")
-    
-    try:
-        # Set customer role for customer user
-        auth_service.set_user_role(CUSTOMER_UID, UserRole.CUSTOMER)
-    except Exception as e:
-        print(f"Warning: Could not set customer role for {CUSTOMER_UID}: {e}")
 
 @pytest.fixture(scope="module")
 def event_loop():
@@ -78,11 +61,14 @@ async def anonymous_client():
         yield client
 
 @pytest.mark.asyncio
+@mock.patch('src.dependencies.firebase.auth', create=True)
+@mock.patch('firebase_admin.initialize_app')
 class TestCategoriesAPI:
     """Test suite for the Categories API, including RBAC. All tests are independent."""
 
-    async def test_get_all_categories(self, customer_client: AsyncClient, admin_client: AsyncClient, anonymous_client: AsyncClient):
+    async def test_get_all_categories(self, mock_initialize_app, mock_auth, customer_client: AsyncClient, admin_client: AsyncClient, anonymous_client: AsyncClient):
         """Tests GET /categories for both customer and admin roles, and anonymous users."""
+        mock_auth.verify_id_token.return_value = {'uid': CUSTOMER_UID, 'role': UserRole.CUSTOMER}
         for client in [customer_client, admin_client, anonymous_client]:
             response = await client.get("/categories/")
             assert response.status_code == 200
@@ -90,8 +76,9 @@ class TestCategoriesAPI:
             assert "data" in data
             assert isinstance(data["data"], list)
 
-    async def test_customer_cannot_create_category(self, customer_client: AsyncClient):
+    async def test_customer_cannot_create_category(self, mock_initialize_app, mock_auth, customer_client: AsyncClient):
         """Tests that a customer cannot create a category."""
+        mock_auth.verify_id_token.return_value = {'uid': CUSTOMER_UID, 'role': UserRole.CUSTOMER}
         category_data = {
             "name": "Customer Category", 
             "description": "Test category created by customer",
@@ -100,9 +87,10 @@ class TestCategoriesAPI:
         response = await customer_client.post("/categories/", json=category_data)
         assert response.status_code == 403
 
-    async def test_anonymous_cannot_modify_category(self, admin_client: AsyncClient, anonymous_client: AsyncClient):
+    async def test_anonymous_cannot_modify_category(self, mock_initialize_app, mock_auth, admin_client: AsyncClient, anonymous_client: AsyncClient):
         """Tests that an anonymous user cannot create, update, or delete a category."""
         # 1. ARRANGE: Create a category as an admin
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         category_data = {
             "name": "Category for Anonymous Test",
             "description": "Test category for anonymous user tests",
@@ -129,9 +117,10 @@ class TestCategoriesAPI:
         response = await admin_client.delete(f"/categories/{category_id}")
         assert response.status_code == 200
 
-    async def test_customer_cannot_modify_category(self, admin_client: AsyncClient, customer_client: AsyncClient):
+    async def test_customer_cannot_modify_category(self, mock_initialize_app, mock_auth, admin_client: AsyncClient, customer_client: AsyncClient):
         """Tests that a customer cannot update or delete a category created by an admin."""
         # 1. ARRANGE: Create a category as an admin
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         category_data = {
             "name": "Category for Modify Test",
             "description": "Test category for customer modification tests",
@@ -142,6 +131,7 @@ class TestCategoriesAPI:
         category_id = response.json()["data"]["id"]
 
         # 2. ACT & ASSERT: As a customer, attempt to update the category
+        mock_auth.verify_id_token.return_value = {'uid': CUSTOMER_UID, 'role': UserRole.CUSTOMER}
         update_data = {"description": "Updated by customer"}
         response = await customer_client.put(f"/categories/{category_id}", json=update_data)
         assert response.status_code == 403
@@ -151,11 +141,13 @@ class TestCategoriesAPI:
         assert response.status_code == 403
 
         # 4. CLEANUP: Delete the category as an admin to leave the system clean
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         response = await admin_client.delete(f"/categories/{category_id}")
         assert response.status_code == 200
 
-    async def test_admin_can_manage_category_lifecycle(self, admin_client: AsyncClient):
+    async def test_admin_can_manage_category_lifecycle(self, mock_initialize_app, mock_auth, admin_client: AsyncClient):
         """Tests the full CRUD lifecycle for a category as an admin."""
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         create_data = {
             "name": "Admin Lifecycle Category",
             "description": "Category for testing full lifecycle management",
@@ -200,9 +192,10 @@ class TestCategoriesAPI:
         response = await admin_client.get(f"/categories/{category_id}")
         assert response.status_code == 404
 
-    async def test_get_category_by_id_for_all_roles(self, admin_client: AsyncClient, customer_client: AsyncClient, anonymous_client: AsyncClient):
+    async def test_get_category_by_id_for_all_roles(self, mock_initialize_app, mock_auth, admin_client: AsyncClient, customer_client: AsyncClient, anonymous_client: AsyncClient):
         """Tests that all users can read a single category by ID."""
         # 1. ARRANGE: Create a category as an admin
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         category_data = {
             "name": "Public Read Test Category",
             "description": "Category for testing read access",
@@ -213,6 +206,7 @@ class TestCategoriesAPI:
         category_id = response.json()["data"]["id"]
 
         # 2. ACT & ASSERT: Test read access for all user types
+        mock_auth.verify_id_token.return_value = {'uid': CUSTOMER_UID, 'role': UserRole.CUSTOMER}
         for client in [admin_client, customer_client, anonymous_client]:
             response = await client.get(f"/categories/{category_id}")
             assert response.status_code == 200
@@ -221,30 +215,35 @@ class TestCategoriesAPI:
             assert category["name"] == category_data["name"]
 
         # 3. CLEANUP: Delete the category as an admin
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         response = await admin_client.delete(f"/categories/{category_id}")
         assert response.status_code == 200
 
-    async def test_get_nonexistent_category(self, admin_client: AsyncClient):
+    async def test_get_nonexistent_category(self, mock_initialize_app, mock_auth, admin_client: AsyncClient):
         """Tests that requesting a non-existent category returns 404."""
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         nonexistent_id = "nonexistent-category-id"
         response = await admin_client.get(f"/categories/{nonexistent_id}")
         assert response.status_code == 404
 
-    async def test_admin_cannot_update_nonexistent_category(self, admin_client: AsyncClient):
+    async def test_admin_cannot_update_nonexistent_category(self, mock_initialize_app, mock_auth, admin_client: AsyncClient):
         """Tests that updating a non-existent category returns 404."""
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         nonexistent_id = "nonexistent-category-id"
         update_data = {"name": "Updated Name"}
         response = await admin_client.put(f"/categories/{nonexistent_id}", json=update_data)
         assert response.status_code == 404
 
-    async def test_admin_cannot_delete_nonexistent_category(self, admin_client: AsyncClient):
+    async def test_admin_cannot_delete_nonexistent_category(self, mock_initialize_app, mock_auth, admin_client: AsyncClient):
         """Tests that deleting a non-existent category returns 404."""
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         nonexistent_id = "nonexistent-category-id"
         response = await admin_client.delete(f"/categories/{nonexistent_id}")
         assert response.status_code == 404
 
-    async def test_create_category_with_parent(self, admin_client: AsyncClient):
+    async def test_create_category_with_parent(self, mock_initialize_app, mock_auth, admin_client: AsyncClient):
         """Tests creating a category with a parent category."""
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         # 1. Create parent category
         parent_data = {
             "name": "Parent Category",
@@ -272,8 +271,9 @@ class TestCategoriesAPI:
         await admin_client.delete(f"/categories/{child_id}")
         await admin_client.delete(f"/categories/{parent_id}")
 
-    async def test_create_category_validation(self, admin_client: AsyncClient):
+    async def test_create_category_validation(self, mock_initialize_app, mock_auth, admin_client: AsyncClient):
         """Tests validation when creating categories with invalid data."""
+        mock_auth.verify_id_token.return_value = {'uid': ADMIN_UID, 'role': UserRole.ADMIN}
         # Test with missing required field (name)
         invalid_data = {
             "description": "Category without name",

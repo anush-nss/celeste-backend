@@ -56,6 +56,10 @@ async def get_all_products(
     only_discounted: Optional[bool] = Query(
         False, description="Return only products with discounts applied"
     ),
+    store_id: Optional[List[int]] = Query(None, description="Store IDs for multi-store inventory data"),
+    include_inventory: Optional[bool] = Query(
+        True, description="Include inventory information (requires store_id)"
+    ),
     user_tier: Optional[int] = Depends(get_user_tier),
 ):
     """
@@ -76,6 +80,8 @@ async def get_all_products(
         min_price=min_price,
         max_price=max_price,
         only_discounted=only_discounted,
+        store_id=store_id,
+        include_inventory=include_inventory,
     )
 
     # Use the optimized method if pricing is requested and we have a user tier
@@ -83,6 +89,7 @@ async def get_all_products(
         result = await product_service.get_products_with_pagination_optimized(
             query_params=query_params,
             customer_tier=user_tier,
+            store_ids=store_id if include_inventory else None,
         )
     else:
         result = await product_service.get_products_with_pagination(
@@ -253,6 +260,7 @@ async def get_product_by_id(
         True, description="Include pricing calculations"
     ),
     quantity: Optional[int] = Query(1, description="Quantity for bulk pricing"),
+    store_id: Optional[int] = Query(None, description="Store ID for inventory data"),
     user_tier: Optional[int] = Depends(get_user_tier),
 ):
     """
@@ -260,7 +268,7 @@ async def get_product_by_id(
     Uses new optimized service methods for maximum performance
     """
     product = await product_service.get_product_by_id(
-        id, include_categories=True, include_tags=True
+        id, include_categories=True, include_tags=True, store_id=store_id
     )
     
     # If pricing is requested and we have user tier, add pricing info

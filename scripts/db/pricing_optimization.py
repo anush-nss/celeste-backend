@@ -11,6 +11,23 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from sqlalchemy import text
 from src.database.connection import engine
 
+# Import all database models to ensure SQLAlchemy relationships are properly registered
+from src.database.models.user import User
+from src.database.models.address import Address
+from src.database.models.cart import Cart
+from src.database.models.category import Category
+from src.database.models.product import Product, Tag, ProductTag
+from src.database.models.associations import product_categories
+from src.database.models.store import Store
+from src.database.models.store_tag import StoreTag
+from src.database.models.tier import Tier
+from src.database.models.tier_benefit import Benefit, tier_benefits
+from src.database.models.price_list import PriceList
+from src.database.models.price_list_line import PriceListLine
+from src.database.models.tier_price_list import TierPriceList
+from src.database.models.inventory import Inventory
+from src.database.models.order import Order, OrderItem
+
 async def apply_pricing_optimizations():
     """Apply database optimizations for pricing queries"""
     async with engine.connect() as conn:

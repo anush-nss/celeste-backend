@@ -1,103 +1,246 @@
-from typing import Optional
-from src.shared.database import get_async_db, get_async_collection
+from typing import Optional, List
+from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
+from sqlalchemy import and_, update
+from src.database.connection import AsyncSessionLocal
+from src.database.models.inventory import Inventory
 from src.api.inventory.models import (
     InventorySchema,
     CreateInventorySchema,
     UpdateInventorySchema,
+    AdjustInventorySchema,
 )
-from src.shared.exceptions import ResourceNotFoundException, ValidationException
+from src.shared.exceptions import ResourceNotFoundException, ValidationException, ConflictException
 from src.shared.error_handler import ErrorHandler, handle_service_errors
-from src.shared.performance_utils import async_timer
+from sqlalchemy.exc import IntegrityError
 
 
 class InventoryService:
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
 
-    async def get_inventory_collection(self):
-        return await get_async_collection("inventory")
+    @handle_service_errors("retrieving inventory")
+    async def get_inventory_by_product_and_store(
+        self, product_id: int, store_id: int
+    ) -> Inventory:
+        """Get inventory by product and store ID, raising an error if not found."""
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Inventory).filter_by(product_id=product_id, store_id=store_id)
+            )
+            inventory = result.scalars().first()
+            if not inventory:
+                raise ResourceNotFoundException(
+                    f"Inventory for product {product_id} at store {store_id} not found"
+                )
+            return inventory
 
+    @handle_service_errors("retrieving all inventory")
     async def get_all_inventory(
-        self, product_id: Optional[str] = None, store_id: Optional[str] = None
+        self, product_id: Optional[int] = None, store_id: Optional[int] = None
     ) -> list[InventorySchema]:
-        inventory_collection = await self.get_inventory_collection()
-        inventory_ref = inventory_collection
-        if product_id is not None:
-            inventory_ref = inventory_ref.where("productId", "==", product_id)
-        if store_id is not None:
-            inventory_ref = inventory_ref.where("storeId", "==", store_id)
-        docs = inventory_ref.stream()
-        result = []
-        for doc in docs:
-            doc_dict = doc.to_dict()
-            if doc_dict:  # Ensure doc_dict is not None
-                result.append(InventorySchema(id=doc.id, **doc_dict))
-        return result
+        """Get all inventory items with optional filtering."""
+        async with AsyncSessionLocal() as session:
+            query = select(Inventory)
+            if product_id is not None:
+                query = query.filter(Inventory.product_id == product_id)
+            if store_id is not None:
+                query = query.filter(Inventory.store_id == store_id)
 
-    async def get_inventory_by_id(self, inventory_id: str) -> InventorySchema | None:
-        inventory_collection = await self.get_inventory_collection()
-        doc = inventory_collection.document(inventory_id).get()
-        if doc.exists:
-            doc_dict = doc.to_dict()
-            if doc_dict:  # Ensure doc_dict is not None
-                return InventorySchema(id=doc.id, **doc_dict)
-        return None
+            result = await session.execute(query)
+            inventory_items = result.scalars().all()
+            return [InventorySchema.model_validate(item) for item in inventory_items]
 
-    @handle_service_errors("creating inventory item")
-    @async_timer("create_inventory")
+    @handle_service_errors("retrieving inventory by ID")
+    async def get_inventory_by_id(self, inventory_id: int) -> InventorySchema | None:
+        """Get a single inventory item by its ID."""
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Inventory).filter_by(id=inventory_id)
+            )
+            inventory = result.scalars().first()
+            return InventorySchema.model_validate(inventory) if inventory else None
+
+    @handle_service_errors("creating inventory")
     async def create_inventory(
         self, inventory_data: CreateInventorySchema
     ) -> InventorySchema:
-        if not inventory_data.productId or not inventory_data.productId.strip():
-            raise ValidationException(detail="Valid product ID is required")
-
-        if not inventory_data.storeId or not inventory_data.storeId.strip():
-            raise ValidationException(detail="Valid store ID is required")
-
-        if inventory_data.stock < 0:
-            raise ValidationException(detail="Stock quantity cannot be negative")
-
-        inventory_collection = await self.get_inventory_collection()
-        doc_ref = inventory_collection.document()
-        inventory_dict = inventory_data.model_dump()
-
+        """Create a new inventory item."""
         try:
-            doc_ref.set(inventory_dict)
-            created_inventory = doc_ref.get()
-            created_dict = created_inventory.to_dict()
-            if created_dict:  # Ensure created_dict is not None
-                return InventorySchema(id=created_inventory.id, **created_dict)
-            else:
-                raise ValidationException(detail="Failed to create inventory item - document not found after creation")
-        except Exception as e:
-            self._error_handler.logger.error(f"Failed to create inventory item: {str(e)}")
-            raise ValidationException(detail="Failed to create inventory item due to database error")
+            async with AsyncSessionLocal() as session:
+                new_inventory = Inventory(**inventory_data.model_dump())
+                session.add(new_inventory)
+                await session.commit()
+                await session.refresh(new_inventory)
+                return InventorySchema.model_validate(new_inventory)
+        except IntegrityError:
+            raise ConflictException(
+                "Inventory entry for this product and store already exists."
+            )
 
+    @handle_service_errors("updating inventory")
     async def update_inventory(
-        self, inventory_id: str, inventory_data: UpdateInventorySchema
-    ) -> InventorySchema | None:
-        inventory_collection = await self.get_inventory_collection()
-        doc_ref = inventory_collection.document(inventory_id)
-        if not doc_ref.get().exists:
-            return None
-        inventory_dict = inventory_data.model_dump(exclude_unset=True)
-        if "productId" in inventory_dict:
-            del inventory_dict["productId"]
-        if "storeId" in inventory_dict:
-            del inventory_dict["storeId"]
-        if "stock" in inventory_dict:
-            del inventory_dict["stock"]
-        doc_ref.update(inventory_dict)
-        updated_inventory = doc_ref.get()
-        updated_dict = updated_inventory.to_dict()
-        if updated_dict:  # Ensure updated_dict is not None
-            return InventorySchema(id=updated_inventory.id, **updated_dict)
-        return None
+        self, inventory_id: int, inventory_data: UpdateInventorySchema
+    ) -> InventorySchema:
+        """Update an existing inventory item's stock levels."""
+        async with AsyncSessionLocal() as session:
+            # Use SELECT ... FOR UPDATE to lock the row
+            result = await session.execute(
+                select(Inventory).filter_by(id=inventory_id).with_for_update()
+            )
+            inventory = result.scalars().first()
 
-    async def delete_inventory(self, inventory_id: str) -> bool:
-        inventory_collection = await self.get_inventory_collection()
-        doc_ref = inventory_collection.document(inventory_id)
-        if not doc_ref.get().exists:
-            return False
-        doc_ref.delete()
-        return True
+            if not inventory:
+                raise ResourceNotFoundException(f"Inventory item with ID {inventory_id} not found")
+
+            update_data = inventory_data.model_dump(exclude_unset=True)
+            for key, value in update_data.items():
+                setattr(inventory, key, value)
+
+            await session.commit()
+            await session.refresh(inventory)
+            return InventorySchema.model_validate(inventory)
+
+    @handle_service_errors("deleting inventory")
+    async def delete_inventory(self, inventory_id: int) -> bool:
+        """Delete an inventory item."""
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Inventory).filter_by(id=inventory_id)
+            )
+            inventory = result.scalars().first()
+            if not inventory:
+                return False
+
+            await session.delete(inventory)
+            await session.commit()
+            return True
+
+    @handle_service_errors("adjusting stock")
+    async def adjust_inventory_stock(
+        self, adjustment_data: AdjustInventorySchema
+    ) -> InventorySchema:
+        """Atomically adjust stock, hold, or reserved quantities."""
+        async with AsyncSessionLocal() as session:
+            # Lock the specific inventory row for the duration of the transaction
+            result = await session.execute(
+                select(Inventory).filter_by(
+                    product_id=adjustment_data.product_id,
+                    store_id=adjustment_data.store_id
+                ).with_for_update()
+            )
+            inventory = result.scalars().first()
+
+            if not inventory:
+                raise ResourceNotFoundException(
+                    f"Inventory for product {adjustment_data.product_id} at store {adjustment_data.store_id} not found."
+                )
+
+            # Calculate proposed changes
+            new_available = inventory.quantity_available + adjustment_data.available_change
+            new_on_hold = inventory.quantity_on_hold + adjustment_data.on_hold_change
+            new_reserved = inventory.quantity_reserved + adjustment_data.reserved_change
+
+            # Validate that no quantity goes below zero
+            if new_available < 0:
+                raise ValidationException("Insufficient stock for this operation.")
+            if new_on_hold < 0:
+                raise ValidationException("Cannot release more items than are on hold.")
+            if new_reserved < 0:
+                raise ValidationException("Cannot release more items than are reserved.")
+
+            # Apply changes
+            inventory.quantity_available = new_available
+            inventory.quantity_on_hold = new_on_hold
+            inventory.quantity_reserved = new_reserved
+
+            await session.commit()
+            await session.refresh(inventory)
+            return InventorySchema.model_validate(inventory)
+
+    async def place_hold(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
+        """Place a hold on inventory for an order."""
+        if quantity <= 0:
+            raise ValidationException("Quantity must be positive.")
+
+        adjustment = AdjustInventorySchema(
+            product_id=product_id,
+            store_id=store_id,
+            available_change=-quantity,
+            on_hold_change=quantity
+        )
+        return await self.adjust_inventory_stock(adjustment)
+
+    async def release_hold(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
+        """Release a hold on inventory (e.g., order cancelled)."""
+        if quantity <= 0:
+            raise ValidationException("Quantity must be positive.")
+
+        adjustment = AdjustInventorySchema(
+            product_id=product_id,
+            store_id=store_id,
+            available_change=quantity,
+            on_hold_change=-quantity
+        )
+        return await self.adjust_inventory_stock(adjustment)
+
+    async def confirm_reservation(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
+        """Convert a hold to a reservation (e.g., payment confirmed)."""
+        if quantity <= 0:
+            raise ValidationException("Quantity must be positive.")
+
+        adjustment = AdjustInventorySchema(
+            product_id=product_id,
+            store_id=store_id,
+            on_hold_change=-quantity,
+            reserved_change=quantity
+        )
+        return await self.adjust_inventory_stock(adjustment)
+
+    async def fulfill_order(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
+        """Fulfill an order by removing reserved stock."""
+        if quantity <= 0:
+            raise ValidationException("Quantity must be positive.")
+
+        adjustment = AdjustInventorySchema(
+            product_id=product_id,
+            store_id=store_id,
+            reserved_change=-quantity
+        )
+        return await self.adjust_inventory_stock(adjustment)
+
+    @handle_service_errors("retrieving inventory for products")
+    async def get_inventory_for_products_in_store(
+        self, product_ids: List[int], store_id: int
+    ) -> List[InventorySchema]:
+        """Get inventory for a list of products in a specific store."""
+        if not product_ids:
+            return []
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Inventory).filter(
+                    Inventory.product_id.in_(product_ids),
+                    Inventory.store_id == store_id
+                )
+            )
+            inventory_items = result.scalars().all()
+            return [InventorySchema.model_validate(item) for item in inventory_items]
+
+    @handle_service_errors("retrieving inventory for products in multiple stores")
+    async def get_inventory_for_products_in_stores(
+        self, product_ids: List[int], store_ids: List[int]
+    ) -> List[InventorySchema]:
+        """Get inventory for a list of products across multiple stores efficiently."""
+        if not product_ids or not store_ids:
+            return []
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Inventory).filter(
+                    Inventory.product_id.in_(product_ids),
+                    Inventory.store_id.in_(store_ids)
+                )
+            )
+            inventory_items = result.scalars().all()
+            return [InventorySchema.model_validate(item) for item in inventory_items]

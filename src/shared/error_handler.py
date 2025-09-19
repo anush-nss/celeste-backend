@@ -133,7 +133,11 @@ def handle_service_errors(operation: str):
                 }
 
                 # Handle different error types
-                if isinstance(e, (IntegrityError, DatabaseError, SQLAlchemyError)):
+                # Let HTTPException (business logic exceptions) pass through
+                from fastapi import HTTPException
+                if isinstance(e, HTTPException):
+                    raise e
+                elif isinstance(e, (IntegrityError, DatabaseError, SQLAlchemyError)):
                     error_handler.handle_database_error(e, operation, context)
                 elif "firebase" in str(type(e)).lower() or "auth" in str(type(e)).lower():
                     error_handler.handle_firebase_error(e, operation, context)
@@ -158,7 +162,11 @@ def handle_service_errors(operation: str):
                 }
 
                 # Handle different error types
-                if isinstance(e, (IntegrityError, DatabaseError, SQLAlchemyError)):
+                # Let HTTPException (business logic exceptions) pass through
+                from fastapi import HTTPException
+                if isinstance(e, HTTPException):
+                    raise e
+                elif isinstance(e, (IntegrityError, DatabaseError, SQLAlchemyError)):
                     error_handler.handle_database_error(e, operation, context)
                 elif "firebase" in str(type(e)).lower() or "auth" in str(type(e)).lower():
                     error_handler.handle_firebase_error(e, operation, context)

@@ -12,10 +12,13 @@ from .tier_benefit import Benefit, tier_benefits
 from .price_list import PriceList
 from .price_list_line import PriceListLine
 from .tier_price_list import TierPriceList
+from .store import Store
+from .inventory import Inventory
+from .order import Order, OrderItem
 
 __all__ = [
     "User",
-    "Address", 
+    "Address",
     "Cart",
     "Category",
     "Product",
@@ -28,4 +31,8 @@ __all__ = [
     "PriceList",
     "PriceListLine",
     "TierPriceList",
+    "Store",
+    "Inventory",
+    "Order",
+    "OrderItem",
 ]
