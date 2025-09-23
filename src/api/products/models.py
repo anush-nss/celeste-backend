@@ -20,7 +20,7 @@ class ProductSchema(BaseModel):
     ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
-    brand: str = Field(..., min_length=1)
+    brand: Optional[str] = Field(None, min_length=1)
     base_price: float = Field(..., ge=0)
     unit_measure: str
     image_urls: List[str] = []        # First image is primary
@@ -44,7 +44,7 @@ class CreateProductSchema(BaseModel):
     ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
-    brand: str = Field(..., min_length=1)
+    brand: Optional[str] = Field(None, min_length=1)
     base_price: float = Field(..., ge=0)
     unit_measure: str
     image_urls: List[str] = []
@@ -95,7 +95,7 @@ class EnhancedProductSchema(BaseModel):
     ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
-    brand: str = Field(..., min_length=1)
+    brand: Optional[str] = Field(None, min_length=1)
     base_price: float = Field(..., ge=0, description="Base price of the product")
     unit_measure: str
     image_urls: List[str] = []        # First image is primary
@@ -103,8 +103,8 @@ class EnhancedProductSchema(BaseModel):
     updated_at: Optional[datetime] = None
 
     # Relationships
-    categories: Optional[List[Dict[int, Any]]] = None
-    product_tags: Optional[List[Dict[int, Any]]] = None
+    categories: Optional[List[Dict[str, Any]]] = None
+    product_tags: Optional[List[Dict[str, Any]]] = None
 
     # Enhanced fields
     pricing: Optional[PricingInfoSchema] = Field(

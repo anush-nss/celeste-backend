@@ -293,13 +293,12 @@ async def get_product_by_ref(
     # If pricing is requested and we have user tier, add pricing info
     if include_pricing and user_tier and product and product.id is not None:
         # Get category IDs for pricing calculation, filtering out None values
-        product_category_ids = [key for cat in (product.categories or []) for key in cat.keys()]
-
+        product_category_ids = [int(cat['id']) for cat in (product.categories or []) if cat.get('id') is not None]
 
         pricing_result = await pricing_service.calculate_product_price(
+            user_tier_id=user_tier,
             product_id=product.id,
             product_category_ids=product_category_ids,
-            user_tier_id=user_tier,
             quantity=quantity or 1
         )
 
@@ -351,13 +350,13 @@ async def get_product_by_id(
         product_category_ids = []
         if product.categories:
             for cat in product.categories:
-                cat_id = next(iter(cat.keys()), None)
+                cat_id = cat.get('id')
                 if cat_id is not None:
-                    product_category_ids.append(cat_id)
+                    product_category_ids.append(int(cat_id))
         pricing_result = await pricing_service.calculate_product_price(
-            product_id=product.id,
-            product_category_ids=product_category_ids, # New argument
             user_tier_id=user_tier,
+            product_id=product.id,
+            product_category_ids=product_category_ids,
             quantity=quantity or 1
         )
         

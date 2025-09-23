@@ -31,6 +31,7 @@ from src.api.tiers.models import (
 from src.shared.exceptions import ResourceNotFoundException, ValidationException, ConflictException
 from src.shared.error_handler import ErrorHandler, handle_service_errors
 from src.shared.performance_utils import async_timer, BatchProcessor
+from sqlalchemy.exc import IntegrityError
 
 
 class TierService:
@@ -279,7 +280,7 @@ class TierService:
                     raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
 
                 # Check if tier exists
-                tier_result = await session.execute(select(CustomerTier).where(CustomerTier.id == new_tier_id))
+                tier_result = await session.execute(select(Tier).where(Tier.id == new_tier_id))
                 tier = tier_result.scalars().first()
 
                 if not tier:

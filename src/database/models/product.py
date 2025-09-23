@@ -29,7 +29,7 @@ class Product(Base):
     ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    brand: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    brand: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
     base_price: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False, index=True)
     unit_measure: Mapped[str] = mapped_column(String(20), nullable=False)
     image_urls: Mapped[List[str]] = mapped_column(ARRAY(String), default=list, nullable=False)

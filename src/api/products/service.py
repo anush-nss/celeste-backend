@@ -416,8 +416,6 @@ class ProductService:
         if not product_data.name or not product_data.name.strip():
             raise ValidationException(detail="Product name is required")
 
-        if not product_data.brand or not product_data.brand.strip():
-            raise ValidationException(detail="Product brand is required")
 
         if product_data.base_price < 0:
             raise ValidationException(detail="Product price cannot be negative")
@@ -451,7 +449,7 @@ class ProductService:
             product_kwargs = {
                 "name": product_data.name.strip(),
                 "description": product_data.description.strip() if product_data.description else None,
-                "brand": product_data.brand.strip(),
+                "brand": product_data.brand.strip() if product_data.brand else None,
                 "base_price": product_data.base_price,
                 "unit_measure": product_data.unit_measure.strip(),
                 "image_urls": product_data.image_urls or [],
@@ -822,11 +820,35 @@ class ProductService:
             # Get product IDs for pricing query
             product_ids = [row.id for row in actual_products_data]
 
-            # Fetch inventory if store_ids are provided
+            # Fetch inventory if store_ids are provided or find nearby stores by location
             inventory_info_dict = {}
-            if store_ids and product_ids:
+            effective_store_ids = store_ids
+
+            # If no store_ids provided but location is available, find nearby stores
+            if not store_ids and query_params.latitude and query_params.longitude and query_params.include_inventory:
+                from src.api.stores.service import StoreService
+                from src.api.stores.models import StoreQuerySchema
+                from src.config.constants import DEFAULT_SEARCH_RADIUS_KM
+
+                store_service = StoreService()
+                store_query = StoreQuerySchema(
+                    latitude=query_params.latitude,
+                    longitude=query_params.longitude,
+                    radius=DEFAULT_SEARCH_RADIUS_KM,
+                    is_active=True,
+                    limit=None , tags=None, include_distance=None, include_tags=None
+                )
+
+                try:
+                    nearby_stores = await store_service.get_stores_by_location(store_query)
+                    effective_store_ids = [store['id'] for store in nearby_stores]
+                except Exception:
+                    # If location-based store finding fails, continue without inventory
+                    effective_store_ids = None
+
+            if effective_store_ids and product_ids:
                 inventory_items = await self.inventory_service.get_inventory_for_products_in_stores(
-                    product_ids, store_ids
+                    product_ids, effective_store_ids
                 )
                 # Group inventory by product_id
                 for item in inventory_items:
@@ -838,7 +860,7 @@ class ProductService:
             product_categories_dict = {}
             if query_params.include_categories and product_ids:
                 category_query = """
-                    SELECT pc.product_id, c.id, c.name, c.slug, c.description
+                    SELECT pc.product_id, c.id, c.name, c.description, c.sort_order, c.image_url, c.parent_category_id
                     FROM product_categories pc
                     JOIN categories c ON pc.category_id = c.id
                     WHERE pc.product_id = ANY(:product_ids)
@@ -856,8 +878,10 @@ class ProductService:
                     product_categories_dict[row.product_id].append({
                         "id": row.id,
                         "name": row.name,
-                        "slug": row.slug,
-                        "description": row.description
+                        "description": row.description,
+                        "sort_order": row.sort_order,
+                        "image_url": row.image_url,
+                        "parent_category_id": row.parent_category_id
                     })
             
             # If tags are requested, fetch them in a single query
@@ -1052,7 +1076,7 @@ class ProductService:
                 enhanced_product = EnhancedProductSchema(**product_dict)
 
                 # Add inventory if available
-                if store_ids and product_row.id in inventory_info_dict:
+                if effective_store_ids and product_row.id in inventory_info_dict:
                     inventory_list = []
                     for inventory_info in inventory_info_dict[product_row.id]:
                         inventory_list.append(InventoryInfoSchema(
