@@ -103,8 +103,8 @@ class EnhancedProductSchema(BaseModel):
     updated_at: Optional[datetime] = None
 
     # Relationships
-    categories: Optional[List[Dict[str, Any]]] = None
-    product_tags: Optional[List[Dict[str, Any]]] = None
+    categories: Optional[List[Dict[int, Any]]] = None
+    product_tags: Optional[List[Dict[int, Any]]] = None
 
     # Enhanced fields
     pricing: Optional[PricingInfoSchema] = Field(
@@ -145,6 +145,13 @@ class ProductQuerySchema(BaseModel):
     max_price: Optional[float] = None
     only_discounted: Optional[bool] = Field(
         default=False, description="Return only products with discounts applied"
+    )
+    # Location-based store finding parameters
+    latitude: Optional[float] = Field(
+        None, ge=-90, le=90, description="User latitude for location-based store finding"
+    )
+    longitude: Optional[float] = Field(
+        None, ge=-180, le=180, description="User longitude for location-based store finding"
     )
 
 

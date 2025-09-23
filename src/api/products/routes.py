@@ -58,7 +58,13 @@ async def get_all_products(
     ),
     store_id: Optional[List[int]] = Query(None, description="Store IDs for multi-store inventory data"),
     include_inventory: Optional[bool] = Query(
-        True, description="Include inventory information (requires store_id)"
+        True, description="Include inventory information (requires store_id or location)"
+    ),
+    latitude: Optional[float] = Query(
+        None, ge=-90, le=90, description="User latitude for location-based store finding"
+    ),
+    longitude: Optional[float] = Query(
+        None, ge=-180, le=180, description="User longitude for location-based store finding"
     ),
     user_tier: Optional[int] = Depends(get_user_tier),
 ):
@@ -82,6 +88,8 @@ async def get_all_products(
         only_discounted=only_discounted,
         store_id=store_id,
         include_inventory=include_inventory,
+        latitude=latitude,
+        longitude=longitude,
     )
 
     # Use the optimized method if pricing is requested and we have a user tier
@@ -283,9 +291,10 @@ async def get_product_by_ref(
         user_tier = getattr(current_user, 'tier_id', None)
 
     # If pricing is requested and we have user tier, add pricing info
-    if include_pricing and user_tier and product:
-        # Get category IDs for pricing calculation
-        product_category_ids = [cat.get('id') for cat in (product.categories or [])]
+    if include_pricing and user_tier and product and product.id is not None:
+        # Get category IDs for pricing calculation, filtering out None values
+        product_category_ids = [key for cat in (product.categories or []) for key in cat.keys()]
+
 
         pricing_result = await pricing_service.calculate_product_price(
             product_id=product.id,
@@ -341,10 +350,8 @@ async def get_product_by_id(
         # Get category ID for pricing calculation
         product_category_ids = []
         if product.categories:
-            product_category_ids = []
             for cat in product.categories:
-                # Safely get category ID, ensuring it exists and is not None
-                cat_id = cat.get("id") if isinstance(cat, dict) else getattr(cat, "id", None)
+                cat_id = next(iter(cat.keys()), None)
                 if cat_id is not None:
                     product_category_ids.append(cat_id)
         pricing_result = await pricing_service.calculate_product_price(

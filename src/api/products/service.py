@@ -2,11 +2,13 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy import and_, or_, text
+from src.api.stores.models import StoreQuerySchema
 from src.api.tags.models import CreateTagSchema
 from src.database.connection import AsyncSessionLocal
 from src.database.models.product import Product, ProductTag, Tag
 from src.api.tags.service import TagService
 from src.api.inventory.service import InventoryService
+from src.api.stores.service import StoreService
 from src.database.models.category import Category
 from src.api.products.models import (
     ProductSchema,
@@ -36,6 +38,38 @@ class ProductService:
         self._error_handler = ErrorHandler(__name__)
         self.tag_service = TagService(entity_type="product")
         self.inventory_service = InventoryService()
+        self.store_service = StoreService()
+
+    async def _get_store_ids_for_location(self, location: Optional[str] = None) -> List[int]:
+        """Helper method to determine store_ids based on location when store_id is not provided."""
+        if not location:
+            # If no location provided, get all active stores
+            response = await self.store_service.get_all_stores()
+            return [store.id for store in response.stores if store.is_active and store.id is not None]
+
+        # If location provided, find stores in that location
+        # Parse location string to get lat/lng (assuming format "lat,lng")
+        try:
+            lat_str, lng_str = location.split(',')
+            latitude = float(lat_str.strip())
+            longitude = float(lng_str.strip())
+        except (ValueError, TypeError):
+            # If location parsing fails, fall back to all active stores
+            raise ValidationException(detail="Invalid location format. Expected 'latitude,longitude'.")
+
+        query_params = StoreQuerySchema(
+            latitude=latitude,
+            longitude=longitude,
+            radius=None,              # example: 10 km
+            limit=None,               # max number of stores
+            tags=None,                # or ["grocery", "pharmacy"]
+            include_tags=True,      # depends on your use case
+            is_active=True,
+            include_distance=False
+        )
+
+        stores_data = await self.store_service.get_stores_by_location(query_params)
+        return [store_data['id'] for store_data in stores_data if store_data.get('is_active', True)]
 
     async def _build_product_query(self, query_params: ProductQuerySchema, session):
         """Build SQLAlchemy query with filters and relationships"""
