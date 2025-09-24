@@ -24,9 +24,11 @@ class ProductSchema(BaseModel):
     base_price: float = Field(..., ge=0)
     unit_measure: str
     image_urls: List[str] = []        # First image is primary
+    ecommerce_category_id: Optional[int] = None
+    ecommerce_subcategory_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    
+
     # Relationships (loaded when needed)
     categories: Optional[List[Dict[str, Any]]] = None  # Will be CategorySchema when imported
     product_tags: Optional[List[Dict[str, Any]]] = None  # Raw product_tags data
@@ -48,6 +50,8 @@ class CreateProductSchema(BaseModel):
     base_price: float = Field(..., ge=0)
     unit_measure: str
     image_urls: List[str] = []
+    ecommerce_category_id: Optional[int] = None
+    ecommerce_subcategory_id: Optional[int] = None
     category_ids: List[int] = []      # IDs of categories to assign
     tag_ids: List[int] = []           # IDs of tags to assign
 
@@ -60,6 +64,8 @@ class UpdateProductSchema(BaseModel):
     base_price: Optional[float] = Field(None, ge=0)
     unit_measure: Optional[str] = None
     image_urls: Optional[List[str]] = None
+    ecommerce_category_id: Optional[int] = None
+    ecommerce_subcategory_id: Optional[int] = None
     category_ids: Optional[List[int]] = None
     tag_ids: Optional[List[int]] = None
 
@@ -99,6 +105,8 @@ class EnhancedProductSchema(BaseModel):
     base_price: float = Field(..., ge=0, description="Base price of the product")
     unit_measure: str
     image_urls: List[str] = []        # First image is primary
+    ecommerce_category_id: Optional[int] = None
+    ecommerce_subcategory_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

@@ -33,6 +33,8 @@ class Product(Base):
     base_price: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False, index=True)
     unit_measure: Mapped[str] = mapped_column(String(20), nullable=False)
     image_urls: Mapped[List[str]] = mapped_column(ARRAY(String), default=list, nullable=False)
+    ecommerce_category_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    ecommerce_subcategory_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), onupdate=text('NOW()'), nullable=False)
     
