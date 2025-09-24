@@ -17,6 +17,7 @@ class ProductTagSchema(BaseModel):
 
 class ProductSchema(BaseModel):
     id: Optional[int] = None
+    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     brand: str = Field(..., min_length=1)
@@ -39,6 +40,8 @@ class ProductSchema(BaseModel):
 
 
 class CreateProductSchema(BaseModel):
+    id: Optional[int] = Field(None, description="Optional manual ID specification")
+    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     brand: str = Field(..., min_length=1)
@@ -50,6 +53,7 @@ class CreateProductSchema(BaseModel):
 
 
 class UpdateProductSchema(BaseModel):
+    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: Optional[str] = Field(None, min_length=1)
     description: Optional[str] = None
     brand: Optional[str] = Field(None, min_length=1)
@@ -88,6 +92,7 @@ class EnhancedProductSchema(BaseModel):
     """Enhanced product schema with pricing and inventory information"""
 
     id: Optional[int] = None
+    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     brand: str = Field(..., min_length=1)
@@ -98,8 +103,8 @@ class EnhancedProductSchema(BaseModel):
     updated_at: Optional[datetime] = None
 
     # Relationships
-    categories: Optional[List[Dict[str, Any]]] = None
-    product_tags: Optional[List[Dict[str, Any]]] = None
+    categories: Optional[List[Dict[int, Any]]] = None
+    product_tags: Optional[List[Dict[int, Any]]] = None
 
     # Enhanced fields
     pricing: Optional[PricingInfoSchema] = Field(
@@ -140,6 +145,13 @@ class ProductQuerySchema(BaseModel):
     max_price: Optional[float] = None
     only_discounted: Optional[bool] = Field(
         default=False, description="Return only products with discounts applied"
+    )
+    # Location-based store finding parameters
+    latitude: Optional[float] = Field(
+        None, ge=-90, le=90, description="User latitude for location-based store finding"
+    )
+    longitude: Optional[float] = Field(
+        None, ge=-180, le=180, description="User longitude for location-based store finding"
     )
 
 

@@ -8,6 +8,10 @@ from src.config.constants import UserRole
 from src.shared.exceptions import ResourceNotFoundException, ValidationException, ServiceUnavailableException
 from src.shared.error_handler import ErrorHandler, handle_service_errors
 import requests
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class AuthService:
@@ -161,11 +165,27 @@ class AuthService:
         custom_token = auth.create_custom_token(uid.strip())
 
         # Get Firebase Web API key from environment
-        firebase_web_api_key = os.getenv("FIREBASE_WEB_API_KEY")
-        if not firebase_web_api_key:
-            raise ServiceUnavailableException(
-                detail="Firebase Web API key not configured for token generation"
-            )
+        is_local = os.getenv("DEPLOYMENT", "cloud") == "local"
+
+        if is_local:
+            # Local development: require FIREBASE_WEB_API_KEY from .env file
+            firebase_web_api_key = os.getenv("FIREBASE_WEB_API_KEY")
+            if not firebase_web_api_key:
+                raise ServiceUnavailableException(
+                    detail="FIREBASE_WEB_API_KEY environment variable not set for local development. "
+                           "Add it to your .env file. Get this from Firebase Console → Project Settings → General → Web API Key"
+                )
+        else:
+            # Cloud environment: this endpoint should not be used in production
+            firebase_web_api_key = os.getenv("FIREBASE_WEB_API_KEY")
+            if not firebase_web_api_key:
+                raise ServiceUnavailableException(
+                    detail="FIREBASE_WEB_API_KEY environment variable not set for local development. "
+                           "Add it to your .env file. Get this from Firebase Console → Project Settings → General → Web API Key"
+                )
+            # raise ServiceUnavailableException(
+            #     detail="Development token generation is not available in cloud environments"
+            # )
 
         # Exchange custom token for ID token using Firebase Auth REST API
         auth_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key={firebase_web_api_key}"
