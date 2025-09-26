@@ -3,7 +3,7 @@
 
 from .user import User
 from .address import Address
-from .cart import Cart
+from .cart import Cart, CartUser, CartItem
 from .category import Category
 from .product import Product, Tag, ProductTag
 from .associations import product_categories
@@ -20,6 +20,8 @@ __all__ = [
     "User",
     "Address",
     "Cart",
+    "CartUser",
+    "CartItem",
     "Category",
     "Product",
     "Tag",

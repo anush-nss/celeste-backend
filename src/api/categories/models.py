@@ -26,6 +26,7 @@ class CategorySchema(BaseModel):
 
 
 class CreateCategorySchema(BaseModel):
+    id: Optional[int] = Field(None, description="Optional manual ID specification")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     image_url: Optional[str] = None # Changed from imageUrl

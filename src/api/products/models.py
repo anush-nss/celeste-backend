@@ -17,15 +17,18 @@ class ProductTagSchema(BaseModel):
 
 class ProductSchema(BaseModel):
     id: Optional[int] = None
+    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
-    brand: str = Field(..., min_length=1)
+    brand: Optional[str] = Field(None, min_length=1)
     base_price: float = Field(..., ge=0)
     unit_measure: str
     image_urls: List[str] = []        # First image is primary
+    ecommerce_category_id: Optional[int] = None
+    ecommerce_subcategory_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    
+
     # Relationships (loaded when needed)
     categories: Optional[List[Dict[str, Any]]] = None  # Will be CategorySchema when imported
     product_tags: Optional[List[Dict[str, Any]]] = None  # Raw product_tags data
@@ -39,23 +42,30 @@ class ProductSchema(BaseModel):
 
 
 class CreateProductSchema(BaseModel):
+    id: Optional[int] = Field(None, description="Optional manual ID specification")
+    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
-    brand: str = Field(..., min_length=1)
+    brand: Optional[str] = Field(None, min_length=1)
     base_price: float = Field(..., ge=0)
     unit_measure: str
     image_urls: List[str] = []
+    ecommerce_category_id: Optional[int] = None
+    ecommerce_subcategory_id: Optional[int] = None
     category_ids: List[int] = []      # IDs of categories to assign
     tag_ids: List[int] = []           # IDs of tags to assign
 
 
 class UpdateProductSchema(BaseModel):
+    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: Optional[str] = Field(None, min_length=1)
     description: Optional[str] = None
     brand: Optional[str] = Field(None, min_length=1)
     base_price: Optional[float] = Field(None, ge=0)
     unit_measure: Optional[str] = None
     image_urls: Optional[List[str]] = None
+    ecommerce_category_id: Optional[int] = None
+    ecommerce_subcategory_id: Optional[int] = None
     category_ids: Optional[List[int]] = None
     tag_ids: Optional[List[int]] = None
 
@@ -88,12 +98,15 @@ class EnhancedProductSchema(BaseModel):
     """Enhanced product schema with pricing and inventory information"""
 
     id: Optional[int] = None
+    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
-    brand: str = Field(..., min_length=1)
+    brand: Optional[str] = Field(None, min_length=1)
     base_price: float = Field(..., ge=0, description="Base price of the product")
     unit_measure: str
     image_urls: List[str] = []        # First image is primary
+    ecommerce_category_id: Optional[int] = None
+    ecommerce_subcategory_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -140,6 +153,13 @@ class ProductQuerySchema(BaseModel):
     max_price: Optional[float] = None
     only_discounted: Optional[bool] = Field(
         default=False, description="Return only products with discounts applied"
+    )
+    # Location-based store finding parameters
+    latitude: Optional[float] = Field(
+        None, ge=-90, le=90, description="User latitude for location-based store finding"
+    )
+    longitude: Optional[float] = Field(
+        None, ge=-180, le=180, description="User longitude for location-based store finding"
     )
 
 

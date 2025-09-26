@@ -2,11 +2,13 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy import and_, or_, text
+from src.api.stores.models import StoreQuerySchema
 from src.api.tags.models import CreateTagSchema
 from src.database.connection import AsyncSessionLocal
 from src.database.models.product import Product, ProductTag, Tag
 from src.api.tags.service import TagService
 from src.api.inventory.service import InventoryService
+from src.api.stores.service import StoreService
 from src.database.models.category import Category
 from src.api.products.models import (
     ProductSchema,
@@ -36,6 +38,38 @@ class ProductService:
         self._error_handler = ErrorHandler(__name__)
         self.tag_service = TagService(entity_type="product")
         self.inventory_service = InventoryService()
+        self.store_service = StoreService()
+
+    async def _get_store_ids_for_location(self, location: Optional[str] = None) -> List[int]:
+        """Helper method to determine store_ids based on location when store_id is not provided."""
+        if not location:
+            # If no location provided, get all active stores
+            response = await self.store_service.get_all_stores()
+            return [store.id for store in response.stores if store.is_active and store.id is not None]
+
+        # If location provided, find stores in that location
+        # Parse location string to get lat/lng (assuming format "lat,lng")
+        try:
+            lat_str, lng_str = location.split(',')
+            latitude = float(lat_str.strip())
+            longitude = float(lng_str.strip())
+        except (ValueError, TypeError):
+            # If location parsing fails, fall back to all active stores
+            raise ValidationException(detail="Invalid location format. Expected 'latitude,longitude'.")
+
+        query_params = StoreQuerySchema(
+            latitude=latitude,
+            longitude=longitude,
+            radius=None,              # example: 10 km
+            limit=None,               # max number of stores
+            tags=None,                # or ["grocery", "pharmacy"]
+            include_tags=True,      # depends on your use case
+            is_active=True,
+            include_distance=False
+        )
+
+        stores_data = await self.store_service.get_stores_by_location(query_params)
+        return [store_data['id'] for store_data in stores_data if store_data.get('is_active', True)]
 
     async def _build_product_query(self, query_params: ProductQuerySchema, session):
         """Build SQLAlchemy query with filters and relationships"""
@@ -170,12 +204,15 @@ class ProductService:
                 for product_row in actual_products:
                     enhanced_product = EnhancedProductSchema(
                         id=product_row.id,
+                        ref=product_row.ref,
                         name=product_row.name,
                         description=product_row.description,
                         brand=product_row.brand,
                         base_price=float(product_row.base_price),
                         unit_measure=product_row.unit_measure,
                         image_urls=product_row.image_urls,
+                        ecommerce_category_id=product_row.ecommerce_category_id,
+                        ecommerce_subcategory_id=product_row.ecommerce_subcategory_id,
                         created_at=product_row.created_at,
                         updated_at=product_row.updated_at,
                         categories=[safe_model_validate(CategorySchema, cat).model_dump(mode="json") for cat in product_categories_dict.get(product_row.id, [])] if load_categories else [],
@@ -214,12 +251,15 @@ class ProductService:
                 for product_row in actual_products:
                     enhanced_product = EnhancedProductSchema(
                         id=product_row.id,
+                        ref=product_row.ref,
                         name=product_row.name,
                         description=product_row.description,
                         brand=product_row.brand,
                         base_price=float(product_row.base_price),
                         unit_measure=product_row.unit_measure,
                         image_urls=product_row.image_urls,
+                        ecommerce_category_id=product_row.ecommerce_category_id,
+                        ecommerce_subcategory_id=product_row.ecommerce_subcategory_id,
                         created_at=product_row.created_at,
                         updated_at=product_row.updated_at,
                         categories=[safe_model_validate(CategorySchema, cat).model_dump(mode="json") for cat in product_categories_dict.get(product_row.id, [])] if load_categories else [],
@@ -314,6 +354,65 @@ class ProductService:
 
             return None
 
+    @handle_service_errors("retrieving product by ref")
+    async def get_product_by_ref(
+        self,
+        product_ref: str,
+        include_categories: bool = True,
+        include_tags: bool = True,
+        store_id: Optional[int] = None,
+    ) -> EnhancedProductSchema | None:
+        """Get product by ref with relationships and optional inventory."""
+        if not product_ref or not product_ref.strip():
+            raise ValidationException(detail="Product ref cannot be empty")
+
+        product_ref = product_ref.strip()
+
+        async with AsyncSessionLocal() as session:
+            query = select(Product).filter(Product.ref == product_ref)
+
+            # Include relationships
+            if include_categories:
+                query = query.options(selectinload(Product.categories))
+            if include_tags:
+                query = query.options(
+                    selectinload(Product.product_tags).selectinload(ProductTag.tag)
+                )
+
+            result = await session.execute(query)
+            product = result.scalars().first()
+
+            if product:
+                include_rels = set()
+                if include_categories:
+                    include_rels.add('categories')
+                if include_tags:
+                    include_rels.add('product_tags')
+
+                pydantic_product = safe_model_validate(
+                    EnhancedProductSchema,
+                    product,
+                    max_depth=3
+                )
+
+                # Fetch and add inventory if store_id is provided
+                if store_id:
+                    inventory_item = await self.inventory_service.get_inventory_by_product_and_store(
+                        product.id, store_id
+                    )
+                    if inventory_item:
+                        pydantic_product.inventory = [InventoryInfoSchema(
+                            store_id=inventory_item.store_id,
+                            in_stock=inventory_item.quantity_available > 0,
+                            quantity_available=inventory_item.quantity_available,
+                            quantity_on_hold=inventory_item.quantity_on_hold,
+                            quantity_reserved=inventory_item.quantity_reserved,
+                        )]
+
+                return pydantic_product
+
+            return None
+
     @handle_service_errors("creating product")
     async def create_product(self, product_data: CreateProductSchema) -> ProductSchema:
         """Create a new product with categories and tags"""
@@ -321,8 +420,6 @@ class ProductService:
         if not product_data.name or not product_data.name.strip():
             raise ValidationException(detail="Product name is required")
 
-        if not product_data.brand or not product_data.brand.strip():
-            raise ValidationException(detail="Product brand is required")
 
         if product_data.base_price < 0:
             raise ValidationException(detail="Product price cannot be negative")
@@ -330,16 +427,44 @@ class ProductService:
         if not product_data.unit_measure or not product_data.unit_measure.strip():
             raise ValidationException(detail="Product unit measure is required")
 
+        # Validate ref if provided
+        if product_data.ref:
+            if not product_data.ref.strip():
+                raise ValidationException(detail="Product ref cannot be empty")
+
         async with AsyncSessionLocal() as session:
-            # Create the product
-            new_product = Product(
-                name=product_data.name.strip(),
-                description=product_data.description.strip() if product_data.description else None,
-                brand=product_data.brand.strip(),
-                base_price=product_data.base_price,
-                unit_measure=product_data.unit_measure.strip(),
-                image_urls=product_data.image_urls or []
-            )
+            # Check if ref already exists
+            if product_data.ref:
+                existing_ref = await session.execute(
+                    select(Product).filter(Product.ref == product_data.ref.strip())
+                )
+                if existing_ref.scalars().first():
+                    raise ConflictException(detail=f"Product with ref '{product_data.ref}' already exists")
+
+            # Check if ID is manually specified and already exists
+            if product_data.id:
+                existing_id = await session.execute(
+                    select(Product).filter(Product.id == product_data.id)
+                )
+                if existing_id.scalars().first():
+                    raise ConflictException(detail=f"Product with ID {product_data.id} already exists")
+
+            # Create the product with optional ID and ref
+            product_kwargs = {
+                "name": product_data.name.strip(),
+                "description": product_data.description.strip() if product_data.description else None,
+                "brand": product_data.brand.strip() if product_data.brand else None,
+                "base_price": product_data.base_price,
+                "unit_measure": product_data.unit_measure.strip(),
+                "image_urls": product_data.image_urls or [],
+                "ref": product_data.ref.strip() if product_data.ref else None
+            }
+
+            # Add manual ID if specified
+            if product_data.id:
+                product_kwargs["id"] = product_data.id
+
+            new_product = Product(**product_kwargs)
             session.add(new_product)
             await session.commit()
             await session.refresh(new_product)
@@ -502,10 +627,43 @@ class ProductService:
             all_tag_ids = {tid for p in products_data for tid in p.tag_ids}
             product_names = {p.name for p in products_data}
 
+            # Collect refs and IDs for validation
+            product_refs = {p.ref for p in products_data if p.ref and p.ref.strip()}
+            product_ids = {p.id for p in products_data if p.id}
+
+            # Check for duplicate refs in the request
+            ref_counts = {}
+            for p in products_data:
+                if p.ref and p.ref.strip():
+                    ref = p.ref.strip()
+                    ref_counts[ref] = ref_counts.get(ref, 0) + 1
+                    if ref_counts[ref] > 1:
+                        raise ValidationException(detail=f"Duplicate ref '{ref}' found in request")
+
+            # Check for duplicate IDs in the request
+            id_counts = {}
+            for p in products_data:
+                if p.id:
+                    id_counts[p.id] = id_counts.get(p.id, 0) + 1
+                    if id_counts[p.id] > 1:
+                        raise ValidationException(detail=f"Duplicate ID {p.id} found in request")
+
             # Check for existing product names
             existing_products = (await session.execute(select(Product).filter(Product.name.in_(product_names)))).scalars().all()
             if existing_products:
                 raise ConflictException(f"Products with these names already exist: {[p.name for p in existing_products]}")
+
+            # Check for existing refs
+            if product_refs:
+                existing_refs = (await session.execute(select(Product).filter(Product.ref.in_(product_refs)))).scalars().all()
+                if existing_refs:
+                    raise ConflictException(f"Products with these refs already exist: {[p.ref for p in existing_refs]}")
+
+            # Check for existing IDs
+            if product_ids:
+                existing_ids = (await session.execute(select(Product).filter(Product.id.in_(product_ids)))).scalars().all()
+                if existing_ids:
+                    raise ConflictException(f"Products with these IDs already exist: {[p.id for p in existing_ids]}")
 
             # Check for existing categories
             if all_category_ids:
@@ -520,10 +678,18 @@ class ProductService:
                     raise ResourceNotFoundException("One or more tags not found.")
 
             # Step 2: Create Product ORM objects
-            new_products = [Product(**data.model_dump(exclude={'category_ids', 'tag_ids'})) for data in products_data]
-            
+            new_products = []
+            for data in products_data:
+                product_kwargs = data.model_dump(exclude={'category_ids', 'tag_ids'})
+
+                # Clean up ref field (strip whitespace, set to None if empty)
+                if 'ref' in product_kwargs and product_kwargs['ref']:
+                    product_kwargs['ref'] = product_kwargs['ref'].strip() or None
+
+                new_products.append(Product(**product_kwargs))
+
             session.add_all(new_products)
-            await session.flush()  # Assigns IDs
+            await session.flush()  # Assigns IDs (or uses manual IDs if provided)
 
             # Step 3: Create associations using bulk inserts
             product_category_associations = []
@@ -658,11 +824,35 @@ class ProductService:
             # Get product IDs for pricing query
             product_ids = [row.id for row in actual_products_data]
 
-            # Fetch inventory if store_ids are provided
+            # Fetch inventory if store_ids are provided or find nearby stores by location
             inventory_info_dict = {}
-            if store_ids and product_ids:
+            effective_store_ids = store_ids
+
+            # If no store_ids provided but location is available, find nearby stores
+            if not store_ids and query_params.latitude and query_params.longitude and query_params.include_inventory:
+                from src.api.stores.service import StoreService
+                from src.api.stores.models import StoreQuerySchema
+                from src.config.constants import DEFAULT_SEARCH_RADIUS_KM
+
+                store_service = StoreService()
+                store_query = StoreQuerySchema(
+                    latitude=query_params.latitude,
+                    longitude=query_params.longitude,
+                    radius=DEFAULT_SEARCH_RADIUS_KM,
+                    is_active=True,
+                    limit=None , tags=None, include_distance=None, include_tags=None
+                )
+
+                try:
+                    nearby_stores = await store_service.get_stores_by_location(store_query)
+                    effective_store_ids = [store['id'] for store in nearby_stores]
+                except Exception:
+                    # If location-based store finding fails, continue without inventory
+                    effective_store_ids = None
+
+            if effective_store_ids and product_ids:
                 inventory_items = await self.inventory_service.get_inventory_for_products_in_stores(
-                    product_ids, store_ids
+                    product_ids, effective_store_ids
                 )
                 # Group inventory by product_id
                 for item in inventory_items:
@@ -674,7 +864,7 @@ class ProductService:
             product_categories_dict = {}
             if query_params.include_categories and product_ids:
                 category_query = """
-                    SELECT pc.product_id, c.id, c.name, c.slug, c.description
+                    SELECT pc.product_id, c.id, c.name, c.description, c.sort_order, c.image_url, c.parent_category_id
                     FROM product_categories pc
                     JOIN categories c ON pc.category_id = c.id
                     WHERE pc.product_id = ANY(:product_ids)
@@ -692,8 +882,10 @@ class ProductService:
                     product_categories_dict[row.product_id].append({
                         "id": row.id,
                         "name": row.name,
-                        "slug": row.slug,
-                        "description": row.description
+                        "description": row.description,
+                        "sort_order": row.sort_order,
+                        "image_url": row.image_url,
+                        "parent_category_id": row.parent_category_id
                     })
             
             # If tags are requested, fetch them in a single query
@@ -888,7 +1080,7 @@ class ProductService:
                 enhanced_product = EnhancedProductSchema(**product_dict)
 
                 # Add inventory if available
-                if store_ids and product_row.id in inventory_info_dict:
+                if effective_store_ids and product_row.id in inventory_info_dict:
                     inventory_list = []
                     for inventory_info in inventory_info_dict[product_row.id]:
                         inventory_list.append(InventoryInfoSchema(
@@ -1028,12 +1220,15 @@ class ProductService:
                 for product_row in actual_products:
                     enhanced_product = EnhancedProductSchema(
                         id=product_row.id,
+                        ref=product_row.ref,
                         name=product_row.name,
                         description=product_row.description,
                         brand=product_row.brand,
                         base_price=float(product_row.base_price),
                         unit_measure=product_row.unit_measure,
                         image_urls=product_row.image_urls,
+                        ecommerce_category_id=product_row.ecommerce_category_id,
+                        ecommerce_subcategory_id=product_row.ecommerce_subcategory_id,
                         created_at=product_row.created_at,
                         updated_at=product_row.updated_at,
                         categories=[safe_model_validate(CategorySchema, cat).model_dump(mode="json") for cat in product_categories_dict.get(product_row.id, [])] if load_categories else [],
@@ -1072,12 +1267,15 @@ class ProductService:
                 for product_row in actual_products:
                     enhanced_product = EnhancedProductSchema(
                         id=product_row.id,
+                        ref=product_row.ref,
                         name=product_row.name,
                         description=product_row.description,
                         brand=product_row.brand,
                         base_price=float(product_row.base_price),
                         unit_measure=product_row.unit_measure,
                         image_urls=product_row.image_urls,
+                        ecommerce_category_id=product_row.ecommerce_category_id,
+                        ecommerce_subcategory_id=product_row.ecommerce_subcategory_id,
                         created_at=product_row.created_at,
                         updated_at=product_row.updated_at,
                         categories=[safe_model_validate(CategorySchema, cat).model_dump(mode="json") for cat in product_categories_dict.get(product_row.id, [])] if load_categories else [],

@@ -22,7 +22,7 @@ class InventoryService:
     @handle_service_errors("retrieving inventory")
     async def get_inventory_by_product_and_store(
         self, product_id: int, store_id: int
-    ) -> Inventory:
+    ) -> InventorySchema | None:
         """Get inventory by product and store ID, raising an error if not found."""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -33,7 +33,7 @@ class InventoryService:
                 raise ResourceNotFoundException(
                     f"Inventory for product {product_id} at store {store_id} not found"
                 )
-            return inventory
+            return InventorySchema.model_validate(inventory)
 
     @handle_service_errors("retrieving all inventory")
     async def get_all_inventory(

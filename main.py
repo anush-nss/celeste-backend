@@ -8,6 +8,7 @@ from fastapi.security import HTTPBearer
 from src.api.auth.routes import auth_router
 from src.api.users.routes import users_router
 from src.api.categories.routes import categories_router
+from src.api.ecommerce_categories.routes import ecommerce_categories_router
 from src.api.products.routes import products_router
 from src.api.orders.routes import orders_router
 from src.api.inventory.routes import inventory_router
@@ -32,6 +33,7 @@ app = FastAPI(
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(categories_router)
+app.include_router(ecommerce_categories_router)
 app.include_router(products_router)
 app.include_router(orders_router)
 app.include_router(inventory_router)

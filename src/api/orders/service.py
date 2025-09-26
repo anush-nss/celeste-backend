@@ -1,12 +1,15 @@
 from typing import List, Optional
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy import and_, update
 from src.database.connection import AsyncSessionLocal
 from src.database.models.order import Order, OrderItem
 from src.database.models.product import Product
+from src.database.models.cart import Cart, CartItem
 from src.api.orders.models import OrderSchema, CreateOrderSchema, UpdateOrderSchema
+from src.api.users.models import MultiCartCheckoutSchema, CheckoutResponseSchema, CartGroupSchema
 from src.api.inventory.service import InventoryService
-from src.config.constants import OrderStatus
+from src.config.constants import OrderStatus, CartStatus
 from src.shared.exceptions import ResourceNotFoundException, ValidationException
 from src.shared.error_handler import ErrorHandler, handle_service_errors
 from decimal import Decimal
@@ -148,3 +151,112 @@ class OrderService:
                 await session.commit()
                 await session.refresh(order)
                 return OrderSchema.model_validate(order)
+
+    @handle_service_errors("creating multi-cart order")
+    async def create_multi_cart_order(
+        self, user_id: str, checkout_data: MultiCartCheckoutSchema
+    ) -> CheckoutResponseSchema:
+        """Create order from multiple carts"""
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                # Validate all carts are accessible and active
+                cart_groups = []
+                total_amount = Decimal('0.00')
+
+                # Get all carts with items
+                for cart_id in checkout_data.cart_ids:
+                    # Check cart access and status
+                    cart_query = select(Cart).where(
+                        and_(Cart.id == cart_id, Cart.status == CartStatus.ACTIVE)
+                    ).options(selectinload(Cart.items))
+
+                    cart_result = await session.execute(cart_query)
+                    cart = cart_result.scalar_one_or_none()
+
+                    if not cart:
+                        raise ValidationException(f"Cart {cart_id} not found or not available for checkout")
+
+                    # Verify user has access to cart
+                    from src.api.carts.service import CartService
+                    try:
+                        await CartService._check_cart_access(session, user_id, cart_id)
+                    except Exception:
+                        raise ValidationException(f"You don't have access to cart {cart_id}")
+
+                    # Calculate cart total and prepare items
+                    cart_total = Decimal('0.00')
+                    cart_items = []
+
+                    for item in cart.items:
+                        # Get product for pricing (simplified - would use pricing service)
+                        product_query = select(Product).where(Product.id == item.product_id)
+                        product_result = await session.execute(product_query)
+                        product = product_result.scalar_one_or_none()
+
+                        if not product:
+                            raise ValidationException(f"Product {item.product_id} not found")
+
+                        # Use product base price (would integrate with pricing service)
+                        unit_price = product.base_price if hasattr(product, 'base_price') else Decimal('10.00')
+                        item_total = unit_price * item.quantity
+
+                        cart_total += item_total
+
+                        cart_items.append({
+                            "product_id": item.product_id,
+                            "quantity": item.quantity,
+                            "unit_price": float(unit_price),
+                            "total_price": float(item_total)
+                        })
+
+                    cart_groups.append(CartGroupSchema(
+                        cart_id=cart.id,
+                        cart_name=cart.name,
+                        items=cart_items,
+                        cart_total=float(cart_total)
+                    ))
+
+                    total_amount += cart_total
+
+                # Create order
+                new_order = Order(
+                    user_id=user_id,
+                    store_id=checkout_data.store_id,
+                    total_amount=total_amount,
+                    status=OrderStatus.PENDING
+                )
+                session.add(new_order)
+                await session.flush()
+
+                # Create order items grouped by cart
+                for cart_group in cart_groups:
+                    for item in cart_group.items:
+                        order_item = OrderItem(
+                            order_id=new_order.id,
+                            source_cart_id=cart_group.cart_id,
+                            product_id=item["product_id"],
+                            quantity=item["quantity"],
+                            unit_price=Decimal(str(item["unit_price"])),
+                            total_price=Decimal(str(item["total_price"]))
+                        )
+                        session.add(order_item)
+
+                # Update cart statuses to ordered
+                for cart_id in checkout_data.cart_ids:
+                    await session.execute(
+                        update(Cart)
+                        .where(Cart.id == cart_id)
+                        .values(status=CartStatus.ORDERED, ordered_at=new_order.created_at)
+                    )
+
+                await session.commit()
+                await session.refresh(new_order)
+
+                # Return response
+                return CheckoutResponseSchema(
+                    order_id=new_order.id,
+                    total_amount=float(new_order.total_amount),
+                    status=new_order.status.value,
+                    cart_groups=cart_groups,
+                    created_at=new_order.created_at
+                )
