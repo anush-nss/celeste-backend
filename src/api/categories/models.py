@@ -8,7 +8,19 @@ class CategoryQuerySchema(BaseModel):
         default=True,
         description="Whether to include subcategories in the response"
     )
-    
+    parent_only: Optional[bool] = Field(
+        default=False,
+        description="Get only parent categories (categories without a parent)"
+    )
+    parent_id: Optional[int] = Field(
+        default=None,
+        description="Get subcategories of a specific parent category ID"
+    )
+    subcategories_only: Optional[bool] = Field(
+        default=False,
+        description="Get only subcategories (categories that have a parent)"
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 
