@@ -31,7 +31,7 @@ class User(Base):
     # Customer statistics for tier evaluation
     total_orders: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     lifetime_value: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
-    is_delivery: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    is_delivery: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)
     last_order_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text('NOW()'), nullable=False)

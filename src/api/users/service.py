@@ -85,6 +85,7 @@ class UserService:
                 phone=user_data.phone,
                 role=user_data.role.value,
                 tier_id=default_tier,
+                is_delivery=None
             )
             session.add(new_user)
             await session.commit()
