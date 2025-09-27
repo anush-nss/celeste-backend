@@ -1056,6 +1056,7 @@ class ProductService:
                     "description": product_row.description,
                     "brand": product_row.brand,
                     "base_price": float(product_row.base_price),
+                    "ref": product_row.ref,
                     "unit_measure": product_row.unit_measure,
                     "image_urls": product_row.image_urls,
                     "created_at": product_row.created_at,
