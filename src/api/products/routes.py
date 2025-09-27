@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, status, Query, HTTPException
-from typing import Annotated, List, Optional, Dict, Union
+from typing import Annotated, List, Optional, Dict, Union, Type
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from src.database.connection import AsyncSessionLocal
