@@ -18,7 +18,7 @@ async def get_orders(current_user: DecodedToken = Depends(get_current_user)):
         orders = await order_service.get_all_orders()
     else:
         orders = await order_service.get_all_orders(user_id=current_user.uid)
-    return success_response(orders)
+    return success_response([order.model_dump(mode="json") for order in orders])
 
 
 @orders_router.get(
@@ -34,7 +34,7 @@ async def get_order_by_id(
     if current_user.role != UserRole.ADMIN and order.user_id != current_user.uid:
         raise ForbiddenException("You do not have permission to access this order.")
 
-    return success_response(order)
+    return success_response(order.model_dump(mode="json"))
 
 
 @orders_router.post(
@@ -48,7 +48,7 @@ async def create__order(
     current_user: DecodedToken = Depends(get_current_user),
 ):
     new_order = await order_service.create_order(order_data, current_user.uid)
-    return success_response(new_order, status_code=status.HTTP_201_CREATED)
+    return success_response(new_order.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
 
 
 @orders_router.put(
@@ -59,4 +59,4 @@ async def create__order(
 )
 async def update_order_status(order_id: int, order_data: UpdateOrderSchema):
     updated_order = await order_service.update_order_status(order_id, order_data)
-    return success_response(updated_order)
+    return success_response(updated_order.model_dump(mode="json"))

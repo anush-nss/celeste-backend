@@ -8,6 +8,7 @@ from src.database.models.address import Address
 # Import all models to ensure relationships are properly registered
 import src.database.models
 from src.api.users.models import CreateUserSchema, UserSchema, AddToCartSchema, UpdateCartItemSchema, AddressSchema, UpdateAddressSchema, CartItemSchema
+from src.api.users.services import UserAddressService
 from src.config.constants import UserRole, DEFAULT_FALLBACK_TIER
 from src.api.tiers.service import TierService
 from src.shared.exceptions import ResourceNotFoundException, ConflictException, ValidationException
@@ -52,6 +53,7 @@ def _user_to_dict(user: User, include_addresses: bool = False, include_cart: boo
 class UserService:
     def __init__(self):
         self.tier_service = TierService()
+        self.address_service = UserAddressService()
         self._error_handler = ErrorHandler(__name__)
 
     @handle_service_errors("creating user")
@@ -138,113 +140,27 @@ class UserService:
                 return safe_model_validate(UserSchema, user)
             return None
 
-    # Old cart methods removed - use new multi-cart endpoints at /users/me/carts/*
-
-
+    # Address management - delegated to UserAddressService
     async def add_address(self, user_id: str, address_data: AddressSchema) -> AddressSchema:
-        async with AsyncSessionLocal() as session:
-            # If new address is default, atomically set all other addresses for this user to not default
-            if address_data.is_default:
-                await session.execute(
-                    update(Address).where(Address.user_id == user_id).values(is_default=False)
-                )
-
-            new_address = Address(
-                user_id=user_id,
-                address=address_data.address,
-                latitude=address_data.latitude,
-                longitude=address_data.longitude,
-                is_default=address_data.is_default
-            )
-            session.add(new_address)
-            await session.commit()
-            await session.refresh(new_address)
-            return AddressSchema.model_validate(new_address)
+        """Add a new address for a user"""
+        return await self.address_service.add_address(user_id, address_data)
 
     async def get_addresses(self, user_id: str) -> List[AddressSchema]:
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Address).filter_by(user_id=user_id)
-            )
-            addresses = result.scalars().all()
-            return safe_model_validate_list(AddressSchema, addresses)
+        """Get all addresses for a user"""
+        return await self.address_service.get_addresses(user_id)
 
     async def get_address_by_id(self, user_id: str, address_id: int) -> AddressSchema | None:
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Address).filter_by(user_id=user_id, id=address_id)
-            )
-            address = result.scalars().first()
-            if address:
-                # Convert SQLAlchemy model to dict, then to Pydantic schema
-                return AddressSchema.model_validate(address)
-            return None
+        """Get a specific address by ID for a user"""
+        return await self.address_service.get_address_by_id(user_id, address_id)
 
     async def update_address(self, user_id: str, address_id: int, address_data: UpdateAddressSchema) -> AddressSchema | None:
-        async with AsyncSessionLocal() as session:
-            # First verify the address exists and belongs to the user
-            result = await session.execute(
-                select(Address).filter_by(user_id=user_id, id=address_id)
-            )
-            address = result.scalars().first()
-
-            if not address:
-                raise ResourceNotFoundException(detail=f"Address with ID {address_id} not found for user {user_id}")
-
-            update_data = address_data.model_dump(exclude_unset=True)
-            
-            # if no data to update, return early
-            if len(update_data) == 0:
-                raise ValidationException(detail="No data provided for update")
-
-            # Update the specific address with all provided fields
-            for field, value in update_data.items():
-                setattr(address, field, value)
-
-            await session.commit()
-            await session.refresh(address)
-            # Convert SQLAlchemy model to dict, then to Pydantic schema
-            return AddressSchema.model_validate(address)
+        """Update an existing address"""
+        return await self.address_service.update_address(user_id, address_id, address_data)
 
     async def delete_address(self, user_id: str, address_id: int) -> bool:
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Address).filter_by(user_id=user_id, id=address_id)
-            )
-            address = result.scalars().first()
-
-            if not address:
-                return False
-
-            await session.delete(address)
-            await session.commit()
-            return True
+        """Delete an address"""
+        return await self.address_service.delete_address(user_id, address_id)
 
     async def set_default_address(self, user_id: str, address_id: int) -> AddressSchema | None:
-        async with AsyncSessionLocal() as session:
-            # Atomically unset current default address and set new default in one transaction
-            # First verify the address exists and belongs to the user
-            result = await session.execute(
-                select(Address).filter_by(user_id=user_id, id=address_id)
-            )
-            address = result.scalars().first()
-
-            if not address:
-                raise ResourceNotFoundException(detail=f"Address with ID {address_id} not found for user {user_id}")
-
-            # Atomically update all addresses for this user:
-            # 1. Set the specified address as default
-            # 2. Set all other addresses as non-default
-            await session.execute(
-                update(Address).where(Address.user_id == user_id).where(Address.id == address_id).values(is_default=True)
-            )
-            await session.execute(
-                update(Address).where(Address.user_id == user_id).where(Address.id != address_id).values(is_default=False)
-            )
-
-            await session.commit()
-            
-            # Refresh the specific address we're returning
-            await session.refresh(address)
-            # Convert SQLAlchemy model to dict, then to Pydantic schema
-            return AddressSchema.model_validate(address)
+        """Set an address as the default for a user"""
+        return await self.address_service.set_default_address(user_id, address_id)

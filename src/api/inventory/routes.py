@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, status, Query
-from typing import List, Optional
+from fastapi import APIRouter, Depends, status, Query, HTTPException
+from typing import List, Optional, Union
 from src.api.inventory.models import (
     InventorySchema,
     CreateInventorySchema,
@@ -49,14 +49,37 @@ async def get_inventory_by_id(inventory_id: int):
 
 @inventory_router.post(
     "/",
-    summary="Create a new inventory item",
-    response_model=InventorySchema,
+    summary="Create one or more new inventory items",
+    response_model=Union[InventorySchema, List[InventorySchema]],
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def create_inventory(inventory_data: CreateInventorySchema):
-    new_inventory = await inventory_service.create_inventory(inventory_data)
-    return success_response(new_inventory.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
+async def create_inventory(payload: Union[CreateInventorySchema, List[CreateInventorySchema]]):
+    """
+    Create one or more new inventory items.
+
+    - **product_id**: Product ID
+    - **store_id**: Store ID
+    - **quantity_available**: Available quantity (must be >= 0)
+    - **quantity_reserved**: Reserved quantity (default: 0)
+    - **quantity_on_hold**: On-hold quantity (default: 0)
+    """
+    is_list = isinstance(payload, list)
+    inventory_items_to_create = payload if is_list else [payload]
+
+    if not inventory_items_to_create:
+        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+
+    created_inventory = await inventory_service.create_inventory_items(inventory_items_to_create)
+
+    if is_list:
+        return success_response(
+            [item.model_dump(mode="json") for item in created_inventory], status_code=status.HTTP_201_CREATED
+        )
+    else:
+        return success_response(
+            created_inventory[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+        )
 
 
 @inventory_router.put(

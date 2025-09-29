@@ -22,5 +22,15 @@ class TierPriceList(Base):
     # Table constraints
     __table_args__ = (
         UniqueConstraint('tier_id', 'price_list_id', name='unique_tier_price_list'),
+
+        # Core relationship indexes for optimal JOINs
         Index('idx_tier_price_lists_tier_id', 'tier_id'),
+        Index('idx_tier_price_lists_price_list_id', 'price_list_id'),
+
+        # Composite indexes for lookup queries
+        Index('idx_tier_price_lists_tier_price', 'tier_id', 'price_list_id'),
+        Index('idx_tier_price_lists_price_tier', 'price_list_id', 'tier_id'),
+
+        # Administrative and audit indexes
+        Index('idx_tier_price_lists_created_at', 'created_at'),
     )

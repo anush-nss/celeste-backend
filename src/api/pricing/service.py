@@ -475,8 +475,8 @@ class PricingService:
         
         return base_price
 
-    async def calculate_bulk_product_pricing_optimized(self, product_data: List[Dict[str, Any]], user_tier_id: Optional[int]) -> List[ProductPricingSchema]:
-        """Calculate pricing for multiple products using optimized SQL query"""
+    async def calculate_bulk_product_pricing(self, product_data: List[Dict[str, Any]], user_tier_id: Optional[int]) -> List[ProductPricingSchema]:
+        """Calculate pricing for multiple products using comprehensive SQL query"""
         if not user_tier_id:
             # If no tier, return base pricing for all products
             return [
@@ -659,35 +659,6 @@ class PricingService:
             
             return results
 
-    async def calculate_bulk_product_pricing(self, product_data: List[Dict[str, Any]], user_tier_id: Optional[int]) -> List[ProductPricingSchema]:
-        """Calculate pricing for multiple products"""
-        # Process products in parallel for better performance
-        import asyncio
-        
-        async def process_single_product(p_data):
-            product_id = int(p_data["id"])
-            quantity = p_data.get("quantity", 1)
-            product_category_ids = p_data.get("category_ids", [])
-            try:
-                pricing = await self.calculate_product_price(user_tier_id, product_id, product_category_ids, quantity)
-                return pricing
-            except ResourceNotFoundException:
-                # Skip products that don't exist
-                return None
-        
-        # Create tasks for all products
-        tasks = [process_single_product(p_data) for p_data in product_data]
-        
-        # Execute all tasks concurrently
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Filter out None values and exceptions
-        valid_results = []
-        for result in results:
-            if result is not None and not isinstance(result, Exception):
-                valid_results.append(result)
-        
-        return valid_results
 
     # Helper methods
     async def _price_list_to_schema(self, price_list: PriceList) -> PriceListSchema:

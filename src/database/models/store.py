@@ -14,10 +14,25 @@ class Store(Base):
     __table_args__ = (
         CheckConstraint('latitude >= -90 AND latitude <= 90', name='check_latitude_bounds'),
         CheckConstraint('longitude >= -180 AND longitude <= 180', name='check_longitude_bounds'),
+
+        # Coordinate-based indexes for location queries
         Index('idx_stores_lat_lng', 'latitude', 'longitude'),
-        Index('idx_stores_active_location', 'is_active', 'latitude', 'longitude'),
-        Index('idx_stores_email', 'email'),
-        Index('idx_stores_phone', 'phone'),
+        Index('idx_stores_longitude_latitude', 'longitude', 'latitude'),
+
+        # Active stores with location for filtering
+        Index('idx_stores_active_location', 'is_active', 'latitude', 'longitude',
+              postgresql_where="is_active = true"),
+
+        # Contact information indexes
+        Index('idx_stores_email', 'email', postgresql_where="email IS NOT NULL"),
+        Index('idx_stores_phone', 'phone', postgresql_where="phone IS NOT NULL"),
+
+        # Name search index
+        Index('idx_stores_name_trgm', 'name', postgresql_using='gin', postgresql_ops={'name': 'gin_trgm_ops'}),
+
+        # Status and administrative indexes
+        Index('idx_stores_active_name', 'is_active', 'name', postgresql_where="is_active = true"),
+        Index('idx_stores_created_at', 'created_at'),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)

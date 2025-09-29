@@ -16,7 +16,30 @@ class Inventory(Base):
         CheckConstraint('quantity_available >= 0', name='check_quantity_available_non_negative'),
         CheckConstraint('quantity_reserved >= 0', name='check_quantity_reserved_non_negative'),
         CheckConstraint('quantity_on_hold >= 0', name='check_quantity_on_hold_non_negative'),
+
+        # Primary lookup indexes
         Index('idx_inventory_product_store', 'product_id', 'store_id', unique=True),
+        Index('idx_inventory_store_product', 'store_id', 'product_id'),
+
+        # Available inventory filtering
+        Index('idx_inventory_store_available', 'store_id', 'quantity_available',
+              postgresql_where="quantity_available > 0"),
+        Index('idx_inventory_product_available', 'product_id', 'quantity_available',
+              postgresql_where="quantity_available > 0"),
+
+        # Bulk inventory queries optimization
+        Index('idx_inventory_composite_all', 'product_id', 'store_id', 'quantity_available', 'quantity_on_hold', 'quantity_reserved'),
+
+        # Inventory tracking and updates
+        Index('idx_inventory_updated', 'updated_at'),
+        Index('idx_inventory_low_stock', 'product_id', 'quantity_available',
+              postgresql_where="quantity_available < 10"),
+
+        # Reserved and hold tracking
+        Index('idx_inventory_reserved', 'store_id', 'quantity_reserved',
+              postgresql_where="quantity_reserved > 0"),
+        Index('idx_inventory_on_hold', 'store_id', 'quantity_on_hold',
+              postgresql_where="quantity_on_hold > 0"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)

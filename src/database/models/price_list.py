@@ -32,5 +32,25 @@ class PriceList(Base):
     
     # Table constraints and indexes
     __table_args__ = (
-        Index('idx_price_lists_validity', 'is_active', 'valid_from', 'valid_until'),
+        # Active price list queries
+        Index('idx_price_lists_active_priority', 'is_active', 'priority',
+              postgresql_where="is_active = true"),
+        Index('idx_price_lists_validity_active', 'is_active', 'valid_from', 'valid_until',
+              postgresql_where="is_active = true"),
+
+        # Date-based filtering for current validity
+        Index('idx_price_lists_current', 'valid_from', 'valid_until', 'is_active',
+              postgresql_where="is_active = true"),
+
+        # Priority-based sorting
+        Index('idx_price_lists_priority', 'priority'),
+
+        # Search and admin queries
+        Index('idx_price_lists_name_trgm', 'name', postgresql_using='gin', postgresql_ops={'name': 'gin_trgm_ops'}),
+        Index('idx_price_lists_created_at', 'created_at'),
+        Index('idx_price_lists_updated_at', 'updated_at'),
+
+        # Composite queries
+        Index('idx_price_lists_active_valid_priority', 'is_active', 'valid_from', 'priority',
+              postgresql_where="is_active = true"),
     )

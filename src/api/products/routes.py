@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, status, Query, HTTPException
-from typing import Annotated, List, Optional, Dict, Union, Type
+from typing import Annotated, List, Optional, Union
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from src.database.connection import AsyncSessionLocal
@@ -92,19 +92,17 @@ async def get_all_products(
         longitude=longitude,
     )
 
-    # Use the optimized method if pricing is requested and we have a user tier
-    if include_pricing and user_tier:
-        result = await product_service.get_products_with_pagination_optimized(
-            query_params=query_params,
-            customer_tier=user_tier,
-            store_ids=store_id if include_inventory else None,
-        )
-    else:
-        result = await product_service.get_products_with_pagination(
-            query_params=query_params,
-            customer_tier=user_tier,
-            pricing_service=pricing_service if include_pricing else None,
-        )
+    # Use comprehensive method for all requests
+    store_ids = None
+    if include_inventory and store_id:
+        store_ids = store_id
+
+    # Always use the comprehensive method for best performance
+    result = await product_service.get_products_with_criteria(
+        query_params=query_params,
+        customer_tier=user_tier,
+        store_ids=store_ids,
+    )
 
     return success_response(result.model_dump(mode="json"))
 
@@ -276,7 +274,7 @@ async def get_product_by_ref(
 ):
     """
     Get a single product by reference/SKU with OPTIMIZED pricing (sub-30ms target)
-    Uses new optimized service methods for maximum performance
+    Uses comprehensive service methods for maximum performance
     """
     product = await product_service.get_product_by_ref(
         ref, include_categories=True, include_tags=True, store_id=store_id
@@ -295,12 +293,17 @@ async def get_product_by_ref(
         # Get category IDs for pricing calculation, filtering out None values
         product_category_ids = [int(cat['id']) for cat in (product.categories or []) if cat.get('id') is not None]
 
-        pricing_result = await pricing_service.calculate_product_price(
-            user_tier_id=user_tier,
-            product_id=product.id,
-            product_category_ids=product_category_ids,
-            quantity=quantity or 1
+        # Use bulk pricing method for single product (more efficient)
+        product_data = [{
+            "id": str(product.id),
+            "price": float(product.base_price),
+            "quantity": quantity or 1,
+            "category_ids": product_category_ids
+        }]
+        pricing_results = await pricing_service.calculate_bulk_product_pricing(
+            product_data, user_tier
         )
+        pricing_result = pricing_results[0] if pricing_results else None
 
         # Convert to enhanced schema with pricing
         enhanced_product = EnhancedProductSchema(**product.model_dump(mode="json"))
@@ -336,7 +339,7 @@ async def get_product_by_id(
 ):
     """
     Get a single product with OPTIMIZED pricing (sub-30ms target)
-    Uses new optimized service methods for maximum performance
+    Uses comprehensive service methods for maximum performance
     """
     product = await product_service.get_product_by_id(
         id, include_categories=True, include_tags=True, store_id=store_id
@@ -353,12 +356,18 @@ async def get_product_by_id(
                 cat_id = cat.get('id')
                 if cat_id is not None:
                     product_category_ids.append(int(cat_id))
-        pricing_result = await pricing_service.calculate_product_price(
-            user_tier_id=user_tier,
-            product_id=product.id,
-            product_category_ids=product_category_ids,
-            quantity=quantity or 1
+
+        # Use bulk pricing method for single product (more efficient)
+        product_data = [{
+            "id": str(product.id),
+            "price": float(product.base_price),
+            "quantity": quantity or 1,
+            "category_ids": product_category_ids
+        }]
+        pricing_results = await pricing_service.calculate_bulk_product_pricing(
+            product_data, user_tier
         )
+        pricing_result = pricing_results[0] if pricing_results else None
         
         # Convert to enhanced schema with pricing
         enhanced_product = EnhancedProductSchema(**product.model_dump(mode="json"))
