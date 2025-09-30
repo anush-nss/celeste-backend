@@ -65,6 +65,92 @@ class ProductService:
 
         return product
 
+    async def get_enhanced_product_by_id(
+        self,
+        product_id: int,
+        include_pricing: bool = True,
+        include_categories: bool = True,
+        include_tags: bool = True,
+        include_inventory: bool = True,
+        customer_tier: Optional[int] = None,
+        store_ids: Optional[List[int]] = None,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+        quantity: int = 1,
+    ) -> Optional[EnhancedProductSchema]:
+        """Get single product using comprehensive SQL query like bulk products endpoint"""
+
+        # Create a query that filters for specific product ID
+        query_params = ProductQuerySchema(
+            limit=1,
+            cursor=None,
+            include_pricing=include_pricing,
+            include_categories=include_categories,
+            include_tags=include_tags,
+            include_inventory=include_inventory,
+            latitude=latitude,
+            longitude=longitude,
+            store_id=store_ids,
+        )
+
+        # Determine store_ids if inventory requested with location
+        effective_store_ids = store_ids
+        if include_inventory and not store_ids and latitude and longitude:
+            effective_store_ids = await self.inventory_service.get_stores_by_location(
+                latitude, longitude
+            )
+
+        # Use query service to get product with comprehensive SQL
+        # We'll create a custom method for single product retrieval
+        product = await self.query_service.get_single_product_by_id(
+            product_id, query_params, customer_tier, effective_store_ids, quantity
+        )
+
+        return product
+
+    async def get_enhanced_product_by_ref(
+        self,
+        ref: str,
+        include_pricing: bool = True,
+        include_categories: bool = True,
+        include_tags: bool = True,
+        include_inventory: bool = True,
+        customer_tier: Optional[int] = None,
+        store_ids: Optional[List[int]] = None,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+        quantity: int = 1,
+    ) -> Optional[EnhancedProductSchema]:
+        """Get single product by ref using comprehensive SQL query like bulk products endpoint"""
+
+        # Create a query that filters for specific product ref
+        query_params = ProductQuerySchema(
+            limit=1,
+            cursor=None,
+            include_pricing=include_pricing,
+            include_categories=include_categories,
+            include_tags=include_tags,
+            include_inventory=include_inventory,
+            latitude=latitude,
+            longitude=longitude,
+            store_id=store_ids,
+        )
+
+        # Determine store_ids if inventory requested with location
+        effective_store_ids = store_ids
+        if include_inventory and not store_ids and latitude and longitude:
+            effective_store_ids = await self.inventory_service.get_stores_by_location(
+                latitude, longitude
+            )
+
+        # Use query service to get product with comprehensive SQL
+        # We'll create a custom method for single product retrieval by ref
+        product = await self.query_service.get_single_product_by_ref(
+            ref, query_params, customer_tier, effective_store_ids, quantity
+        )
+
+        return product
+
     async def create_product(self, product_data: CreateProductSchema) -> ProductSchema:
         """Create a new product with categories and tags"""
         return await self.core_service.create_product(product_data)
@@ -105,11 +191,6 @@ class ProductService:
         return await self.query_service.get_products_with_criteria(
             query_params, customer_tier, effective_store_ids
         )
-
-    # Store location helpers
-    async def _get_store_ids_for_location(self, location: Optional[str] = None) -> List[int]:
-        """Helper method to determine store_ids based on location when store_id is not provided."""
-        return await self.inventory_service.get_stores_by_location(location)
 
     # Tag management methods - delegated to ProductTagService
     async def create_product_tag(self, name: str, tag_type_suffix: str, slug: Optional[str] = None, description: Optional[str] = None) -> Tag:

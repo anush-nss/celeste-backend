@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import and_, or_, desc, delete
+from sqlalchemy import and_, or_, desc, delete, update
 
 from src.database.connection import AsyncSessionLocal
 # Import all models to ensure relationships are properly registered
@@ -306,15 +306,66 @@ class TierService:
                 select(User).where(User.firebase_uid == user_id)
             )
             user = result.scalars().first()
-            
+
             if not user:
                 return {}
-            
+
             return {
                 "total_orders": user.total_orders or 0,
                 "lifetime_value": user.lifetime_value or 0.0,
                 "last_order_at": user.last_order_at,
                 "created_at": user.created_at,
+            }
+
+    async def recalculate_user_statistics(self, user_id: str) -> Dict:
+        """Recalculate user statistics from actual orders (for data repair)"""
+        from src.database.models.order import Order
+        from src.config.constants import OrderStatus
+
+        async with AsyncSessionLocal() as session:
+            # Calculate statistics from confirmed orders only
+            from sqlalchemy import func, case
+            result = await session.execute(
+                select(
+                    func.count(Order.id).label("total_orders"),
+                    func.coalesce(func.sum(Order.total_amount), 0).label("lifetime_value"),
+                    func.max(Order.created_at).label("last_order_at")
+                ).where(
+                    and_(
+                        Order.user_id == user_id,
+                        Order.status == OrderStatus.CONFIRMED
+                    )
+                )
+            )
+            stats = result.first()
+
+            if stats:
+                # Update user record with calculated statistics
+                await session.execute(
+                    update(User).where(User.firebase_uid == user_id).values(
+                        total_orders=stats.total_orders,
+                        lifetime_value=float(stats.lifetime_value),
+                        last_order_at=stats.last_order_at
+                    )
+                )
+                await session.commit()
+
+                self.logger.info(
+                    f"Recalculated user statistics for {user_id} | "
+                    f"Total Orders: {stats.total_orders} | "
+                    f"Lifetime Value: LKR {stats.lifetime_value}"
+                )
+
+                return {
+                    "total_orders": stats.total_orders,
+                    "lifetime_value": float(stats.lifetime_value),
+                    "last_order_at": stats.last_order_at,
+                }
+
+            return {
+                "total_orders": 0,
+                "lifetime_value": 0.0,
+                "last_order_at": None,
             }
 
     @handle_service_errors("evaluating user tier")
@@ -378,12 +429,28 @@ class TierService:
 
     async def auto_evaluate_and_update_user_tier(self, user_id: str) -> TierEvaluationSchema:
         """Automatically evaluate and update a user's tier"""
-        evaluation = await self.evaluate_user_tier(user_id)
+        # Get current statistics
+        stats = await self.get_user_statistics(user_id)
 
-        if evaluation.tier_changed:
-            success = await self.update_user_tier(user_id, evaluation.recommended_tier_id)
-            if not success:
-                evaluation.tier_changed = False
+        # If user has zero orders/value but should have some, recalculate from actual orders
+        if stats.get("total_orders", 0) == 0 and stats.get("lifetime_value", 0.0) == 0.0:
+            self.logger.info(f"User {user_id} has zero statistics, recalculating from orders...")
+            recalculated_stats = await self.recalculate_user_statistics(user_id)
+
+            # Re-evaluate with recalculated statistics
+            evaluation = await self.evaluate_user_tier(user_id)
+        else:
+            evaluation = await self.evaluate_user_tier(user_id)
+
+        # Always update to the recommended tier (even if it's the same)
+        # This ensures the user tier is correctly set based on current statistics
+        try:
+            await self.update_user_tier(user_id, evaluation.recommended_tier_id)
+            # Force tier_changed to True if we successfully updated
+            evaluation.tier_changed = True
+        except Exception as e:
+            # If update fails, keep tier_changed as False
+            evaluation.tier_changed = False
 
         return evaluation
 

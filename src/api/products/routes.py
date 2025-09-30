@@ -260,7 +260,7 @@ async def get_product_tags(
 
 @products_router.get(
     "/ref/{ref}",
-    summary="Get a product by reference/SKU with smart pricing",
+    summary="Get a product by reference/SKU with smart pricing and location support",
     response_model=EnhancedProductSchema,
 )
 async def get_product_by_ref(
@@ -268,64 +268,52 @@ async def get_product_by_ref(
     include_pricing: Optional[bool] = Query(
         True, description="Include pricing calculations"
     ),
+    include_categories: Optional[bool] = Query(
+        True, description="Include category information"
+    ),
+    include_tags: Optional[bool] = Query(
+        True, description="Include tag information"
+    ),
+    include_inventory: Optional[bool] = Query(
+        True, description="Include inventory information"
+    ),
     quantity: Optional[int] = Query(1, description="Quantity for bulk pricing"),
-    store_id: Optional[int] = Query(None, description="Store ID for inventory info"),
-    current_user: Annotated[Optional[DecodedToken], Depends(get_optional_user)] = None,
+    store_id: Optional[List[int]] = Query(None, description="Store IDs for inventory info"),
+    latitude: Optional[float] = Query(
+        None, ge=-90, le=90, description="User latitude for location-based store finding"
+    ),
+    longitude: Optional[float] = Query(
+        None, ge=-180, le=180, description="User longitude for location-based store finding"
+    ),
+    user_tier: Optional[int] = Depends(get_user_tier),
 ):
     """
-    Get a single product by reference/SKU with OPTIMIZED pricing (sub-30ms target)
-    Uses comprehensive service methods for maximum performance
+    Get a single product by reference/SKU with comprehensive SQL optimization,
+    location-based store finding, and smart pricing integration
     """
-    product = await product_service.get_product_by_ref(
-        ref, include_categories=True, include_tags=True, store_id=store_id
+    # Use enhanced product retrieval with comprehensive query
+    product = await product_service.get_enhanced_product_by_ref(
+        ref=ref,
+        include_pricing=include_pricing if include_pricing is not None else False,
+        include_categories=include_categories if include_categories is not None else False,
+        include_tags=include_tags if include_tags is not None else False,
+        include_inventory=include_inventory if include_inventory is not None else False,
+        customer_tier=user_tier,
+        store_ids=store_id,
+        latitude=latitude,
+        longitude=longitude,
+        quantity=quantity or 1
     )
 
     if not product:
         raise ResourceNotFoundException(detail=f"Product with ref '{ref}' not found")
 
-    # Extract user tier for pricing
-    user_tier = None
-    if current_user:
-        user_tier = getattr(current_user, 'tier_id', None)
-
-    # If pricing is requested and we have user tier, add pricing info
-    if include_pricing and user_tier and product and product.id is not None:
-        # Get category IDs for pricing calculation, filtering out None values
-        product_category_ids = [int(cat['id']) for cat in (product.categories or []) if cat.get('id') is not None]
-
-        # Use bulk pricing method for single product (more efficient)
-        product_data = [{
-            "id": str(product.id),
-            "price": float(product.base_price),
-            "quantity": quantity or 1,
-            "category_ids": product_category_ids
-        }]
-        pricing_results = await pricing_service.calculate_bulk_product_pricing(
-            product_data, user_tier
-        )
-        pricing_result = pricing_results[0] if pricing_results else None
-
-        # Convert to enhanced schema with pricing
-        enhanced_product = EnhancedProductSchema(**product.model_dump(mode="json"))
-        if pricing_result:
-            discount_percentage = (pricing_result.savings / pricing_result.base_price) * 100 if pricing_result.base_price > 0 else 0
-            enhanced_product.pricing = PricingInfoSchema(
-                base_price=pricing_result.base_price,
-                final_price=pricing_result.final_price,
-                discount_applied=pricing_result.savings,
-                discount_percentage=discount_percentage,
-                applied_price_lists=[pl["price_list_name"] for pl in pricing_result.applied_discounts]
-            )
-
-        return success_response(enhanced_product.model_dump(mode="json"))
-
-    # Return basic product without pricing
     return success_response(product.model_dump(mode="json"))
 
 
 @products_router.get(
     "/{id}",
-    summary="Get a product by ID with smart pricing",
+    summary="Get a product by ID with smart pricing and location support",
     response_model=EnhancedProductSchema,
 )
 async def get_product_by_id(
@@ -333,60 +321,46 @@ async def get_product_by_id(
     include_pricing: Optional[bool] = Query(
         True, description="Include pricing calculations"
     ),
+    include_categories: Optional[bool] = Query(
+        True, description="Include category information"
+    ),
+    include_tags: Optional[bool] = Query(
+        True, description="Include tag information"
+    ),
+    include_inventory: Optional[bool] = Query(
+        True, description="Include inventory information"
+    ),
     quantity: Optional[int] = Query(1, description="Quantity for bulk pricing"),
-    store_id: Optional[int] = Query(None, description="Store ID for inventory data"),
+    store_id: Optional[List[int]] = Query(None, description="Store IDs for inventory data"),
+    latitude: Optional[float] = Query(
+        None, ge=-90, le=90, description="User latitude for location-based store finding"
+    ),
+    longitude: Optional[float] = Query(
+        None, ge=-180, le=180, description="User longitude for location-based store finding"
+    ),
     user_tier: Optional[int] = Depends(get_user_tier),
 ):
     """
-    Get a single product with OPTIMIZED pricing (sub-30ms target)
-    Uses comprehensive service methods for maximum performance
+    Get a single product with comprehensive SQL optimization,
+    location-based store finding, and smart pricing integration
     """
-    product = await product_service.get_product_by_id(
-        id, include_categories=True, include_tags=True, store_id=store_id
+    # Use enhanced product retrieval with comprehensive query
+    product = await product_service.get_enhanced_product_by_id(
+        product_id=id,
+        include_pricing=include_pricing if include_pricing is not None else False,
+        include_categories=include_categories if include_categories is not None else False,
+        include_tags=include_tags if include_tags is not None else False,
+        include_inventory=include_inventory if include_inventory is not None else False,
+        customer_tier=user_tier,
+        store_ids=store_id,
+        latitude=latitude,
+        longitude=longitude,
+        quantity=quantity or 1
     )
-    
-    # If pricing is requested and we have user tier, add pricing info
-    if include_pricing and user_tier and product:
-        if product.id is None:
-            raise ValueError("Product ID cannot be None for pricing calculation")
-        # Get category ID for pricing calculation
-        product_category_ids = []
-        if product.categories:
-            for cat in product.categories:
-                cat_id = cat.get('id')
-                if cat_id is not None:
-                    product_category_ids.append(int(cat_id))
 
-        # Use bulk pricing method for single product (more efficient)
-        product_data = [{
-            "id": str(product.id),
-            "price": float(product.base_price),
-            "quantity": quantity or 1,
-            "category_ids": product_category_ids
-        }]
-        pricing_results = await pricing_service.calculate_bulk_product_pricing(
-            product_data, user_tier
-        )
-        pricing_result = pricing_results[0] if pricing_results else None
-        
-        # Convert to enhanced schema with pricing
-        enhanced_product = EnhancedProductSchema(**product.model_dump(mode="json"))
-        if pricing_result:
-            discount_percentage = (pricing_result.savings / pricing_result.base_price) * 100 if pricing_result.base_price > 0 else 0
-            enhanced_product.pricing = PricingInfoSchema(
-                base_price=pricing_result.base_price,
-                final_price=pricing_result.final_price,
-                discount_applied=pricing_result.savings,
-                discount_percentage=discount_percentage,
-                applied_price_lists=[pl["price_list_name"] for pl in pricing_result.applied_discounts]
-            )
-        
-        return success_response(enhanced_product.model_dump(mode="json"))
-    
-    # Return basic product without pricing
     if not product:
         raise ResourceNotFoundException(detail=f"Product with ID {id} not found")
-        
+
     return success_response(product.model_dump(mode="json"))
 
 

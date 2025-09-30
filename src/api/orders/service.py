@@ -8,6 +8,7 @@ from src.database.models.product import Product
 from src.database.models.cart import Cart, CartItem
 from src.database.models.store import Store
 from src.database.models.address import Address
+from src.database.models.user import User
 from src.api.orders.models import OrderSchema, CreateOrderSchema, UpdateOrderSchema
 from src.api.users.models import MultiCartCheckoutSchema, CheckoutResponseSchema, CartGroupSchema
 from src.api.inventory.service import InventoryService
@@ -18,6 +19,7 @@ from src.config.constants import OrderStatus, CartStatus
 from src.shared.exceptions import ResourceNotFoundException, ValidationException
 from src.shared.error_handler import ErrorHandler, handle_service_errors
 from decimal import Decimal
+from datetime import datetime
 import math
 
 
@@ -73,6 +75,40 @@ class OrderService:
         total_charge = base_charge + (max_distance * rate_per_km)
 
         return total_charge.quantize(Decimal('0.01'))
+
+    @handle_service_errors("updating user statistics")
+    async def update_user_statistics(self, user_id: str, order_total: Decimal) -> None:
+        """Update user statistics when an order is confirmed (paid)"""
+        async with AsyncSessionLocal() as session:
+            # Get current user statistics
+            user_result = await session.execute(
+                select(User).where(User.firebase_uid == user_id)
+            )
+            user = user_result.scalar_one_or_none()
+
+            if not user:
+                raise ValidationException(f"User {user_id} not found")
+
+            # Update statistics
+            new_total_orders = (user.total_orders or 0) + 1
+            new_lifetime_value = (user.lifetime_value or 0.0) + float(order_total)
+
+            # Update user record
+            await session.execute(
+                update(User).where(User.firebase_uid == user_id).values(
+                    total_orders=new_total_orders,
+                    lifetime_value=new_lifetime_value,
+                    last_order_at=datetime.now()
+                )
+            )
+
+            await session.commit()
+
+            self._error_handler.logger.info(
+                f"Updated user statistics for {user_id} | "
+                f"Total Orders: {new_total_orders} | "
+                f"Lifetime Value: LKR {new_lifetime_value:.2f}"
+            )
 
     @handle_service_errors("retrieving orders")
     async def get_all_orders(self, user_id: Optional[str] = None) -> List[OrderSchema]:
@@ -411,7 +447,6 @@ class OrderService:
                         })
 
                 # Update cart statuses to ordered
-                from datetime import datetime
                 for cart_id in checkout_data.cart_ids:
                     await session.execute(
                         update(Cart).where(Cart.id == cart_id).values(
@@ -478,6 +513,15 @@ class OrderService:
             # Automatically confirm the order (convert holds to reservations)
             update_schema = UpdateOrderSchema(status=OrderStatus.CONFIRMED)
             updated_order = await self.update_order_status(order_id, update_schema)
+
+            # Update user statistics for successful payment
+            try:
+                await self.update_user_statistics(updated_order.user_id, Decimal(str(updated_order.total_amount)))
+            except Exception as e:
+                # Log but don't fail the payment processing
+                self._error_handler.logger.error(
+                    f"Failed to update user statistics for order {order_id}: {str(e)}"
+                )
 
             return {
                 "status": "success",
