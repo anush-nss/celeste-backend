@@ -495,7 +495,7 @@ class PricingService:
         product_ids = [int(p_data["id"]) for p_data in product_data]
         if not product_ids:
             return []
-        
+
         async with AsyncSessionLocal() as session:
             # Optimized bulk pricing query
             pricing_query = """

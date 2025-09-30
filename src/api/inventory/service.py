@@ -155,26 +155,26 @@ class InventoryService:
 
     # Transaction methods - delegated to InventoryTransactionService
     async def adjust_inventory_stock(
-        self, adjustment_data: AdjustInventorySchema
+        self, adjustment_data: AdjustInventorySchema, session
     ) -> InventorySchema:
         """Atomically adjust stock, hold, or reserved quantities."""
-        return await self.transaction_service.adjust_inventory_stock(adjustment_data)
+        return await self.transaction_service.adjust_inventory_stock(adjustment_data, session)
 
-    async def place_hold(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
+    async def place_hold(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
         """Place a hold on inventory for an order."""
-        return await self.transaction_service.place_hold(product_id, store_id, quantity)
+        return await self.transaction_service.place_hold(product_id, store_id, quantity, session)
 
-    async def release_hold(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
+    async def release_hold(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
         """Release a hold on inventory (e.g., order cancelled)."""
-        return await self.transaction_service.release_hold(product_id, store_id, quantity)
+        return await self.transaction_service.release_hold(product_id, store_id, quantity, session)
 
-    async def confirm_reservation(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
+    async def confirm_reservation(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
         """Convert a hold to a reservation (e.g., payment confirmed)."""
-        return await self.transaction_service.confirm_reservation(product_id, store_id, quantity)
+        return await self.transaction_service.confirm_reservation(product_id, store_id, quantity, session)
 
-    async def fulfill_order(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
+    async def fulfill_order(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
         """Fulfill an order by removing reserved stock."""
-        return await self.transaction_service.fulfill_order(product_id, store_id, quantity)
+        return await self.transaction_service.fulfill_order(product_id, store_id, quantity, session)
 
     @handle_service_errors("retrieving inventory for products")
     async def get_inventory_for_products_in_store(

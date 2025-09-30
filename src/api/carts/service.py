@@ -598,6 +598,248 @@ class CartService:
             return available_carts
 
     @staticmethod
+    async def validate_checkout_data(session, user_id: str, checkout_data: MultiCartCheckoutSchema) -> Dict[str, Any]:
+        """Validate user, location, and carts for checkout. Returns validation data."""
+        validation_result = {
+            "user": None,
+            "user_tier_id": None,
+            "location_obj": None,
+            "cart_role_pairs": [],
+            "cart_item_mapping": {},
+            "all_product_ids": []
+        }
+
+        # STEP 1: Get user and tier
+        user_query = select(User).where(User.firebase_uid == user_id)
+        user_result = await session.execute(user_query)
+        user = user_result.scalar_one_or_none()
+        if not user:
+            raise ValidationException(f"User {user_id} not found")
+
+        validation_result["user"] = user
+        validation_result["user_tier_id"] = user.tier_id
+
+        # STEP 2: Validate location based on mode
+        location_obj = None
+        if checkout_data.location.mode == "delivery":
+            location_query = select(Address).where(
+                and_(Address.id == checkout_data.location.id, Address.user_id == user_id)
+            )
+            location_result = await session.execute(location_query)
+            location_obj = location_result.scalar_one_or_none()
+            if not location_obj:
+                raise ValidationException(f"Address {checkout_data.location.id} not found or not owned by user")
+        elif checkout_data.location.mode == "pickup":
+            location_query = select(Store).where(
+                and_(Store.id == checkout_data.location.id, Store.is_active == True)
+            )
+            location_result = await session.execute(location_query)
+            location_obj = location_result.scalar_one_or_none()
+            if not location_obj:
+                raise ValidationException(f"Store {checkout_data.location.id} not found or inactive")
+
+        validation_result["location_obj"] = location_obj
+
+        # STEP 3: Bulk fetch carts with items and user access validation
+        carts_query = select(Cart, CartUser.role).join(
+            CartUser, Cart.id == CartUser.cart_id
+        ).where(
+            and_(
+                Cart.id.in_(checkout_data.cart_ids),
+                Cart.status == CartStatus.ACTIVE,
+                CartUser.user_id == user_id
+            )
+        ).options(
+            selectinload(Cart.items)
+        )
+
+        carts_result = await session.execute(carts_query)
+        cart_role_pairs = carts_result.all()
+        if len(cart_role_pairs) != len(checkout_data.cart_ids):
+            missing_carts = set(checkout_data.cart_ids) - {cart.id for cart, role in cart_role_pairs}
+            raise ValidationException(f"Carts {missing_carts} not found or not accessible")
+
+        validation_result["cart_role_pairs"] = cart_role_pairs
+
+        # STEP 4: Build cart item mapping and collect product IDs
+        cart_item_mapping = {}
+        all_product_ids = []
+
+        for cart, role in cart_role_pairs:
+            cart_item_mapping[cart.id] = {"cart": cart, "role": role}
+            for item in cart.items:
+                all_product_ids.append(item.product_id)
+
+        validation_result["cart_item_mapping"] = cart_item_mapping
+        validation_result["all_product_ids"] = all_product_ids
+
+        return validation_result
+
+    @staticmethod
+    async def fetch_products_and_calculate_pricing_with_session(session, validation_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Fetch products and calculate pricing for cart items using provided session. Returns pricing data."""
+        all_product_ids = validation_data["all_product_ids"]
+        cart_item_mapping = validation_data["cart_item_mapping"]
+        user_tier_id = validation_data["user_tier_id"]
+
+        # STEP 1: Bulk fetch all products
+        products_query = select(Product).where(Product.id.in_(all_product_ids))
+        products_result = await session.execute(products_query)
+        products_dict = {p.id: p for p in products_result.scalars().all()}
+
+        # STEP 2: Prepare bulk pricing data
+        product_data_for_pricing = []
+        for cart_id, cart_data in cart_item_mapping.items():
+            cart = cart_data["cart"]
+            for item in cart.items:
+                product = products_dict.get(item.product_id)
+                if not product:
+                    raise ValidationException(f"Product {item.product_id} not found")
+
+                product_data_for_pricing.append({
+                    "id": str(product.id),
+                    "price": float(product.base_price),
+                    "quantity": item.quantity,
+                    "category_ids": []  # TODO: Get actual category IDs if needed
+                })
+
+        # STEP 3: Calculate exact pricing using bulk pricing service
+        from src.api.pricing.service import PricingService
+        pricing_service = PricingService()
+        pricing_results = await pricing_service.calculate_bulk_product_pricing(
+            product_data_for_pricing, user_tier_id
+        )
+
+        return {
+            "products_dict": products_dict,
+            "pricing_results": pricing_results,
+            "product_data_for_pricing": product_data_for_pricing
+        }
+
+    @staticmethod
+    async def fetch_products_and_calculate_pricing(validation_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Fetch products and calculate pricing for cart items independently. Returns pricing data."""
+        all_product_ids = validation_data["all_product_ids"]
+        cart_item_mapping = validation_data["cart_item_mapping"]
+        user_tier_id = validation_data["user_tier_id"]
+
+        # STEP 1: Bulk fetch all products with own session
+        async with AsyncSessionLocal() as session:
+            products_query = select(Product).where(Product.id.in_(all_product_ids))
+            products_result = await session.execute(products_query)
+            products_dict = {p.id: p for p in products_result.scalars().all()}
+
+        # STEP 2: Prepare bulk pricing data
+        product_data_for_pricing = []
+        for cart_id, cart_data in cart_item_mapping.items():
+            cart = cart_data["cart"]
+            for item in cart.items:
+                product = products_dict.get(item.product_id)
+                if not product:
+                    raise ValidationException(f"Product {item.product_id} not found")
+
+                product_data_for_pricing.append({
+                    "id": str(product.id),
+                    "price": float(product.base_price),
+                    "quantity": item.quantity,
+                    "category_ids": []  # TODO: Get actual category IDs if needed
+                })
+
+        # STEP 3: Calculate pricing using pricing service (creates its own session)
+        from src.api.pricing.service import PricingService
+        pricing_service = PricingService()
+        pricing_results = await pricing_service.calculate_bulk_product_pricing(
+            product_data_for_pricing, user_tier_id
+        )
+
+        return {
+            "products_dict": products_dict,
+            "pricing_results": pricing_results,
+            "product_data_for_pricing": product_data_for_pricing
+        }
+
+    @staticmethod
+    def build_cart_groups(validation_data: Dict[str, Any], pricing_data: Dict[str, Any]) -> List[CartGroupSchema]:
+        """Build cart groups with detailed pricing information."""
+        cart_item_mapping = validation_data["cart_item_mapping"]
+        products_dict = pricing_data["products_dict"]
+        pricing_results = pricing_data["pricing_results"]
+
+        cart_groups = []
+        cart_item_index = 0
+
+        for cart_id, cart_data in cart_item_mapping.items():
+            cart = cart_data["cart"]
+            cart_total = Decimal('0.00')
+            cart_subtotal = Decimal('0.00')
+            cart_total_savings = Decimal('0.00')
+            cart_items = []
+
+            # Process each item in this cart
+            for item in cart.items:
+                # Get corresponding pricing result
+                pricing_result = pricing_results[cart_item_index]
+
+                # Get product details from pre-fetched dict
+                product = products_dict.get(item.product_id)
+                if not product:
+                    raise ValidationException(f"Product {item.product_id} not found")
+
+                # Extract pricing information
+                base_price = Decimal(str(pricing_result.base_price))
+                final_price = Decimal(str(pricing_result.final_price))
+                total_price = final_price * item.quantity
+                savings_per_item = base_price - final_price
+                total_savings_item = savings_per_item * item.quantity
+                discount_percentage = Decimal(str(pricing_result.discount_percentage)) if hasattr(pricing_result, 'discount_percentage') else Decimal('0.00')
+
+                # Build applied discounts info
+                applied_discounts = []
+                if hasattr(pricing_result, 'applied_discounts') and pricing_result.applied_discounts:
+                    for discount in pricing_result.applied_discounts:
+                        applied_discounts.append({
+                            "price_list_name": discount.get("price_list_name", "Unknown"),
+                            "discount_type": discount.get("discount_type", ""),
+                            "discount_value": discount.get("discount_value", 0),
+                            "savings": float(savings_per_item)
+                        })
+
+                from src.api.users.models import CartItemPricingSchema
+                cart_item_pricing = CartItemPricingSchema(
+                    product_id=item.product_id,
+                    product_name=product.name,
+                    quantity=item.quantity,
+                    base_price=float(base_price),
+                    final_price=float(final_price),
+                    total_price=float(total_price),
+                    savings_per_item=float(savings_per_item),
+                    total_savings=float(total_savings_item),
+                    discount_percentage=float(discount_percentage),
+                    applied_discounts=applied_discounts
+                )
+                cart_items.append(cart_item_pricing)
+
+                # Update cart totals
+                cart_subtotal += base_price * item.quantity
+                cart_total += total_price
+                cart_total_savings += total_savings_item
+
+                cart_item_index += 1
+
+            # Create cart group
+            cart_group = CartGroupSchema(
+                cart_id=cart.id,
+                cart_name=cart.name,
+                items=cart_items,
+                cart_subtotal=float(cart_subtotal),
+                cart_total_savings=float(cart_total_savings),
+                cart_total=float(cart_total)
+            )
+            cart_groups.append(cart_group)
+
+        return cart_groups
+
+    @staticmethod
     async def _check_cart_access(session, user_id: str, cart_id: int) -> CartUserRole:
         """Check if user has access to cart and return role"""
         query = select(CartUser.role).where(
@@ -639,117 +881,29 @@ class CartService:
     @staticmethod
     @handle_service_errors("previewing multi-cart order")
     async def preview_multi_cart_order(user_id: str, checkout_data: MultiCartCheckoutSchema) -> OrderPreviewSchema:
-        """Preview multi-cart order with exact pricing, delivery charges, and store optimization"""
+        """Preview multi-cart order with optimized bulk queries and exact pricing"""
         async with AsyncSessionLocal() as session:
-            # Get user tier for pricing
-            user_query = select(User).where(User.firebase_uid == user_id)
-            user_result = await session.execute(user_query)
-            user = user_result.scalar_one_or_none()
-            user_tier_id = user.tier_id if user else None
+            # STEP 1: Validate checkout data (user, location, carts)
+            validation_data = await CartService.validate_checkout_data(session, user_id, checkout_data)
 
-            # Get delivery address if needed
-            delivery_address = None
-            if checkout_data.location.mode == "delivery":
-                address_query = select(Address).where(
-                    and_(Address.id == checkout_data.location.id, Address.user_id == user_id)
-                )
-                address_result = await session.execute(address_query)
-                delivery_address = address_result.scalar_one_or_none()
-                if not delivery_address:
-                    raise ValidationException(f"Address {checkout_data.location.id} not found or not owned by user")
+            # STEP 2: Fetch products and calculate pricing
+            pricing_data = await CartService.fetch_products_and_calculate_pricing_with_session(session, validation_data)
 
-            # Validate pickup store if needed
-            pickup_store = None
-            if checkout_data.location.mode == "pickup":
-                store_query = select(Store).where(
-                    and_(Store.id == checkout_data.location.id, Store.is_active == True)
-                )
-                store_result = await session.execute(store_query)
-                pickup_store = store_result.scalar_one_or_none()
-                if not pickup_store:
-                    raise ValidationException(f"Store {checkout_data.location.id} not found or inactive")
+            # STEP 3: Build cart groups with detailed pricing
+            cart_groups = CartService.build_cart_groups(validation_data, pricing_data)
 
-            # Get all cart items and prepare for bulk pricing
-            product_data_for_pricing = []
-            cart_item_mapping = {}
-
-            for cart_id in checkout_data.cart_ids:
-                # Verify cart access and get items
-                await CartService._check_cart_access(session, user_id, cart_id)
-
-                cart_query = select(Cart).where(
-                    and_(Cart.id == cart_id, Cart.status == CartStatus.ACTIVE)
-                ).options(selectinload(Cart.items))
-                cart_result = await session.execute(cart_query)
-                cart = cart_result.scalar_one_or_none()
-
-                if not cart:
-                    raise ValidationException(f"Cart {cart_id} not found or not available for checkout")
-
-                cart_item_mapping[cart_id] = {"cart": cart}
-
-                for item in cart.items:
-                    # Get product for pricing
-                    product_query = select(Product).where(Product.id == item.product_id)
-                    product_result = await session.execute(product_query)
-                    product = product_result.scalar_one_or_none()
-
-                    if not product:
-                        raise ValidationException(f"Product {item.product_id} not found")
-
-                    # Prepare for bulk pricing calculation
-                    product_data_for_pricing.append({
-                        "id": str(product.id),
-                        "price": float(product.base_price),
-                        "quantity": item.quantity,
-                        "category_ids": []  # TODO: Get actual category IDs
-                    })
-
-            # Calculate exact pricing using bulk pricing service
-            from src.api.pricing.service import PricingService
-            pricing_service = PricingService()
-            pricing_results = await pricing_service.calculate_bulk_product_pricing(
-                product_data_for_pricing, user_tier_id
-            )
-
-            # Build cart groups with exact pricing
-            cart_groups = []
+            # STEP 4: Calculate totals and delivery charges
             total_amount = Decimal('0.00')
+            total_savings = Decimal('0.00')
 
-            cart_item_index = 0
-            for cart_id, cart_data in cart_item_mapping.items():
-                cart = cart_data["cart"]
-                cart_total = Decimal('0.00')
-                cart_items = []
-
-                # Process each item in this cart
-                for item in cart.items:
-                    # Get corresponding pricing result
-                    pricing_result = pricing_results[cart_item_index]
-
-                    unit_price = Decimal(str(pricing_result.final_price))
-                    item_total = unit_price * item.quantity
-                    cart_total += item_total
-
-                    cart_items.append({
-                        "product_id": item.product_id,
-                        "quantity": item.quantity,
-                        "unit_price": float(unit_price),
-                        "total_price": float(item_total)
-                    })
-                    cart_item_index += 1
-
-                cart_groups.append(CartGroupSchema(
-                    cart_id=cart.id,
-                    cart_name=cart.name,
-                    items=cart_items,
-                    cart_total=float(cart_total)
-                ))
-                total_amount += cart_total
+            for group in cart_groups:
+                total_amount += Decimal(str(group.cart_total))
+                total_savings += Decimal(str(group.cart_total_savings))
 
             # Calculate delivery charges if needed
+            location_obj = validation_data["location_obj"]
             delivery_charge = Decimal('0.00')
-            if checkout_data.location.mode == "delivery":
+            if checkout_data.location.mode == "delivery" and location_obj:
                 # Get delivery store (simplified - use first active store)
                 store_query = select(Store).where(Store.is_active == True).limit(1)
                 store_result = await session.execute(store_query)
@@ -762,20 +916,37 @@ class CartService:
                         "store_name": delivery_store.name,
                         "store_lat": delivery_store.latitude,
                         "store_lng": delivery_store.longitude,
-                        "delivery_lat": delivery_address.latitude if delivery_address else 0.0,
-                        "delivery_lng": delivery_address.longitude if delivery_address else 0.0,
+                        "delivery_lat": location_obj.latitude if location_obj else 0.0,
+                        "delivery_lng": location_obj.longitude if location_obj else 0.0,
                         "cart_groups": cart_groups,
                         "store_total": float(total_amount)
                     }]
 
-                    # Use same delivery calculation logic as order service
                     delivery_charge = CartService._calculate_delivery_charge(store_assignments)
 
-            # Add delivery charge to total
+            # Calculate final totals
+            subtotal = total_amount + total_savings  # Original prices before discounts
             final_total = total_amount + delivery_charge
+
+            # Build pricing summary
+            user_tier_id = validation_data["user_tier_id"]
+            product_data_for_pricing = pricing_data["product_data_for_pricing"]
+            pricing_summary = {
+                "items_count": len(product_data_for_pricing),
+                "subtotal_before_discounts": float(subtotal),
+                "total_discounts_applied": float(total_savings),
+                "subtotal_after_discounts": float(total_amount),
+                "delivery_charge": float(delivery_charge) if delivery_charge > 0 else 0.0,
+                "final_total": float(final_total),
+                "user_tier_id": user_tier_id,
+                "savings_percentage": float((total_savings / subtotal * 100)) if subtotal > 0 else 0.0
+            }
 
             return OrderPreviewSchema(
                 cart_groups=cart_groups,
+                subtotal=float(subtotal),
+                total_savings=float(total_savings),
+                delivery_charge=float(delivery_charge) if delivery_charge > 0 else None,
                 total_amount=float(final_total),
-                delivery_charge=float(delivery_charge) if delivery_charge > 0 else None
+                pricing_summary=pricing_summary
             )

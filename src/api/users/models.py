@@ -304,10 +304,25 @@ class MultiCartCheckoutSchema(BaseModel):
     location: CheckoutLocationSchema
 
 
+class CartItemPricingSchema(BaseModel):
+    product_id: int
+    product_name: str
+    quantity: int
+    base_price: float
+    final_price: float
+    total_price: float
+    savings_per_item: float
+    total_savings: float
+    discount_percentage: float
+    applied_discounts: List[dict] = Field(default_factory=list)
+
+
 class CartGroupSchema(BaseModel):
     cart_id: int
     cart_name: str
-    items: List[dict]
+    items: List[CartItemPricingSchema]
+    cart_subtotal: float
+    cart_total_savings: float
     cart_total: float
 
     model_config = ConfigDict(from_attributes=True)
@@ -315,8 +330,11 @@ class CartGroupSchema(BaseModel):
 
 class OrderPreviewSchema(BaseModel):
     cart_groups: List[CartGroupSchema]
-    total_amount: float
+    subtotal: float
+    total_savings: float
     delivery_charge: Optional[float] = None
+    total_amount: float
+    pricing_summary: dict = Field(default_factory=dict)
     estimated_delivery: Optional[datetime] = None
 
 

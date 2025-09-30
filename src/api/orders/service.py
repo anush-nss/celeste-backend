@@ -15,6 +15,7 @@ from src.api.inventory.service import InventoryService
 from src.api.carts.service import CartService
 from src.api.pricing.service import PricingService
 from src.api.orders.services.payment_service import PaymentService
+from src.api.orders.services.store_selection_service import StoreSelectionService
 from src.config.constants import OrderStatus, CartStatus
 from src.shared.exceptions import ResourceNotFoundException, ValidationException
 from src.shared.error_handler import ErrorHandler, handle_service_errors
@@ -29,6 +30,7 @@ class OrderService:
         self.inventory_service = InventoryService()
         self.pricing_service = PricingService()
         self.payment_service = PaymentService()
+        self.store_selection_service = StoreSelectionService()
 
     def calculate_delivery_charge(self, store_deliveries: List[Dict]) -> Decimal:
         """
@@ -75,6 +77,123 @@ class OrderService:
         total_charge = base_charge + (max_distance * rate_per_km)
 
         return total_charge.quantize(Decimal('0.01'))
+
+    async def _determine_store_assignments(
+        self, session, cart_groups: List[CartGroupSchema], location, location_obj
+    ) -> List[Dict]:
+        """
+        Determine optimal store assignments using StoreSelectionService
+        Returns list of store assignment dicts with cart_ids, store info, and totals
+        """
+        # Convert cart groups to cart items format for store selection service
+        cart_items = []
+        for group in cart_groups:
+            for item in group.items:
+                cart_items.append({
+                    "product_id": item.product_id,
+                    "quantity": item.quantity,
+                    "cart_id": group.cart_id
+                })
+
+        if location.mode == "pickup":
+            # Use store selection service for pickup validation
+            pickup_result = await self.store_selection_service.validate_pickup_store(
+                store_id=location_obj.id,
+                cart_items=cart_items,
+                session=session
+            )
+
+            if not pickup_result["all_items_available"]:
+                unavailable_products = [item["product_id"] for item in pickup_result["unavailable_items"]]
+                raise ValidationException(
+                    f"Items not available at pickup store: {unavailable_products}"
+                )
+
+            return [{
+                "store_id": location_obj.id,
+                "store_name": location_obj.name,
+                "store_lat": float(location_obj.latitude),
+                "store_lng": float(location_obj.longitude),
+                "delivery_lat": None,
+                "delivery_lng": None,
+                "cart_ids": [group.cart_id for group in cart_groups],
+                "store_total": sum(group.cart_total for group in cart_groups)
+            }]
+
+        else:
+            # Delivery mode: use smart store selection
+            # Clean cart_items format for store selection service (remove cart_id)
+            clean_cart_items = []
+            for item in cart_items:
+                clean_cart_items.append({
+                    "product_id": item["product_id"],
+                    "quantity": item["quantity"]
+                })
+
+            delivery_result = await self.store_selection_service.select_stores_for_delivery(
+                address_id=location_obj.id,
+                cart_items=clean_cart_items,
+                session=session
+            )
+
+            if delivery_result["unavailable_items"]:
+                unavailable_products = [item["product_id"] for item in delivery_result["unavailable_items"]]
+                raise ValidationException(
+                    f"Items not available for delivery: {unavailable_products}"
+                )
+
+            # Convert store assignments to expected format
+            store_assignments = []
+
+            # Get store details for assignments (bulk query)
+            assigned_store_ids = list(delivery_result["store_assignments"].keys())
+            if assigned_store_ids:
+                stores_query = select(Store).where(Store.id.in_(assigned_store_ids))
+                stores_result = await session.execute(stores_query)
+                stores_dict = {store.id: store for store in stores_result.scalars().all()}
+            else:
+                stores_dict = {}
+
+            for store_id, assigned_items in delivery_result["store_assignments"].items():
+                # Get cart IDs for this store by matching product IDs back to cart_items
+                store_cart_ids = []
+                for assigned_item in assigned_items:
+                    for cart_item in cart_items:
+                        if (cart_item["product_id"] == assigned_item["product_id"] and
+                            cart_item["cart_id"] not in store_cart_ids):
+                            store_cart_ids.append(cart_item["cart_id"])
+
+                # Calculate store total from assigned cart groups
+                store_total = sum(
+                    group.cart_total for group in cart_groups
+                    if group.cart_id in store_cart_ids
+                )
+
+                # Get actual store details
+                store = stores_dict.get(int(store_id))
+                if not store:
+                    # Fallback to primary store if store not found
+                    primary_store = delivery_result["primary_store"]
+                    store_name = primary_store["name"]
+                    store_lat = primary_store["latitude"]
+                    store_lng = primary_store["longitude"]
+                else:
+                    store_name = store.name
+                    store_lat = float(store.latitude)
+                    store_lng = float(store.longitude)
+
+                store_assignments.append({
+                    "store_id": int(store_id),
+                    "store_name": store_name,
+                    "store_lat": store_lat,
+                    "store_lng": store_lng,
+                    "delivery_lat": float(location_obj.latitude),
+                    "delivery_lng": float(location_obj.longitude),
+                    "cart_ids": store_cart_ids,
+                    "store_total": store_total
+                })
+
+            return store_assignments
 
     @handle_service_errors("updating user statistics")
     async def update_user_statistics(self, user_id: str, order_total: Decimal) -> None:
@@ -160,6 +279,7 @@ class OrderService:
                         product_id=item_data.product_id,
                         store_id=order_data.store_id,
                         quantity=item_data.quantity,
+                        session=session
                     )
 
                     price = product.base_price
@@ -212,6 +332,7 @@ class OrderService:
                             product_id=item.product_id,
                             store_id=order.store_id,
                             quantity=item.quantity,
+                            session=session
                         )
                 elif status_update.status == OrderStatus.CANCELLED:
                     if order.status == OrderStatus.PENDING:
@@ -221,6 +342,7 @@ class OrderService:
                                 product_id=item.product_id,
                                 store_id=order.store_id,
                                 quantity=item.quantity,
+                                session=session
                             )
                     elif order.status == OrderStatus.CONFIRMED:
                         # This would be a more complex "cancellation" that might
@@ -235,6 +357,7 @@ class OrderService:
                             product_id=item.product_id,
                             store_id=order.store_id,
                             quantity=item.quantity,
+                            session=session
                         )
 
                 order.status = status_update.status
@@ -246,234 +369,115 @@ class OrderService:
     async def create_multi_cart_order(
         self, user_id: str, checkout_data: MultiCartCheckoutSchema
     ) -> CheckoutResponseSchema:
-        """Create order from multiple carts with exact pricing, store splitting, and delivery charges"""
+        """Create order from multiple carts using optimized shared logic and exact pricing"""
+
+        # STEP 1: Validate checkout data OUTSIDE transaction
+        async with AsyncSessionLocal() as validation_session:
+            validation_data = await CartService.validate_checkout_data(validation_session, user_id, checkout_data)
+
+        # STEP 2: Calculate pricing separately (no session needed)
+        pricing_data = await CartService.fetch_products_and_calculate_pricing(validation_data)
+
+        # STEP 3: Build cart groups with pricing (no DB needed)
+        cart_groups = CartService.build_cart_groups(validation_data, pricing_data)
+
+        # STEP 4: Calculate totals
+        total_amount = Decimal('0.00')
+        for group in cart_groups:
+            total_amount += Decimal(str(group.cart_total))
+
+        # STEP 5: Now proceed with order creation in a separate transaction
         async with AsyncSessionLocal() as session:
-            # Get user tier for pricing
-            from src.database.models.user import User
-            user_query = select(User).where(User.firebase_uid == user_id)
-            user_result = await session.execute(user_query)
-            user = user_result.scalar_one_or_none()
-            user_tier_id = user.tier_id if user else None
-
-            # Get delivery address if needed
-            delivery_address = None
-            if checkout_data.location.mode == "delivery":
-                address_query = select(Address).where(
-                    and_(Address.id == checkout_data.location.id, Address.user_id == user_id)
+            async with session.begin():
+                # STEP 6: Determine store assignments for order fulfillment
+                location_obj = validation_data["location_obj"]
+                store_assignments = await self._determine_store_assignments(
+                    session, cart_groups, checkout_data.location, location_obj
                 )
-                address_result = await session.execute(address_query)
-                delivery_address = address_result.scalar_one_or_none()
-                if not delivery_address:
-                    raise ValidationException(f"Address {checkout_data.location.id} not found or not owned by user")
 
-            # Validate pickup store if needed
-            pickup_store = None
-            if checkout_data.location.mode == "pickup":
-                store_query = select(Store).where(
-                    and_(Store.id == checkout_data.location.id, Store.is_active == True)
-                )
-                store_result = await session.execute(store_query)
-                pickup_store = store_result.scalar_one_or_none()
-                if not pickup_store:
-                    raise ValidationException(f"Store {checkout_data.location.id} not found or inactive")
+                if not store_assignments:
+                    raise ValidationException("Could not find any stores to fulfill the order.")
 
-            # Get all cart items and prepare for bulk pricing
-            all_cart_items = []
-            product_data_for_pricing = []
-            cart_item_mapping = {}  # Map cart_id -> items
-
-            for cart_id in checkout_data.cart_ids:
-                # Verify cart access and get items
-                await CartService._check_cart_access(session, user_id, cart_id)
-
-                cart_query = select(Cart).where(
-                    and_(Cart.id == cart_id, Cart.status == CartStatus.ACTIVE)
-                ).options(selectinload(Cart.items))
-                cart_result = await session.execute(cart_query)
-                cart = cart_result.scalar_one_or_none()
-
-                if not cart:
-                    raise ValidationException(f"Cart {cart_id} not found or not available for checkout")
-
-                cart_item_mapping[cart_id] = {"cart": cart, "items": []}
-
-                for item in cart.items:
-                    # Get product with categories for pricing
-                    product_query = select(Product).where(Product.id == item.product_id)
-                    product_result = await session.execute(product_query)
-                    product = product_result.scalar_one_or_none()
-
-                    if not product:
-                        raise ValidationException(f"Product {item.product_id} not found")
-
-                    # Prepare for bulk pricing calculation
-                    product_data_for_pricing.append({
-                        "id": str(product.id),
-                        "price": float(product.base_price),
-                        "quantity": item.quantity,
-                        "category_ids": []  # TODO: Get actual category IDs
-                    })
-
-                    all_cart_items.append({
-                        "cart_id": cart_id,
-                        "cart_item": item,
-                        "product": product
-                    })
-
-            # Calculate exact pricing using bulk pricing service
-            pricing_results = await self.pricing_service.calculate_bulk_product_pricing(
-                product_data_for_pricing, user_tier_id
-            )
-
-            # Build cart groups with exact pricing
-            cart_groups = []
-            total_amount = Decimal('0.00')
-
-            cart_item_index = 0
-            for cart_id, cart_data in cart_item_mapping.items():
-                cart = cart_data["cart"]
-                cart_total = Decimal('0.00')
-                cart_items = []
-
-                # Process each item in this cart
-                for item in cart.items:
-                    # Get corresponding pricing result
-                    pricing_result = pricing_results[cart_item_index]
-
-                    unit_price = Decimal(str(pricing_result.final_price))
-                    item_total = unit_price * item.quantity
-                    cart_total += item_total
-
-                    cart_items.append({
-                        "product_id": item.product_id,
-                        "quantity": item.quantity,
-                        "unit_price": float(unit_price),
-                        "total_price": float(item_total)
-                    })
-                    cart_item_index += 1
-
-                cart_groups.append(CartGroupSchema(
-                    cart_id=cart.id,
-                    cart_name=cart.name,
-                    items=cart_items,
-                    cart_total=float(cart_total)
-                ))
-                total_amount += cart_total
-
-            # Determine store assignment and calculate delivery charges
-            delivery_charge = Decimal('0.00')
-            store_assignments = []
-
-            if checkout_data.location.mode == "pickup":
-                # All items go to pickup store
-                if not pickup_store:
-                    raise ValidationException("Pickup store not found")
-
-                store_assignments = [{
-                    "store_id": pickup_store.id,
-                    "store_name": pickup_store.name,
-                    "store_lat": pickup_store.latitude,
-                    "store_lng": pickup_store.longitude,
-                    "delivery_lat": None,
-                    "delivery_lng": None,
-                    "cart_groups": cart_groups,
-                    "store_total": float(total_amount)
-                }]
-            else:
-                # For delivery, assign all to first active store (simplified)
-                # In production, this would use smart store selection
-                store_query = select(Store).where(Store.is_active == True).limit(1)
-                store_result = await session.execute(store_query)
-                delivery_store = store_result.scalar_one_or_none()
-
-                if not delivery_store:
-                    raise ValidationException("No active stores available for delivery")
-
-                store_assignments = [{
-                    "store_id": delivery_store.id,
-                    "store_name": delivery_store.name,
-                    "store_lat": delivery_store.latitude,
-                    "store_lng": delivery_store.longitude,
-                    "delivery_lat": delivery_address.latitude if delivery_address else 0.0,
-                    "delivery_lng": delivery_address.longitude if delivery_address else 0.0,
-                    "cart_groups": cart_groups,
-                    "store_total": float(total_amount)
-                }]
-
-                # Calculate delivery charges
+                # STEP 7: Calculate delivery charges
                 delivery_charge = self.calculate_delivery_charge(store_assignments)
+                final_total = total_amount + delivery_charge
 
-            # Add delivery charge to total
-            final_total = total_amount + delivery_charge
+                # STEP 8: Create main order record
+                # Use the first store as the main store for the order
+                main_store_id = store_assignments[0]["store_id"]
+                new_order = Order(
+                    user_id=user_id,
+                    store_id=main_store_id,
+                    total_amount=final_total,
+                    status=OrderStatus.PENDING
+                )
+                session.add(new_order)
+                await session.flush()
 
-            # Create order with main store
-            main_store_id = store_assignments[0]["store_id"]
-            new_order = Order(
-                user_id=user_id,
-                store_id=main_store_id,
-                total_amount=final_total,
-                status=OrderStatus.PENDING
-            )
-            session.add(new_order)
-            await session.flush()
-
-            # Create order items grouped by cart and place inventory holds
-            placed_holds = []  # Track holds for error rollback
-            try:
-                for cart_group in cart_groups:
-                    for item in cart_group.items:
-                        order_item = OrderItem(
-                            order_id=new_order.id,
-                            source_cart_id=cart_group.cart_id,
-                            product_id=item["product_id"],
-                            quantity=item["quantity"],
-                            unit_price=Decimal(str(item["unit_price"])),
-                            total_price=Decimal(str(item["total_price"]))
-                        )
-                        session.add(order_item)
-
-                        # Place inventory hold for this item (PENDING order)
-                        await self.inventory_service.place_hold(
-                            product_id=item["product_id"],
-                            store_id=main_store_id,
-                            quantity=item["quantity"]
+                # STEP 9: Create order items and place inventory holds
+                placed_holds = []  # Track holds for error rollback
+                try:
+                    for cart_group in cart_groups:
+                        # Find the assigned store for this cart's items
+                        assigned_store = next(
+                            (store for store in store_assignments
+                             if cart_group.cart_id in store.get("cart_ids", [cart_group.cart_id])),
+                            store_assignments[0]  # Fallback to main store
                         )
 
-                        # Track successful hold for potential rollback
-                        placed_holds.append({
-                            "product_id": item["product_id"],
-                            "store_id": main_store_id,
-                            "quantity": item["quantity"]
-                        })
+                        for item in cart_group.items:
+                            # Create order item with pricing from preview
+                            order_item = OrderItem(
+                                order_id=new_order.id,
+                                source_cart_id=cart_group.cart_id,
+                                product_id=item.product_id,
+                                quantity=item.quantity,
+                                unit_price=Decimal(str(item.final_price)),
+                                total_price=Decimal(str(item.total_price))
+                            )
+                            session.add(order_item)
 
-                # Update cart statuses to ordered
-                for cart_id in checkout_data.cart_ids:
-                    await session.execute(
-                        update(Cart).where(Cart.id == cart_id).values(
-                            status=CartStatus.ORDERED,
-                            ordered_at=datetime.now()
+                            # Place inventory hold at the assigned store
+                            await self.inventory_service.place_hold(
+                                product_id=item.product_id,
+                                store_id=assigned_store["store_id"],
+                                quantity=item.quantity,
+                                session=session
+                            )
+
+                            # Track successful hold for potential rollback
+                            placed_holds.append({
+                                "product_id": item.product_id,
+                                "store_id": assigned_store["store_id"],
+                                "quantity": item.quantity
+                            })
+
+                    # STEP 10: Update cart statuses to ordered
+                    for cart_id in checkout_data.cart_ids:
+                        await session.execute(
+                            update(Cart).where(Cart.id == cart_id).values(
+                                status=CartStatus.ORDERED,
+                                ordered_at=datetime.now()
+                            )
                         )
-                    )
 
-                await session.commit()
-                await session.refresh(new_order)
+                    await session.refresh(new_order)
+                except Exception as e:
+                    # If anything fails, release all placed holds
+                    for hold in placed_holds:
+                        try:
+                            await self.inventory_service.release_hold(
+                                product_id=hold["product_id"],
+                                store_id=hold["store_id"],
+                                quantity=hold["quantity"],
+                                session=session
+                            )
+                        except Exception:
+                            # Log but don't fail the rollback
+                            pass
+                    raise e
 
-            except Exception as e:
-                # If anything fails, release all placed holds
-                for hold in placed_holds:
-                    try:
-                        await self.inventory_service.release_hold(
-                            product_id=hold["product_id"],
-                            store_id=hold["store_id"],
-                            quantity=hold["quantity"]
-                        )
-                    except Exception:
-                        # Log but don't fail the rollback
-                        pass
-                await session.rollback()
-                raise e
-
-            # Initiate payment process
+            # STEP 10: Initiate payment process outside transaction
             payment_result = await self.payment_service.initiate_payment(
                 order_id=new_order.id,
                 total_amount=final_total,
