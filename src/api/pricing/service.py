@@ -513,9 +513,10 @@ class PricingService:
                       AND (pl.valid_until IS NULL OR pl.valid_until >= NOW())
                 ),
                 applicable_price_list_lines AS (
-                    SELECT 
+                    SELECT
                         pll.*,
-                        apl.priority as price_list_priority
+                        apl.priority as price_list_priority,
+                        apl.price_list_name
                     FROM price_list_lines pll
                     JOIN active_price_lists apl ON pll.price_list_id = apl.price_list_id
                     WHERE pll.is_active = true
@@ -523,8 +524,8 @@ class PricingService:
                       AND (
                           pll.product_id = ANY(:product_ids) OR
                           (pll.product_id IS NULL AND pll.category_id IN (
-                              SELECT pc.category_id 
-                              FROM product_categories pc 
+                              SELECT pc.category_id
+                              FROM product_categories pc
                               WHERE pc.product_id = ANY(:product_ids)
                           )) OR
                           (pll.product_id IS NULL AND pll.category_id IS NULL)

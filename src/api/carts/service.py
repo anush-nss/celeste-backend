@@ -129,13 +129,14 @@ class CartService:
     async def get_user_carts(user_id: str) -> CartListSchema:
         """Get all carts accessible to the user (owned + shared)"""
         async with AsyncSessionLocal() as session:
-            # Get carts where user has access
+            # Get carts where user has access with all related data
             query = select(Cart, CartUser.role).join(
                 CartUser, Cart.id == CartUser.cart_id
             ).where(
                 CartUser.user_id == user_id
             ).options(
-                selectinload(Cart.items)
+                selectinload(Cart.items),
+                selectinload(Cart.users)
             ).order_by(Cart.updated_at.desc())
 
             result = await session.execute(query)
@@ -145,6 +146,28 @@ class CartService:
             shared_carts = []
 
             for cart, role in cart_role_pairs:
+                # Convert cart items to CartItemDetailSchema
+                items = []
+                if cart.items:
+                    for item in cart.items:
+                        items.append(CartItemDetailSchema(
+                            id=item.id,
+                            product_id=item.product_id,
+                            quantity=item.quantity,
+                            created_at=item.created_at,
+                            updated_at=item.updated_at
+                        ))
+
+                # Convert cart users to CartUserSchema
+                users = []
+                if cart.users:
+                    for cart_user in cart.users:
+                        users.append(CartUserSchema(
+                            user_id=cart_user.user_id,
+                            role=cart_user.role,
+                            shared_at=cart_user.shared_at
+                        ))
+
                 cart_dict = {
                     "id": cart.id,
                     "name": cart.name,
@@ -154,8 +177,10 @@ class CartService:
                     "created_at": cart.created_at,
                     "updated_at": cart.updated_at,
                     "ordered_at": cart.ordered_at,
+                    "items": items,
+                    "users": users,
                     "role": role,
-                    "items_count": len(cart.items) if cart.items else 0
+                    "items_count": len(items)
                 }
 
                 cart_schema = CartSchema.model_validate(cart_dict)
