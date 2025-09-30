@@ -283,22 +283,25 @@ class CartSharingDetailsSchema(BaseModel):
     shared_with: List[CartShareSchema]
 
 
+class CheckoutLocationSchema(BaseModel):
+    mode: Annotated[str, Field(
+        description="Checkout mode: 'delivery' or 'pickup'",
+        examples=["delivery", "pickup"]
+    )]
+    id: Annotated[int, Field(
+        gt=0,
+        description="Address ID if delivery mode, Store ID if pickup mode",
+        examples=[123]
+    )]
+
+
 class MultiCartCheckoutSchema(BaseModel):
     cart_ids: Annotated[List[int], Field(
         min_length=1,
         description="List of cart IDs to checkout",
         examples=[[1, 2, 3]]
     )]
-    store_id: Annotated[int, Field(
-        gt=0,
-        description="Store ID for delivery/pickup",
-        examples=[1]
-    )]
-    delivery_address_id: Optional[Annotated[int, Field(
-        gt=0,
-        description="Delivery address ID",
-        examples=[5]
-    )]] = None
+    location: CheckoutLocationSchema
 
 
 class CartGroupSchema(BaseModel):
@@ -313,6 +316,7 @@ class CartGroupSchema(BaseModel):
 class OrderPreviewSchema(BaseModel):
     cart_groups: List[CartGroupSchema]
     total_amount: float
+    delivery_charge: Optional[float] = None
     estimated_delivery: Optional[datetime] = None
 
 
@@ -322,5 +326,8 @@ class CheckoutResponseSchema(BaseModel):
     status: str
     cart_groups: List[CartGroupSchema]
     created_at: datetime
+    payment_url: Optional[str] = None
+    payment_reference: Optional[str] = None
+    payment_expires_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
