@@ -29,6 +29,65 @@ pricing_service = PricingService()
 
 
 @products_router.get(
+    "/recents",
+    summary="Get recently bought products for the current user",
+    response_model=List[EnhancedProductSchema],
+)
+async def get_recent_products(
+    limit: Optional[int] = Query(
+        20, le=100, description="Number of recent products to return (default: 20, max: 100)"
+    ),
+    include_pricing: Optional[bool] = Query(
+        True, description="Include pricing calculations"
+    ),
+    include_categories: Optional[bool] = Query(
+        False, description="Include category information"
+    ),
+    include_tags: Optional[bool] = Query(
+        False, description="Include tag information"
+    ),
+    include_inventory: Optional[bool] = Query(
+        False, description="Include inventory information (requires location)"
+    ),
+    latitude: Optional[float] = Query(
+        None, ge=-90, le=90, description="User latitude for location-based inventory"
+    ),
+    longitude: Optional[float] = Query(
+        None, ge=-180, le=180, description="User longitude for location-based inventory"
+    ),
+    current_user: Annotated[DecodedToken, Depends(get_current_user)] = None,
+    user_tier: Optional[int] = Depends(get_user_tier),
+):
+    """
+    Get recently bought products for the authenticated user.
+
+    Returns products from ordered carts, sorted by most recent purchase.
+    Each product appears only once, even if purchased multiple times.
+
+    Features:
+    - Smart pricing with automatic tier detection from Bearer token
+    - Location-based inventory (provide latitude/longitude)
+    - Product categories and tags
+    - Default limit of 20, maximum 100
+    """
+    user_id = current_user.uid
+
+    products = await product_service.get_recent_products(
+        user_id=user_id,
+        limit=limit,
+        customer_tier=user_tier,
+        include_pricing=include_pricing,
+        include_categories=include_categories,
+        include_tags=include_tags,
+        include_inventory=include_inventory,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+    return success_response([p.model_dump(mode="json") for p in products])
+
+
+@products_router.get(
     "/",
     summary="Get all products with smart pricing and pagination",
     response_model=PaginatedProductsResponse,

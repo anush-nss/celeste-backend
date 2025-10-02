@@ -498,7 +498,7 @@ class PricingService:
             return []
 
         # Check cache first
-        cached_pricing = await pricing_cache.get_bulk_pricing(str(user_tier_id), [str(pid) for pid in product_ids])
+        cached_pricing = pricing_cache.get_bulk_pricing(str(user_tier_id), [str(pid) for pid in product_ids])
         if cached_pricing:
             return [ProductPricingSchema(**item) for item in cached_pricing]
 
@@ -665,7 +665,7 @@ class PricingService:
                 ))
             
             # Cache the results
-            await pricing_cache.set_bulk_pricing(str(user_tier_id), [str(pid) for pid in product_ids], [r.model_dump() for r in results])
+            pricing_cache.set_bulk_pricing(str(user_tier_id), [str(pid) for pid in product_ids], [r.model_dump() for r in results])
 
             return results
 

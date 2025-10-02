@@ -212,3 +212,36 @@ class ProductService:
     async def remove_tag_from_product(self, product_id: int, tag_id: int) -> bool:
         """Remove a tag from a product using shared TagService"""
         return await self.tag_service.remove_tag_from_product(product_id, tag_id)
+
+    async def get_recent_products(
+        self,
+        user_id: str,
+        limit: int = 20,
+        customer_tier: Optional[int] = None,
+        include_pricing: bool = True,
+        include_categories: bool = False,
+        include_tags: bool = False,
+        include_inventory: bool = False,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+    ) -> List[EnhancedProductSchema]:
+        """Get recently bought products for a user from ordered carts"""
+
+        # Determine store_ids if inventory requested with location
+        store_ids = None
+        if include_inventory and latitude and longitude:
+            store_ids = await self.inventory_service.get_stores_by_location(
+                latitude, longitude
+            )
+
+        # Get recent products using query service
+        return await self.query_service.get_recent_products_for_user(
+            user_id=user_id,
+            limit=limit,
+            customer_tier=customer_tier,
+            store_ids=store_ids,
+            include_pricing=include_pricing,
+            include_categories=include_categories,
+            include_tags=include_tags,
+            include_inventory=include_inventory,
+        )

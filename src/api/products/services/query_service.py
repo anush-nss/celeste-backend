@@ -646,3 +646,218 @@ class ProductQueryService:
     ) -> List[EnhancedProductSchema]:
         """Process single row result using same logic as bulk processing"""
         return await self._process_row_batch([row], query_params)
+
+    async def get_recent_products_for_user(
+        self,
+        user_id: str,
+        limit: int,
+        customer_tier: Optional[int] = None,
+        store_ids: Optional[List[int]] = None,
+        include_pricing: bool = True,
+        include_categories: bool = False,
+        include_tags: bool = False,
+        include_inventory: bool = False,
+    ) -> List[EnhancedProductSchema]:
+        """Get recently bought products for a user from ordered carts"""
+
+        async with AsyncSessionLocal() as session:
+            # Step 1: Get recent product IDs from ordered carts
+            recent_products_query = """
+            SELECT DISTINCT ON (ci.product_id)
+                ci.product_id
+            FROM cart_items ci
+            JOIN carts c ON ci.cart_id = c.id
+            WHERE c.created_by = :user_id
+              AND c.status = 'ordered'
+            ORDER BY ci.product_id, c.ordered_at DESC
+            LIMIT :limit
+            """
+
+            result = await session.execute(
+                text(recent_products_query),
+                {"user_id": user_id, "limit": limit}
+            )
+            product_rows = result.fetchall()
+
+            if not product_rows:
+                return []
+
+            product_ids = [row.product_id for row in product_rows]
+
+            # Step 2: Build comprehensive SQL for these products using existing infrastructure
+            sql_query, params = self._build_recent_products_sql(
+                product_ids=product_ids,
+                customer_tier=customer_tier,
+                store_ids=store_ids,
+                include_pricing=include_pricing,
+                include_categories=include_categories,
+                include_tags=include_tags,
+                include_inventory=include_inventory,
+            )
+
+            # Step 3: Execute query
+            result = await session.execute(text(sql_query), params)
+            rows = result.fetchall()
+
+            if not rows:
+                return []
+
+            # Step 4: Process results using existing logic
+            from src.api.products.models import ProductQuerySchema
+            query_params = ProductQuerySchema(
+                limit=limit,
+                include_pricing=include_pricing,
+                include_categories=include_categories,
+                include_tags=include_tags,
+                include_inventory=include_inventory,
+            )
+
+            products = await self._process_row_batch(rows, query_params)
+
+            # Step 5: Reorder products to match the original recent order
+            product_order_map = {pid: idx for idx, pid in enumerate(product_ids)}
+            products.sort(key=lambda p: product_order_map.get(p.id, len(product_ids)))
+
+            return products
+
+    def _build_recent_products_sql(
+        self,
+        product_ids: List[int],
+        customer_tier: Optional[int] = None,
+        store_ids: Optional[List[int]] = None,
+        include_pricing: bool = True,
+        include_categories: bool = True,
+        include_tags: bool = False,
+        include_inventory: bool = False,
+    ) -> tuple[str, Dict[str, Any]]:
+        """Build SQL for recent products (similar to _build_comprehensive_sql but for specific product IDs)"""
+
+        # Base SELECT with all needed fields
+        select_fields = [
+            "p.id", "p.ref", "p.name", "p.description", "p.brand",
+            "p.base_price", "p.unit_measure", "p.image_urls",
+            "p.ecommerce_category_id", "p.ecommerce_subcategory_id",
+            "p.created_at", "p.updated_at"
+        ]
+
+        # Add category fields if requested
+        if include_categories:
+            select_fields.extend([
+                "STRING_AGG(DISTINCT CONCAT(c.id, '|', c.name, '|', COALESCE(c.description, ''), '|', COALESCE(c.sort_order::text, ''), '|', COALESCE(c.image_url, ''), '|', COALESCE(c.parent_category_id::text, '')), ';') as categories_data"
+            ])
+
+        # Add tag fields if requested
+        if include_tags:
+            select_fields.extend([
+                "STRING_AGG(DISTINCT CONCAT(t.id::text, '|', COALESCE(t.tag_type, ''), '|', COALESCE(t.name, ''), '|', COALESCE(t.slug, ''), '|', COALESCE(t.description, ''), '|', COALESCE(pt.value, '')), ';') as tags_data"
+            ])
+
+        # Add inventory fields if requested
+        if include_inventory and store_ids:
+            select_fields.extend([
+                "STRING_AGG(DISTINCT CONCAT(inv.store_id, '|', inv.quantity_available, '|', inv.quantity_on_hold, '|', inv.quantity_reserved), ';') as inventory_data"
+            ])
+
+        # Add pricing fields if requested
+        if include_pricing and customer_tier:
+            select_fields.extend([
+                "COALESCE(pricing.final_price, p.base_price) as final_price",
+                "COALESCE(pricing.savings, 0) as savings",
+                "COALESCE(pricing.discount_percentage, 0) as discount_percentage",
+                "pricing.price_list_names"
+            ])
+
+        # Build FROM clause with optimal JOINs
+        joins = ["FROM products p"]
+
+        if include_categories:
+            joins.append("LEFT JOIN product_categories pc ON p.id = pc.product_id")
+            joins.append("LEFT JOIN categories c ON pc.category_id = c.id")
+
+        if include_tags:
+            joins.append("LEFT JOIN product_tags pt ON p.id = pt.product_id")
+            joins.append("LEFT JOIN tags t ON pt.tag_id = t.id")
+
+        if include_inventory and store_ids:
+            joins.append(f"LEFT JOIN inventory inv ON p.id = inv.product_id AND inv.store_id = ANY(ARRAY{store_ids})")
+
+        if include_pricing and customer_tier:
+            # Integrated pricing calculation subquery
+            pricing_cte = f"""
+            WITH pricing AS (
+                SELECT
+                    p.id as product_id,
+                    p.base_price,
+                    CASE
+                        WHEN pll.discount_type = 'percentage' THEN
+                            GREATEST(0, p.base_price - (LEAST(p.base_price * (pll.discount_value / 100), COALESCE(pll.max_discount_amount, p.base_price))))
+                        WHEN pll.discount_type = 'flat' THEN
+                            GREATEST(0, p.base_price - pll.discount_value)
+                        WHEN pll.discount_type = 'fixed_price' THEN
+                            pll.discount_value
+                        ELSE p.base_price
+                    END as final_price,
+                    CASE
+                        WHEN pll.discount_type = 'percentage' THEN
+                            LEAST(p.base_price * (pll.discount_value / 100), COALESCE(pll.max_discount_amount, p.base_price))
+                        WHEN pll.discount_type = 'flat' THEN
+                            pll.discount_value
+                        WHEN pll.discount_type = 'fixed_price' THEN
+                            GREATEST(0, p.base_price - pll.discount_value)
+                        ELSE 0
+                    END as savings,
+                    CASE
+                        WHEN p.base_price > 0 THEN
+                            CASE
+                                WHEN pll.discount_type = 'percentage' THEN
+                                    LEAST(pll.discount_value, (COALESCE(pll.max_discount_amount, p.base_price) / p.base_price) * 100)
+                                WHEN pll.discount_type = 'flat' THEN
+                                    (pll.discount_value / p.base_price) * 100
+                                WHEN pll.discount_type = 'fixed_price' THEN
+                                    ((p.base_price - pll.discount_value) / p.base_price) * 100
+                                ELSE 0
+                            END
+                        ELSE 0
+                    END as discount_percentage,
+                    STRING_AGG(pl.name, ';') as price_list_names,
+                    ROW_NUMBER() OVER (PARTITION BY p.id ORDER BY pl.priority DESC, pll.id) as rn
+                FROM products p
+                LEFT JOIN price_list_lines pll ON (
+                    pll.product_id = p.id OR
+                    (pll.product_id IS NULL AND pll.category_id IN (SELECT category_id FROM product_categories WHERE product_id = p.id)) OR
+                    (pll.product_id IS NULL AND pll.category_id IS NULL)
+                )
+                LEFT JOIN price_lists pl ON pll.price_list_id = pl.id
+                LEFT JOIN tier_price_lists tpl ON pl.id = tpl.price_list_id
+                WHERE pl.is_active = true
+                  AND tpl.tier_id = :customer_tier
+                  AND (pl.valid_from IS NULL OR pl.valid_from <= NOW())
+                  AND (pl.valid_until IS NULL OR pl.valid_until >= NOW())
+                  AND pll.is_active = true
+                  AND pll.min_quantity <= 1
+                  AND p.id = ANY(:product_ids)
+                GROUP BY p.id, p.base_price, pll.discount_type, pll.discount_value, pll.max_discount_amount, pl.priority, pll.id
+            )
+            """
+            joins.insert(0, pricing_cte)
+            joins.append("LEFT JOIN pricing ON p.id = pricing.product_id AND pricing.rn = 1")
+
+        # Build WHERE conditions
+        params: Dict[str, Any] = {"product_ids": product_ids}
+        if customer_tier:
+            params["customer_tier"] = customer_tier
+
+        where_clause = "WHERE p.id = ANY(:product_ids)"
+
+        sql_query = f"""
+        {joins[0] if 'WITH' in joins[0] else ''}
+        SELECT {', '.join(select_fields)}
+        {' '.join(joins[1:] if 'WITH' in joins[0] else joins)}
+        {where_clause}
+        GROUP BY p.id, p.ref, p.name, p.description, p.brand, p.base_price,
+                 p.unit_measure, p.image_urls, p.ecommerce_category_id,
+                 p.ecommerce_subcategory_id, p.created_at, p.updated_at
+                 {', pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names' if include_pricing and customer_tier else ''}
+        """
+
+        return sql_query, params
