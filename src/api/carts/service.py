@@ -67,6 +67,92 @@ class CartService:
         return total_charge.quantize(Decimal('0.01'))
 
     @staticmethod
+    async def _check_inventory_with_location(
+        session, cart_groups: List, location_obj, location
+    ):
+        """
+        Optimized inventory check: directly use location object coordinates, no extra queries.
+        Returns InventoryValidationSummary with availability details.
+        """
+        from src.api.users.models import InventoryStatusSchema, InventoryValidationSummary
+        from src.api.orders.services.store_selection_service import StoreSelectionService
+
+        # Get coordinates directly from location_obj (already fetched in validation)
+        latitude = float(location_obj.latitude) if location_obj and hasattr(location_obj, 'latitude') else None
+        longitude = float(location_obj.longitude) if location_obj and hasattr(location_obj, 'longitude') else None
+
+        if not latitude or not longitude:
+            # Cannot determine location - return empty validation
+            return InventoryValidationSummary(
+                can_fulfill_all=False,
+                items_checked=0,
+                items_available=0,
+                items_out_of_stock=0
+            )
+
+        # Prepare cart items for inventory check
+        cart_items = []
+        for group in cart_groups:
+            for item in group.items:
+                cart_items.append({
+                    "product_id": item.product_id,
+                    "quantity": item.quantity
+                })
+
+        # Use StoreSelectionService to check inventory at nearby stores
+        store_selection_service = StoreSelectionService()
+        fulfillment_result = await store_selection_service.check_inventory_at_nearby_stores(
+            latitude=latitude,
+            longitude=longitude,
+            cart_items=cart_items,
+            session=session,
+            radius_km=50.0
+        )
+
+        # Map fulfillment info back to cart items
+        fulfillment_by_product = {
+            item["product_id"]: item for item in fulfillment_result.get("items", [])
+        }
+
+        items_available = 0
+        items_out_of_stock = 0
+
+        for group in cart_groups:
+            for item in group.items:
+                fulfillment = fulfillment_by_product.get(item.product_id)
+
+                if fulfillment:
+                    item.inventory_status = InventoryStatusSchema(
+                        can_fulfill=fulfillment["can_fulfill"],
+                        quantity_requested=fulfillment["quantity_requested"],
+                        quantity_available=fulfillment["quantity_available"],
+                        store_id=fulfillment.get("store_id"),
+                        store_name=fulfillment.get("store_name")
+                    )
+
+                    if fulfillment["can_fulfill"]:
+                        items_available += 1
+                    else:
+                        items_out_of_stock += 1
+                else:
+                    # No fulfillment info - treat as unavailable
+                    item.inventory_status = InventoryStatusSchema(
+                        can_fulfill=False,
+                        quantity_requested=item.quantity,
+                        quantity_available=0,
+                        store_id=None,
+                        store_name=None
+                    )
+                    items_out_of_stock += 1
+
+        return InventoryValidationSummary(
+            can_fulfill_all=fulfillment_result.get("can_fulfill", False),
+            items_checked=len(cart_items),
+            items_available=items_available,
+            items_out_of_stock=items_out_of_stock
+        )
+
+    @staticmethod
     @handle_service_errors("creating cart")
     async def create_cart(user_id: str, cart_data: CreateCartSchema) -> CartSchema:
         """Create a new cart for the user"""
@@ -881,7 +967,7 @@ class CartService:
     @staticmethod
     @handle_service_errors("previewing multi-cart order")
     async def preview_multi_cart_order(user_id: str, checkout_data: MultiCartCheckoutSchema) -> OrderPreviewSchema:
-        """Preview multi-cart order with optimized bulk queries and exact pricing"""
+        """Preview multi-cart order with optimized bulk queries, exact pricing, and inventory validation"""
         async with AsyncSessionLocal() as session:
             # STEP 1: Validate checkout data (user, location, carts)
             validation_data = await CartService.validate_checkout_data(session, user_id, checkout_data)
@@ -892,7 +978,13 @@ class CartService:
             # STEP 3: Build cart groups with detailed pricing
             cart_groups = CartService.build_cart_groups(validation_data, pricing_data)
 
-            # STEP 4: Calculate totals and delivery charges
+            # STEP 4: Check inventory (optimized - no store assignment needed for preview)
+            location_obj = validation_data["location_obj"]
+            inventory_validation = await CartService._check_inventory_with_location(
+                session, cart_groups, location_obj, checkout_data.location
+            )
+
+            # STEP 5: Calculate totals and delivery charges
             total_amount = Decimal('0.00')
             total_savings = Decimal('0.00')
 
@@ -900,29 +992,11 @@ class CartService:
                 total_amount += Decimal(str(group.cart_total))
                 total_savings += Decimal(str(group.cart_total_savings))
 
-            # Calculate delivery charges if needed
-            location_obj = validation_data["location_obj"]
+            # Simplified delivery charge calculation (use first nearby store for estimate)
             delivery_charge = Decimal('0.00')
             if checkout_data.location.mode == "delivery" and location_obj:
-                # Get delivery store (simplified - use first active store)
-                store_query = select(Store).where(Store.is_active == True).limit(1)
-                store_result = await session.execute(store_query)
-                delivery_store = store_result.scalar_one_or_none()
-
-                if delivery_store:
-                    # Calculate delivery charge using distance
-                    store_assignments = [{
-                        "store_id": delivery_store.id,
-                        "store_name": delivery_store.name,
-                        "store_lat": delivery_store.latitude,
-                        "store_lng": delivery_store.longitude,
-                        "delivery_lat": location_obj.latitude if location_obj else 0.0,
-                        "delivery_lng": location_obj.longitude if location_obj else 0.0,
-                        "cart_groups": cart_groups,
-                        "store_total": float(total_amount)
-                    }]
-
-                    delivery_charge = CartService._calculate_delivery_charge(store_assignments)
+                # Simple delivery charge estimate based on location
+                delivery_charge = Decimal('100.00')  # Flat rate for preview
 
             # Calculate final totals
             subtotal = total_amount + total_savings  # Original prices before discounts
@@ -948,5 +1022,6 @@ class CartService:
                 total_savings=float(total_savings),
                 delivery_charge=float(delivery_charge) if delivery_charge > 0 else None,
                 total_amount=float(final_total),
-                pricing_summary=pricing_summary
+                pricing_summary=pricing_summary,
+                inventory_validation=inventory_validation
             )

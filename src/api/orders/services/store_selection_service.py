@@ -247,3 +247,116 @@ class StoreSelectionService:
         split_result["unavailable_items"] = remaining_items
 
         return split_result
+
+    async def check_inventory_at_nearby_stores(
+        self,
+        latitude: float,
+        longitude: float,
+        cart_items: List[Dict[str, Any]],
+        session,
+        radius_km: float = 50.0
+    ) -> Dict[str, Any]:
+        """
+        Simple inventory check: find nearby stores and check if items can be fulfilled.
+        Prioritizes closest store with availability.
+
+        Returns dict with per-product fulfillment info.
+        """
+        # Reuse StoreService to get nearby stores
+        from src.api.stores.service import StoreService
+        from src.api.stores.models import StoreQuerySchema
+
+        store_service = StoreService()
+        query_params = StoreQuerySchema(
+            latitude=latitude,
+            longitude=longitude,
+            radius=radius_km,
+            is_active=True,
+            include_distance=True,
+            limit=10,
+            tags=None,
+            include_tags=False
+        )
+
+        # Get stores sorted by distance (closest first)
+        stores_data = await store_service.get_stores_by_location(query_params)
+
+        if not stores_data:
+            return {"can_fulfill": False, "items": [], "error": "No stores found in delivery range"}
+
+        # Build list of store IDs sorted by distance
+        store_ids = [s["id"] for s in stores_data]
+        stores_by_id = {s["id"]: s for s in stores_data}
+
+        # Query inventory for all products at all nearby stores in one query
+        product_ids = [item["product_id"] for item in cart_items]
+
+        inventory_query = select(Inventory).where(
+            and_(
+                Inventory.product_id.in_(product_ids),
+                Inventory.store_id.in_(store_ids)
+            )
+        )
+        result = await session.execute(inventory_query)
+        inventories = result.scalars().all()
+
+        # Build inventory lookup: (product_id, store_id) -> inventory
+        inventory_map = {}
+        for inv in inventories:
+            key = (inv.product_id, inv.store_id)
+            inventory_map[key] = inv
+
+        # Check each cart item
+        fulfillment_info = []
+        can_fulfill_all = True
+
+        for item in cart_items:
+            product_id = item["product_id"]
+            quantity_needed = item["quantity"]
+
+            # Find closest store with sufficient stock
+            fulfilled_store = None
+            quantity_available = 0
+
+            for store_id in store_ids:
+                inv_key = (product_id, store_id)
+                inv = inventory_map.get(inv_key)
+
+                if inv and inv.quantity_available >= quantity_needed:
+                    # Found store with enough stock
+                    fulfilled_store = stores_by_id[store_id]
+                    quantity_available = inv.quantity_available
+                    break
+
+            # If not fully available, find store with maximum available quantity
+            if not fulfilled_store:
+                max_available = 0
+                best_store = None
+
+                for store_id in store_ids:
+                    inv_key = (product_id, store_id)
+                    inv = inventory_map.get(inv_key)
+
+                    if inv and inv.quantity_available > max_available:
+                        max_available = inv.quantity_available
+                        best_store = stores_by_id[store_id]
+
+                quantity_available = max_available
+                fulfilled_store = best_store
+                can_fulfill_all = False
+
+            fulfillment_info.append({
+                "product_id": product_id,
+                "quantity_requested": quantity_needed,
+                "quantity_available": quantity_available,
+                "can_fulfill": quantity_available >= quantity_needed,
+                "store_id": fulfilled_store["id"] if fulfilled_store else None,
+                "store_name": fulfilled_store["name"] if fulfilled_store else None,
+                "distance_km": fulfilled_store.get("distance") if fulfilled_store else None
+            })
+
+        return {
+            "can_fulfill": can_fulfill_all,
+            "items": fulfillment_info,
+            "nearby_stores_count": len(stores_data)
+        }

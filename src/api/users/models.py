@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional, Annotated
+from typing import Dict, List, Optional, Annotated
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
 from src.config.constants import UserRole, CartStatus, CartUserRole
@@ -304,6 +304,15 @@ class MultiCartCheckoutSchema(BaseModel):
     location: CheckoutLocationSchema
 
 
+class InventoryStatusSchema(BaseModel):
+    """Inventory availability status for a cart item"""
+    can_fulfill: bool  # Can fulfill full requested quantity
+    quantity_requested: int
+    quantity_available: int  # How many can be bought
+    store_id: Optional[int] = None  # Closest store with stock
+    store_name: Optional[str] = None
+
+
 class CartItemPricingSchema(BaseModel):
     product_id: int
     product_name: str
@@ -315,6 +324,7 @@ class CartItemPricingSchema(BaseModel):
     total_savings: float
     discount_percentage: float
     applied_discounts: List[dict] = Field(default_factory=list)
+    inventory_status: Optional[InventoryStatusSchema] = None
 
 
 class CartGroupSchema(BaseModel):
@@ -328,6 +338,14 @@ class CartGroupSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class InventoryValidationSummary(BaseModel):
+    """Summary of inventory validation results"""
+    can_fulfill_all: bool  # All items have sufficient stock
+    items_checked: int
+    items_available: int
+    items_out_of_stock: int
+
+
 class OrderPreviewSchema(BaseModel):
     cart_groups: List[CartGroupSchema]
     subtotal: float
@@ -335,6 +353,7 @@ class OrderPreviewSchema(BaseModel):
     delivery_charge: Optional[float] = None
     total_amount: float
     pricing_summary: dict = Field(default_factory=dict)
+    inventory_validation: Optional[InventoryValidationSummary] = None  # Inventory check results
     estimated_delivery: Optional[datetime] = None
 
 
