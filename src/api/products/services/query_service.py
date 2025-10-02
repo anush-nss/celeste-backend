@@ -204,7 +204,7 @@ class ProductQueryService:
             where_conditions.append("p.id > :cursor")
             params["cursor"] = query_params.cursor
 
-        if query_params.only_discounted and query_params.include_pricing:
+        if query_params.only_discounted and query_params.include_pricing and customer_tier:
             where_conditions.append("pricing.savings > 0")
 
         # Build complete query
