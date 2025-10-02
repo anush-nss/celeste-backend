@@ -53,4 +53,8 @@ class PriceList(Base):
         # Composite queries
         Index('idx_price_lists_active_valid_priority', 'is_active', 'valid_from', 'priority',
               postgresql_where="is_active = true"),
+
+        # JOIN optimization with tier_price_lists (covering index for pricing queries)
+        Index('idx_price_lists_id_active_validity', 'id', 'is_active', 'valid_from', 'valid_until', 'priority',
+              postgresql_where="is_active = true"),
     )

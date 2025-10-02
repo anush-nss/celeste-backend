@@ -30,6 +30,7 @@ from src.api.pricing.models import (
 )
 from src.shared.exceptions import ResourceNotFoundException, ValidationException, ConflictException
 from src.shared.error_handler import ErrorHandler, handle_service_errors
+from src.api.pricing.cache import pricing_cache
 
 logger = get_logger(__name__)
 
@@ -491,10 +492,15 @@ class PricingService:
                 )
                 for p_data in product_data
             ]
-        
+
         product_ids = [int(p_data["id"]) for p_data in product_data]
         if not product_ids:
             return []
+
+        # Check cache first
+        cached_pricing = await pricing_cache.get_bulk_pricing(str(user_tier_id), [str(pid) for pid in product_ids])
+        if cached_pricing:
+            return [ProductPricingSchema(**item) for item in cached_pricing]
 
         async with AsyncSessionLocal() as session:
             # Optimized bulk pricing query
@@ -658,6 +664,9 @@ class PricingService:
                     applied_discounts=applied_discounts
                 ))
             
+            # Cache the results
+            await pricing_cache.set_bulk_pricing(str(user_tier_id), [str(pid) for pid in product_ids], [r.model_dump() for r in results])
+
             return results
 
 
