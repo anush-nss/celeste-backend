@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Celeste API is a comprehensive FastAPI-based e-commerce backend that provides robust functionality for managing users, products, orders, inventory, and more. It uses Firebase for authentication and Firestore as the primary database, with a Redis-based caching layer for high performance.
+The Celeste API is a comprehensive FastAPI-based e-commerce backend that provides robust functionality for managing users, products, orders, inventory, and more. It uses Firebase for authentication and PostgreSQL as the primary database, with a Redis-based caching layer for high performance.
 
 ## Base URL
 ```
@@ -26,28 +26,6 @@ BearerAuth:
 Authorization: Bearer <JWT_TOKEN>
 ```
 
-## Caching Strategy ⭐ NEW
-
-The Celeste API uses a sophisticated caching layer to ensure high performance and reduce database load. The caching is implemented using Redis.
-
-### Cache Layers
-
--   **Redis Cache:** A distributed cache shared across all instances of the application. It is used to cache frequently accessed data such as products, categories, price lists, and customer tiers.
-
-### Cache Invalidation
-
--   **Automatic Invalidation:** The cache is automatically invalidated when data is created, updated, or deleted.
--   **Cross-Domain Invalidation:** A centralized cache invalidation manager ensures that changes in one domain (e.g., tiers) correctly invalidate dependent data in other domains (e.g., pricing).
-
-### Cached Data
-
-The following data is cached:
--   Products
--   Categories
--   Price Lists and Price List Lines
--   Customer Tiers
--   Stores (non-location based queries only)
-
 ## API Endpoints
 
 ### Authentication Endpoints (`/auth`)
@@ -58,8 +36,8 @@ Register a new user with Firebase authentication.
 **Request Body:**
 ```json
 {
-  "name": "string",
-  "idToken": "string (Firebase ID Token)"
+  "idToken": "string (Firebase ID Token)",
+  "name": "string"
 }
 ```
 
@@ -71,31 +49,38 @@ Register a new user with Firebase authentication.
     "message": "Registration successful",
     "user": {
       "uid": "string",
-      "role": "CUSTOMER"
+      "role": "CUSTOMER",
+      "tier_id": "integer"
     }
   }
 }
 ```
 
-#### GET `/auth/profile`
-Get current user profile information.
+### Development Endpoints (`/dev`)
 
-**Headers:** `Authorization: Bearer <token>`
+#### POST `/dev/auth/token`
+Generate a development ID token for an existing user.
 
-**Response (200):**
+**Request Body:**
 ```json
 {
-  "success": true,
-  "data": {
-    "uid": "string",
-    "email": "string",
-    "role": "CUSTOMER",
-    "phone_number": "string"
-  }
+  "uid": "string"
 }
 ```
 
---- 
+#### POST `/dev/db/add`
+Add data to a database collection.
+
+#### GET `/dev/db/collections`
+List all collections in the database.
+
+#### GET `/dev/db/{collection}`
+Get all documents from a collection.
+
+#### DELETE `/dev/db/{collection}`
+Clear all documents from a collection.
+
+---
 
 ### User Management (`/users`)
 
@@ -104,27 +89,33 @@ Get current user's profile.
 
 **Headers:** `Authorization: Bearer <token>`
 
+**Query Parameters:**
+- `include_addresses`: boolean (default: true)
+
 **Response (200):**
 ```json
 {
   "success": true,
   "data": {
-    "id": "string",
+    "firebase_uid": "string",
     "name": "string",
     "email": "string",
     "phone": "string",
-    "address": "string",
     "role": "CUSTOMER",
-    "customer_tier": "bronze",
+    "tier_id": "integer",
     "total_orders": 0,
     "lifetime_value": 0.0,
-    "createdAt": "datetime",
+    "created_at": "datetime",
     "last_order_at": "datetime",
-    "wishlist": ["productId1", "productId2"],
-    "cart": [
+    "addresses": [
       {
-        "productId": "string",
-        "quantity": 1
+        "id": "integer",
+        "address": "string",
+        "latitude": "float",
+        "longitude": "float",
+        "is_default": "boolean",
+        "created_at": "datetime",
+        "updated_at": "datetime"
       }
     ]
   }
@@ -140,154 +131,97 @@ Update current user's profile.
 ```json
 {
   "name": "string (optional)",
-  "email": "string (optional)",
-  "address": "string (optional)"
+  "is_delivery": "boolean (optional)"
 }
 ```
 
-#### GET `/users/{id}` (Admin Only)
-Get user profile by ID.
+#### Address Management
 
-**Headers:** `Authorization: Bearer <admin_token>`
+##### POST `/users/me/addresses`
+Add a new address for the current user.
 
-#### POST `/users/` (Admin Only)
-Create a new user.
+##### GET `/users/me/addresses`
+Get all addresses for the current user.
 
-**Headers:** `Authorization: Bearer <admin_token>`
+##### GET `/users/me/addresses/{address_id}`
+Get a specific address for the current user.
 
-#### Cart Management
+##### PUT `/users/me/addresses/{address_id}`
+Update a specific address for the current user.
 
-##### POST `/users/me/cart`
-Add item to user's cart.
+##### DELETE `/users/me/addresses/{address_id}`
+Delete a specific address for the current user.
 
-**Request Body:**
-```json
-{
-  "productId": "string",
-  "quantity": 1
-}
-```
+##### PUT `/users/me/addresses/{address_id}/set_default`
+Set a specific address as default for the current user.
 
-##### PUT `/users/me/cart/{productId}`
-Update cart item quantity.
+#### Multi-Cart System
 
-**Request Body:**
-```json
-{
-  "quantity": 2
-}
-```
+##### POST `/users/me/carts`
+Create a new cart.
 
-##### DELETE `/users/me/cart/{productId}`
-Remove item from cart.
+##### GET `/users/me/carts`
+Get all user carts (owned + shared).
 
-##### GET `/users/me/cart`
-Get user's cart.
+##### GET `/users/me/carts/{cart_id}`
+Get cart details.
 
-#### Wishlist Management
+##### PUT `/users/me/carts/{cart_id}`
+Update cart details (owner only).
 
-##### POST `/users/me/wishlist`
-Add product to wishlist.
+##### DELETE `/users/me/carts/{cart_id}`
+Delete cart (owner only).
 
-**Request Body:**
-```json
-{
-  "productId": "string"
-}
-```
+##### POST `/users/me/carts/{cart_id}/items`
+Add item to cart (owner only).
 
-##### DELETE `/users/me/wishlist/{productId}`
-Remove product from wishlist.
+##### PUT `/users/me/carts/{cart_id}/items/{item_id}`
+Update cart item quantity (owner only).
 
-##### GET `/users/me/wishlist`
-Get user's wishlist.
+##### DELETE `/users/me/carts/{cart_id}/items/{product_id}`
+Remove product from cart or reduce quantity (owner only).
+
+##### POST `/users/me/carts/{cart_id}/share`
+Share cart with another user (owner only).
+
+##### DELETE `/users/me/carts/{cart_id}/share/{target_user_id}`
+Remove cart sharing (owner only).
+
+##### GET `/users/me/carts/{cart_id}/shares`
+Get cart sharing details (owner only).
+
+#### Checkout
+
+##### GET `/users/me/checkout/carts`
+Get available carts for checkout.
+
+##### POST `/users/me/checkout/preview`
+Preview multi-cart order.
+
+##### POST `/users/me/checkout/order`
+Create multi-cart order.
 
 ---
 
 ### Product Management (`/products`)
 
-#### GET `/products/` ⭐ **Enhanced with Smart Pricing**
-Get all products with smart pricing and cursor-based pagination.
+#### GET `/products/`
+Get all products with smart pricing and pagination.
 
 **Query Parameters:**
-- `limit`: Number of products to return (default: 20, max: 100)
-- `cursor`: Cursor for pagination (product ID to start from)
-- `include_pricing`: Include pricing calculations (default: true)
-- `categoryId`: Filter by category ID
-- `minPrice`: Minimum price filter
-- `maxPrice`: Maximum price filter
-- `only_discounted`: Filter for products with discounts applied (default: false)
+- `limit`, `cursor`, `include_pricing`, `include_categories`, `include_tags`, `category_ids`, `tags`, `min_price`, `max_price`, `only_discounted`, `store_id`, `include_inventory`, `latitude`, `longitude`
 
-**Headers (Optional):** `Authorization: Bearer <token>` (for tier-based pricing)
+#### GET `/products/recents`
+Get recently bought products for the current user.
 
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "products": [
-      {
-        "id": "string",
-        "name": "string",
-        "description": "string",
-        "price": 99.99,
-        "unit": "string",
-        "categoryId": "string",
-        "imageUrl": "string",
-        "createdAt": "datetime",
-        "updatedAt": "datetime",
-        "pricing": {
-          "base_price": 99.99,
-          "final_price": 84.99,
-          "discount_applied": 15.00,
-          "discount_percentage": 15.15,
-          "applied_price_lists": ["Gold Customer Discounts"],
-          "customer_tier": "gold"
-        },
-        "inventory": {
-          "in_stock": true,
-          "quantity_available": 50,
-          "reserved_quantity": 5,
-          "reorder_level": 10
-        }
-      }
-    ],
-    "pagination": {
-      "current_cursor": null,
-      "next_cursor": "product_abc123",
-      "has_more": true,
-      "total_returned": 20
-    }
-  }
-}
-```
+#### GET `/products/{id}`
+Get a product by ID with smart pricing and location support.
 
-#### GET `/products/{id}` ⭐ **Enhanced with Smart Pricing**
-Get product by ID with automatic tier-based pricing.
-
-**Query Parameters:**
-- `include_pricing`: Include pricing calculations (default: true)
-- `quantity`: Quantity for bulk pricing (default: 1)
-
-**Headers (Optional):** `Authorization: Bearer <token>` (for tier-based pricing)
-
+#### GET `/products/ref/{ref}`
+Get a product by reference/SKU with smart pricing and location support.
 
 #### POST `/products/` (Admin Only)
-Create a new product.
-
-**Headers:** `Authorization: Bearer <admin_token>`
-
-**Request Body:**
-```json
-{
-  "name": "string",
-  "description": "string (optional)",
-  "price": 99.99,
-  "unit": "string",
-  "categoryId": "string",
-  "imageUrl": "string (optional)"
-}
-```
+Create one or more new products.
 
 #### PUT `/products/{id}` (Admin Only)
 Update a product.
@@ -295,609 +229,172 @@ Update a product.
 #### DELETE `/products/{id}` (Admin Only)
 Delete a product.
 
----
+#### Product Tag Management
 
-### Pricing Management (`/pricing`)
+##### POST `/products/tags` (Admin Only)
+Create one or more new product tags.
 
-#### Price List Management (Admin Only)
+##### GET `/products/tags`
+Get all product tags.
 
-##### GET `/pricing/price-lists`
-Get all price lists with filtering.
+##### GET `/products/tags/types`
+Get all available product tag types.
 
-**Headers:** `Authorization: Bearer <admin_token>`
+##### GET `/products/tags/{tag_id}`
+Get a tag by ID.
 
-**Query Parameters:**
-- `active_only`: Filter to show only active price lists (default: false)
+##### PUT `/products/tags/{tag_id}` (Admin Only)
+Update a tag.
 
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": "string",
-      "name": "Gold Customer Discounts",
-      "priority": 1,
-      "active": true,
-      "valid_from": "2024-01-01T00:00:00Z",
-      "valid_until": "2024-12-31T23:59:59Z",
-      "created_at": "datetime",
-      "updated_at": "datetime"
-    }
-  ]
-}
-```
+##### DELETE `/products/tags/{tag_id}` (Admin Only)
+Delete a tag.
 
-##### POST `/pricing/price-lists`
-Create a new price list.
+##### POST `/{product_id}/tags/{tag_id}` (Admin Only)
+Assign a tag to a product.
 
-**Headers:** `Authorization: Bearer <admin_token>`
-
-**Request Body:**
-```json
-{
-  "name": "string",
-  "priority": 1,
-  "active": true,
-  "valid_from": "2024-01-01T00:00:00Z",
-  "valid_until": "2024-12-31T23:59:59Z"
-}
-```
-
-##### GET `/pricing/price-lists/{id}/lines`
-Get price list lines for a specific price list.
-
-##### POST `/pricing/price-lists/{id}/lines`
-Add a price list line.
-
-**Request Body:**
-```json
-{
-  "type": "product",
-  "product_id": "string",
-  "discount_type": "percentage",
-  "amount": 15.0,
-  "min_product_qty": 1,
-  "max_product_qty": 100
-}
-```
-
----
-
-### Customer Tiers (`/tiers`)
-
-Customer tier management system for automatic tier evaluation, benefits, and progress tracking.
-
-#### GET `/tiers/`
-Get all customer tiers (public endpoint).
-
-**Query Parameters:**
-- `active_only`: Filter to show only active tiers (default: true)
-
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": "string",
-      "name": "Bronze",
-      "tier_code": "bronze",
-      "level": 1,
-      "requirements": {
-        "min_orders": 0,
-        "min_lifetime_value": 0.0,
-        "min_monthly_orders": 0
-      },
-      "benefits": {
-        "price_list_ids": [],
-        "delivery_discount": 0.0,
-        "priority_support": false,
-        "early_access": false
-      },
-      "color": "#CD7F32",
-      "active": true
-    }
-  ]
-}
-```
-
-#### GET `/tiers/{tier_id}`
-Get specific customer tier by ID (public endpoint).
-
-#### POST `/tiers/` (Admin Only)
-Create a new customer tier.
-
-**Request Body:**
-```json
-{
-  "name": "Platinum",
-  "tier_code": "platinum",
-  "level": 4,
-  "requirements": {
-    "min_orders": 50,
-    "min_lifetime_value": 2000.0,
-    "min_monthly_orders": 5
-  },
-  "benefits": {
-    "price_list_ids": ["premium-prices"],
-    "delivery_discount": 15.0,
-    "priority_support": true,
-    "early_access": true
-  },
-  "color": "#E5E4E2"
-}
-```
-
-#### PUT `/tiers/{tier_id}` (Admin Only)
-Update an existing customer tier.
-
-#### DELETE `/tiers/{tier_id}` (Admin Only)
-Delete a customer tier.
-
-#### POST `/tiers/initialize-defaults` (Admin Only)
-Initialize default customer tiers (Bronze, Silver, Gold, Platinum).
-
-#### User Tier Endpoints
-
-##### GET `/tiers/users/me/tier`
-Get current user's complete tier information.
-
-**Headers:** `Authorization: Bearer <token>`
-
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "user_id": "string",
-    "current_tier": "silver",
-    "tier_info": {
-      "name": "Silver",
-      "level": 2,
-      "requirements": {...},
-      "benefits": {...}
-    },
-    "progress": {
-      "current_tier": "silver",
-      "next_tier": "gold",
-      "progress": {
-        "orders": {
-          "current": 8,
-          "required": 20,
-          "progress_percentage": 40
-        }
-      }
-    },
-    "statistics": {
-      "total_orders": 8,
-      "lifetime_value": 150.0,
-      "monthly_orders": 2
-    }
-  }
-}
-```
-
-##### GET `/tiers/users/me/tier-progress`
-Get current user's tier progress towards next level.
-
-##### POST `/tiers/users/me/evaluate-tier`
-Evaluate what tier the current user should be in.
-
-##### POST `/tiers/users/me/auto-update-tier`
-Automatically evaluate and update current user's tier.
-
-#### Admin User Tier Management
-
-##### GET `/tiers/users/{user_id}/tier` (Admin Only)
-Get tier information for specific user.
-
-##### POST `/tiers/users/{user_id}/evaluate-tier` (Admin Only)
-Evaluate tier for specific user.
-
-##### POST `/tiers/users/{user_id}/auto-update-tier` (Admin Only)
-Auto-evaluate and update tier for specific user.
-
-##### PUT `/tiers/users/{user_id}/tier` (Admin Only)
-Manually update a user's tier.
+##### DELETE `/{product_id}/tags/{tag_id}` (Admin Only)
+Remove a tag from a product.
 
 ---
 
 ### Category Management (`/categories`)
 
-#### GET `/categories/`
-Get all categories.
+Standard CRUD endpoints for categories: `GET /`, `GET /{id}`, `POST /`, `PUT /{id}`, `DELETE /{id}`.
 
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": "string",
-      "name": "string",
-      "description": "string"
-    }
-  ]
-}
-```
+---
 
-#### GET `/categories/{id}`
-Get category by ID.
+### Ecommerce Category Management (`/ecommerce-categories`)
 
-#### POST `/categories/` (Admin Only)
-Create a new category.
-
-#### PUT `/categories/{id}` (Admin Only)
-Update a category.
-
-#### DELETE `/categories/{id}` (Admin Only)
-Delete a category.
+Standard CRUD endpoints for ecommerce categories (Admin only): `GET /`, `GET /{id}`, 'POST /', `PUT /{id}`, `DELETE /{id}`.
 
 ---
 
 ### Order Management (`/orders`)
 
 #### GET `/orders/`
-Get orders (admins see all, customers see their own).
+Retrieve orders (admins see all, customers see their own).
 
-**Headers:** `Authorization: Bearer <token>`
+#### GET `/orders/{order_id}`
+Retrieve a specific order.
 
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": "string",
-      "userId": "string",
-      "items": [
-        {
-          "productId": "string",
-          "quantity": 1,
-          "price": 99.99
-        }
-      ],
-      "totalAmount": 99.99,
-      "status": "pending",
-      "createdAt": "datetime"
-    }
-  ]
-}
-```
-
-#### GET `/orders/{id}`
-Get specific order (with authorization checks).
-
-#### POST `/orders/`
+#### POST `/orders/` (Admin Only)
 Create a new order.
 
-**Headers:** `Authorization: Bearer <token>`
+#### PUT `/orders/{order_id}/status` (Admin Only)
+Update an order status.
 
-**Request Body:**
-```json
-{
-  "items": [
-    {
-      "productId": "string",
-      "quantity": 1
-    }
-  ],
-  "deliveryAddress": "string"
-}
-```
+#### POST `/orders/payment/callback`
+Handle payment gateway callback.
 
-#### PUT `/orders/{id}` (Admin Only)
-Update order status.
-
-#### DELETE `/orders/{id}` (Admin Only)
-Delete an order.
+#### POST `/orders/{order_id}/payment/verify`
+Verify payment status.
 
 ---
-
 
 ### Inventory Management (`/inventory`)
 
-#### GET `/inventory/`
-Get all inventory records.
-
-#### GET `/inventory/{id}`
-Get inventory by ID.
-
-#### POST `/inventory/` (Admin Only)
-Create inventory record.
-
-#### PUT `/inventory/{id}` (Admin Only)
-Update inventory.
-
-#### DELETE `/inventory/{id}` (Admin Only)
-Delete inventory record.
+Standard CRUD endpoints for inventory: `GET /`, `GET /{inventory_id}`, `POST /`, `PUT /{inventory_id}`, `DELETE /{inventory_id}`. Also includes `POST /adjust` for stock adjustments.
 
 ---
 
-### Store Management (`/stores`) ⭐ **Enhanced with Geospatial Features**
+### Store Management (`/stores`)
 
-The store management system provides comprehensive functionality for managing physical store locations with advanced geospatial capabilities using geopy for precise distance calculations.
+#### GET `/stores/`
+Get all stores with optional location filtering.
 
-#### GET `/stores/` ⭐ **Unified Store Endpoint**
-Get all stores with optional location-based filtering and distance calculations.
+#### GET `/stores/nearby`
+Optimized nearby stores search.
 
-**Query Parameters:**
-- `latitude`: User latitude for distance calculations (optional)
-- `longitude`: User longitude for distance calculations (optional)  
-- `radius`: Search radius in km for filtering (optional, requires lat/lon)
-- `limit`: Maximum number of stores to return (default: 20, max: 100)
-- `isActive`: Filter by store status (default: true)
-- `features`: Filter by store features (can specify multiple)
-- `includeDistance`: Include distance calculations in km (default: true when lat/lon provided)
-- `includeOpenStatus`: Include open/closed status (default: false)
-
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "stores": [
-      {
-        "id": "string",
-        "name": "Downtown Store",
-        "description": "Main downtown location",
-        "address": "123 Main St, City, State 12345",
-        "location": {
-          "latitude": 40.7128,
-          "longitude": -74.0060
-        },
-        "contact": {
-          "phone": "+1234567890",
-          "email": "store@example.com"
-        },
-        "hours": {
-          "monday": {
-            "open": "09:00",
-            "close": "18:00",
-            "closed": false
-          }
-        },
-        "features": ["wifi", "parking", "wheelchair_accessible"],
-        "isActive": true,
-        "created_at": "datetime",
-        "updated_at": "datetime",
-        "distance": 2.3,
-        "is_open_now": true,
-        "next_change": "18:00"
-      }
-    ],
-    "user_location": {
-      "latitude": 40.7128,
-      "longitude": -74.0060
-    },
-    "search_radius": null,
-    "total_found": 15,
-    "returned": 15
-  }
-}
-```
-
-**Usage Examples:**
-```bash
-# Get all stores (cached, no distances)
-GET /stores
-
-# Get all stores with distances (no radius filtering)
-GET /stores?latitude=40.7128&longitude=-74.0060&includeDistance=true
-
-# Get stores with features filtering
-GET /stores?features=wifi&features=parking&limit=10
-
-# Get nearby stores within radius
-GET /stores?latitude=40.7128&longitude=-74.0060&radius=5&includeDistance=true
-
-# Get stores with business hours status
-GET /stores?includeOpenStatus=true
-```
-
-#### GET `/stores/nearby` ⭐ **Optimized Nearby Search**
-Specialized endpoint for location-based store searches (requires coordinates).
-
-**Query Parameters (Required):**
-- `latitude`: User latitude (required)
-- `longitude`: User longitude (required)
-
-**Query Parameters (Optional):**
-- `radius`: Search radius in km (default: 10, max: 50)
-- `limit`: Maximum stores to return (default: 20, max: 100)
-- `features`: Required store features
-- `includeDistance`: Include distance calculations (default: true)
-- `includeOpenStatus`: Include business hours status (default: true)
-
-**Response:** Same format as `/stores` but sorted by distance.
-
-#### GET `/stores/{id}`
-Get detailed information about a specific store.
-
-**Query Parameters:**
-- `includeInventory`: Include store inventory (default: false)
-
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "string",
-    "name": "Downtown Store",
-    "description": "Main downtown location",
-    "address": "123 Main St, City, State 12345",
-    "location": {
-      "latitude": 40.7128,
-      "longitude": -74.0060
-    },
-    "contact": {
-      "phone": "+1234567890",
-      "email": "store@example.com"
-    },
-    "hours": {
-      "monday": {"open": "09:00", "close": "18:00", "closed": false},
-      "tuesday": {"open": "09:00", "close": "18:00", "closed": false},
-      "sunday": {"closed": true}
-    },
-    "features": ["wifi", "parking", "wheelchair_accessible", "drive_through"],
-    "isActive": true,
-    "created_at": "datetime",
-    "updated_at": "datetime"
-  }
-}
-```
+#### GET `/stores/{store_id}`
+Get store by ID.
 
 #### GET `/stores/{store_id}/distance`
-Calculate distance from user location to specific store.
-
-**Query Parameters (Required):**
-- `latitude`: User latitude
-- `longitude`: User longitude
-
-**Response (200):**
-```json
-{
-  "success": true,
-  "data": {
-    "store_id": "string",
-    "store_name": "Downtown Store",
-    "user_location": {
-      "latitude": 40.7128,
-      "longitude": -74.0060
-    },
-    "store_location": {
-      "latitude": 40.7580,
-      "longitude": -73.9855
-    },
-    "distance_km": 5.2,
-    "store_address": "123 Main St, City, State 12345"
-  }
-}
-```
+Calculate distance to specific store.
 
 #### POST `/stores/` (Admin Only)
-Create a new store with location coordinates.
+Create a new store.
 
-**Headers:** `Authorization: Bearer <admin_token>`
+#### PUT `/stores/{store_id}` (Admin Only)
+Update a store.
 
-**Request Body:**
-```json
-{
-  "name": "New Store Location",
-  "description": "Store description",
-  "address": "456 Oak Ave, City, State 12345",
-  "location": {
-    "latitude": 40.7580,
-    "longitude": -73.9855
-  },
-  "contact": {
-    "phone": "+1234567890",
-    "email": "newstore@example.com"
-  },
-  "hours": {
-    "monday": {"open": "09:00", "close": "18:00", "closed": false}
-  },
-  "features": ["wifi", "parking"],
-  "isActive": true
-}
-```
-
-#### PUT `/stores/{id}` (Admin Only)
-Update an existing store.
-
-**Headers:** `Authorization: Bearer <admin_token>`
-
-**Request Body:** Same as POST but all fields optional
-
-#### DELETE `/stores/{id}` (Admin Only)
+#### DELETE `/stores/{store_id}` (Admin Only)
 Delete a store.
 
-**Headers:** `Authorization: Bearer <admin_token>`
-
-#### Store Features
-Available store features for filtering:
-- `parking`: Parking available
-- `wifi`: Free WiFi
-- `wheelchair_accessible`: Wheelchair accessible
-- `drive_through`: Drive-through service
-- `pickup_available`: Curbside pickup
-- `delivery_available`: Local delivery service
+#### Store Tag Management
+- `POST /tags`
+- `GET /tags`
+- `GET /tags/types`
+- `GET /tags/{tag_id}`
+- `PUT /tags/{tag_id}`
+- `DELETE /tags/{tag_id}`
+- `POST /{store_id}/tags/{tag_id}`
+- `DELETE /{store_id}/tags/{tag_id}`
+- `GET /{store_id}/tags`
 
 ---
 
+### Pricing Management (`/pricing`)
 
-## Data Models
+#### Price List Management (Admin Only)
+- `GET /price-lists`
+- `GET /price-lists/{price_list_id}`
+- `POST /price-lists`
+- `PUT /price-lists/{price_list_id}`
+- `DELETE /price-lists/{price_list_id}`
 
-### User Roles
-- `CUSTOMER`: Regular customer with limited access (default)
-- `ADMIN`: Administrator with full access
+#### Price List Lines Management (Admin Only)
+- `GET /price-lists/{price_list_id}/lines`
+- `POST /price-lists/{price_list_id}/lines`
+- `PUT /price-lists/lines/{line_id}`
+- `DELETE /price-lists/lines/{line_id}`
 
-### Customer Tiers
-- `bronze`: Default tier for new customers (0 discount)
-- `silver`: Mid-tier customer (higher discounts)
-- `gold`: High-value customer (premium discounts)
-- `platinum`: VIP customer (maximum discounts)
+#### Tier Price List Association (Admin Only)
+- `POST /tiers/{tier_id}/price-lists/{price_list_id}`
+- `DELETE /tiers/{tier_id}/price-lists/{price_list_id}`
+- `GET /tiers/{tier_id}/price-lists`
 
-### Order Status
-- `pending`: Order placed but not processed
-- `processing`: Order being processed  
-- `shipped`: Order shipped
-- `delivered`: Order delivered
-- `cancelled`: Order cancelled
+#### Pricing Calculation
+- `GET /calculate/product/{product_id}`
+- `POST /calculate/bulk`
 
-### Discount Types
-- `percentage`: Percentage-based discount
-- `flat`: Fixed amount discount
+---
 
-### Price List Types
-- `product`: Product-specific pricing rules
-- `category`: Category-specific pricing rules
-- `all`: Global pricing rules (applies to all products)
+### Customer Tiers (`/tiers`)
 
-## Error Handling
+#### Public Endpoints
+- `GET /`
+- `GET /{tier_id}`
 
-The API uses standardized error responses:
+#### Admin-only Endpoints
+- `POST /`
+- `PUT /{tier_id}`
+- `DELETE /{tier_id}`
+- `POST /initialize-defaults`
+- `GET /users/{user_id}/tier`
+- `POST /users/{user_id}/evaluate-tier`
+- `POST /users/{user_id}/auto-update-tier`
+- `PUT /users/{user_id}/tier`
 
-```json
-{
-  "success": false,
-  "error": {
-    "message": "Error description",
-    "code": "ERROR_CODE",
-    "details": {}
-  }
-}
-```
+#### User-specific Endpoints
+- `GET /users/me/tier`
+- `GET /users/me/tier-progress`
+- `POST /users/me/evaluate-tier`
+- `POST /users/me/auto-update-tier`
 
-### Common HTTP Status Codes
-- `200`: Success
-- `201`: Created
-- `400`: Bad Request
-- `401`: Unauthorized
-- `403`: Forbidden
-- `404`: Not Found
-- `422`: Validation Error
-- `500`: Internal Server Error
+#### Benefits CRUD (Admin only)
+- `GET /benefits/`
+- `GET /benefits/{benefit_id}`
+- `POST /benefits/`
+- `PUT /benefits/{benefit_id}`
+- `DELETE /benefits/{benefit_id}`
 
-## Response Format
+#### Tier-Benefit Association (Admin only)
+- `GET /{tier_id}/benefits`
+- `POST /{tier_id}/benefits/{benefit_id}`
+- `DELETE /{tier_id}/benefits/{benefit_id}`
 
-All successful responses follow this format:
-```json
-{
-  "success": true,
-  "data": <response_data>
-}
-```
+---
 
-All error responses follow this format:
-```json
-{
-  "success": false,
-  "error": {
-    "message": "string",
-    "code": "string",
-    "details": {}
-  }
-}
-```
+### Tags (`/tags`)
+
+General CRUD for tags: `POST /`, `GET /`, `GET /types`, `GET /{tag_id}`, `PUT /{tag_id}`, `DELETE /{tag_id}`.

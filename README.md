@@ -144,16 +144,18 @@ curl -H "Authorization: Bearer <your-jwt-token>" \
 ### Core Endpoints
 
 | Endpoint | Method | Description | Auth Required |
-|----------|--------|-------------|---------------|
+|---|---|---|---|
 | `/auth/register` | POST | Register new user | ❌ |
-| `/auth/profile` | GET | Get user profile | ✅ |
-| `/users/me` | GET | Get current user | ✅ |
-| `/users/me/cart` | GET/POST/PUT/DELETE | Manage cart | ✅ |
-| `/users/me/wishlist` | GET/POST/DELETE | Manage wishlist | ✅ |
-| `/products/` | GET | List products | ❌ |
-| `/products/{id}` | GET | Get product | ❌ |
+| `/users/me` | GET/PUT | Manage current user profile | ✅ |
+| `/users/me/addresses` | POST/GET/PUT/DELETE | Manage user addresses | ✅ |
+| `/users/me/carts` | POST/GET/PUT/DELETE | Manage user carts | ✅ |
+| `/products/` | GET | List products with filtering | ❌ |
+| `/products/{id}` | GET | Get a single product | ❌ |
 | `/categories/` | GET | List categories | ❌ |
 | `/orders/` | GET/POST | Manage orders | ✅ |
+| `/stores/` | GET | List stores with location filtering | ❌ |
+| `/tiers/` | GET | List customer tiers | ❌ |
+
 
 ### User Roles
 
@@ -234,18 +236,17 @@ Comprehensive documentation is available in the `docs/` folder:
 
 ### Docker Deployment
 
-1. **Create Dockerfile:**
+1.  **Create Dockerfile:**
    ```dockerfile
-   FROM python:3.9-slim
-   
+   FROM python:3.12-slim
+
    WORKDIR /app
    COPY requirements.txt .
    RUN pip install --no-cache-dir -r requirements.txt
-   
+
    COPY . .
-   EXPOSE 8000
-   
-   CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+   CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "main:app", "--bind", "0.0.0.0:8080"]
    ```
 
 2. **Build and run:**
