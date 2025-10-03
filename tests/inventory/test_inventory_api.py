@@ -1,6 +1,6 @@
 import pytest
 from httpx import AsyncClient
-from src.config.constants import UserRole
+
 
 @pytest.mark.asyncio
 class TestInventoryAPI:
@@ -52,7 +52,9 @@ class TestInventoryAPI:
 
         # 6. Update inventory
         update_data = {"quantity_available": 150}
-        response = await admin_client.put(f"/inventory/{inventory_id}", json=update_data)
+        response = await admin_client.put(
+            f"/inventory/{inventory_id}", json=update_data
+        )
         assert response.status_code == 200
         assert response.json()["data"]["quantity_available"] == 150
 

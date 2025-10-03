@@ -1,18 +1,21 @@
 """
 Performance utilities for database operations and caching.
 """
+
 import asyncio
-from typing import List, Dict, Any, Optional, TypeVar, Generic, Callable
-from functools import wraps
 import time
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload, joinedload
+from functools import wraps
+from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
+
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from src.shared.utils import get_logger
 
 logger = get_logger(__name__)
 
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 class BatchProcessor(Generic[T]):
     """Utility for processing items in batches to prevent memory issues"""
@@ -21,14 +24,12 @@ class BatchProcessor(Generic[T]):
         self.batch_size = batch_size
 
     async def process_in_batches(
-        self,
-        items: List[T],
-        processor: Callable[[List[T]], Any]
+        self, items: List[T], processor: Callable[[List[T]], Any]
     ) -> List[Any]:
         """Process items in batches to manage memory usage"""
         results = []
         for i in range(0, len(items), self.batch_size):
-            batch = items[i:i + self.batch_size]
+            batch = items[i : i + self.batch_size]
             try:
                 batch_result = await processor(batch)
                 if isinstance(batch_result, list):
@@ -36,7 +37,9 @@ class BatchProcessor(Generic[T]):
                 else:
                     results.append(batch_result)
             except Exception as e:
-                logger.error(f"Error processing batch {i//self.batch_size + 1}: {str(e)}")
+                logger.error(
+                    f"Error processing batch {i // self.batch_size + 1}: {str(e)}"
+                )
                 raise
         return results
 
@@ -50,14 +53,14 @@ class QueryOptimizer:
         query = base_query
 
         # Get the model class from the query
-        model_class = base_query.column_descriptions[0]['entity']
+        model_class = base_query.column_descriptions[0]["entity"]
 
         for relationship in relationships:
-            if '.' in relationship:
+            if "." in relationship:
                 # Handle nested relationships like 'product_tags.tag'
                 # For now, use simple selectinload for the full dotted path
                 # This is a simplified approach that works for most cases
-                parts = relationship.split('.')
+                parts = relationship.split(".")
                 current_attr = getattr(model_class, parts[0])
                 load_option = selectinload(current_attr)
 
@@ -81,7 +84,7 @@ class QueryOptimizer:
         session: AsyncSession,
         cache_key: str,
         query_builder: Callable[[], Any],
-        cache_manager: Optional[Any] = None
+        cache_manager: Optional[Any] = None,
     ) -> Any:
         """Get data with cache check to reduce database load"""
         if cache_manager:
@@ -99,6 +102,7 @@ class QueryOptimizer:
 
 def async_timer(operation_name: str):
     """Decorator to log operation timing for performance monitoring"""
+
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -107,15 +111,21 @@ def async_timer(operation_name: str):
                 result = await func(*args, **kwargs)
                 execution_time = time.time() - start_time
                 if execution_time > 1.0:  # Log slow operations
-                    logger.warning(f"Slow operation {operation_name}: {execution_time:.2f}s")
+                    logger.warning(
+                        f"Slow operation {operation_name}: {execution_time:.2f}s"
+                    )
                 else:
                     logger.debug(f"Operation {operation_name}: {execution_time:.3f}s")
                 return result
             except Exception as e:
                 execution_time = time.time() - start_time
-                logger.error(f"Failed operation {operation_name} after {execution_time:.3f}s: {str(e)}")
+                logger.error(
+                    f"Failed operation {operation_name} after {execution_time:.3f}s: {str(e)}"
+                )
                 raise
+
         return wrapper
+
     return decorator
 
 
@@ -148,13 +158,13 @@ class PaginationOptimizer:
         cursor_field: str,
         cursor_value: Optional[Any] = None,
         limit: int = 20,
-        ascending: bool = True
+        ascending: bool = True,
     ):
         """Build optimized cursor-based pagination query"""
         query = base_query
 
         # Get the model class from the query
-        model_class = base_query.column_descriptions[0]['entity']
+        model_class = base_query.column_descriptions[0]["entity"]
         cursor_column = getattr(model_class, cursor_field)
 
         if cursor_value is not None:
@@ -181,7 +191,7 @@ class MemoryOptimizer:
         session: AsyncSession,
         query,
         batch_size: int = 1000,
-        processor: Optional[Callable] = None
+        processor: Optional[Callable] = None,
     ):
         """Stream large datasets to prevent memory exhaustion"""
         offset = 0
@@ -208,10 +218,13 @@ class CacheWarmer:
     """Utilities for cache warming and preloading"""
 
     @staticmethod
-    async def warm_frequently_accessed_data(cache_manager, data_loaders: Dict[str, Callable]):
+    async def warm_frequently_accessed_data(
+        cache_manager, data_loaders: Dict[str, Callable]
+    ):
         """Pre-warm cache with frequently accessed data"""
         tasks = []
         for cache_key, loader in data_loaders.items():
+
             async def warm_cache(key: str, load_func: Callable):
                 try:
                     data = await load_func()
@@ -236,31 +249,31 @@ class PerformanceMetrics:
         """Record operation metrics"""
         if operation not in self.metrics:
             self.metrics[operation] = {
-                'total_calls': 0,
-                'total_duration': 0,
-                'failures': 0,
-                'avg_duration': 0,
-                'max_duration': 0,
-                'min_duration': float('inf')
+                "total_calls": 0,
+                "total_duration": 0,
+                "failures": 0,
+                "avg_duration": 0,
+                "max_duration": 0,
+                "min_duration": float("inf"),
             }
 
         metrics = self.metrics[operation]
-        metrics['total_calls'] += 1
-        metrics['total_duration'] += duration
+        metrics["total_calls"] += 1
+        metrics["total_duration"] += duration
 
         if not success:
-            metrics['failures'] += 1
+            metrics["failures"] += 1
 
-        metrics['avg_duration'] = metrics['total_duration'] / metrics['total_calls']
-        metrics['max_duration'] = max(metrics['max_duration'], duration)
-        metrics['min_duration'] = min(metrics['min_duration'], duration)
+        metrics["avg_duration"] = metrics["total_duration"] / metrics["total_calls"]
+        metrics["max_duration"] = max(metrics["max_duration"], duration)
+        metrics["min_duration"] = min(metrics["min_duration"], duration)
 
     def get_slow_operations(self, threshold_seconds: float = 1.0) -> List[Dict]:
         """Get operations that are performing slowly"""
         return [
-            {'operation': op, **data}
+            {"operation": op, **data}
             for op, data in self.metrics.items()
-            if data['avg_duration'] > threshold_seconds
+            if data["avg_duration"] > threshold_seconds
         ]
 
     def reset_metrics(self):

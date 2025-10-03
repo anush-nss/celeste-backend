@@ -1,5 +1,7 @@
 import time
+
 from fastapi import Request
+
 from src.shared.utils import get_logger
 
 logger = get_logger(__name__)

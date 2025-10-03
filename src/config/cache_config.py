@@ -4,7 +4,7 @@ Centralized cache TTL values and settings for consistent caching across the appl
 """
 
 import os
-from typing import Dict, Any
+from typing import Any, Dict
 
 
 class CacheConfig:
@@ -54,7 +54,7 @@ class CacheConfig:
         "inventory": "inventory",
         "customer_tiers": "customer_tiers",
     }
-    
+
     # Cache invalidation scope constants
     INVALIDATION_SCOPE_ALL = "all"
 

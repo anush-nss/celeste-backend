@@ -101,4 +101,3 @@ class CacheScopes(str, Enum):
     DOMAIN = "domain"
     CROSS_DOMAIN = "cross_domain"
     GLOBAL = "global"
-

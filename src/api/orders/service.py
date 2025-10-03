@@ -1,27 +1,32 @@
-from typing import List, Optional, Dict, Any
+import math
+from datetime import datetime
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import update
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import and_, update
-from src.database.connection import AsyncSessionLocal
-from src.database.models.order import Order, OrderItem
-from src.database.models.product import Product
-from src.database.models.cart import Cart, CartItem
-from src.database.models.store import Store
-from src.database.models.address import Address
-from src.database.models.user import User
-from src.api.orders.models import OrderSchema, CreateOrderSchema, UpdateOrderSchema
-from src.api.users.models import MultiCartCheckoutSchema, CheckoutResponseSchema, CartGroupSchema
-from src.api.inventory.service import InventoryService
+
 from src.api.carts.service import CartService
-from src.api.pricing.service import PricingService
+from src.api.inventory.service import InventoryService
+from src.api.orders.models import CreateOrderSchema, OrderSchema, UpdateOrderSchema
 from src.api.orders.services.payment_service import PaymentService
 from src.api.orders.services.store_selection_service import StoreSelectionService
-from src.config.constants import OrderStatus, CartStatus
-from src.shared.exceptions import ResourceNotFoundException, ValidationException
+from src.api.pricing.service import PricingService
+from src.api.users.models import (
+    CartGroupSchema,
+    CheckoutResponseSchema,
+    MultiCartCheckoutSchema,
+)
+from src.config.constants import CartStatus, OrderStatus
+from src.database.connection import AsyncSessionLocal
+from src.database.models.cart import Cart
+from src.database.models.order import Order, OrderItem
+from src.database.models.product import Product
+from src.database.models.store import Store
+from src.database.models.user import User
 from src.shared.error_handler import ErrorHandler, handle_service_errors
-from decimal import Decimal
-from datetime import datetime
-import math
+from src.shared.exceptions import ResourceNotFoundException, ValidationException
 
 
 class OrderService:
@@ -45,20 +50,20 @@ class OrderService:
             Decimal: Total delivery charge
         """
         if not store_deliveries:
-            return Decimal('0.00')
+            return Decimal("0.00")
 
         # Base delivery charge
-        base_charge = Decimal('50.00')  # Rs. 50 base charge
-        rate_per_km = Decimal('15.00')  # Rs. 15 per km
+        base_charge = Decimal("50.00")  # Rs. 50 base charge
+        rate_per_km = Decimal("15.00")  # Rs. 15 per km
 
-        max_distance = Decimal('0.00')
+        max_distance = Decimal("0.00")
 
         for delivery in store_deliveries:
             # Calculate distance using Haversine formula
-            store_lat = delivery['store_lat']
-            store_lng = delivery['store_lng']
-            delivery_lat = delivery['delivery_lat']
-            delivery_lng = delivery['delivery_lng']
+            store_lat = delivery["store_lat"]
+            store_lng = delivery["store_lng"]
+            delivery_lat = delivery["delivery_lat"]
+            delivery_lng = delivery["delivery_lng"]
 
             # Convert to radians
             lat1, lng1 = math.radians(store_lat), math.radians(store_lng)
@@ -67,7 +72,10 @@ class OrderService:
             # Haversine formula
             dlat = lat2 - lat1
             dlng = lng2 - lng1
-            a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng/2)**2
+            a = (
+                math.sin(dlat / 2) ** 2
+                + math.cos(lat1) * math.cos(lat2) * math.sin(dlng / 2) ** 2
+            )
             c = 2 * math.asin(math.sqrt(a))
             distance_km = Decimal(str(6371 * c))  # Earth radius in km
 
@@ -76,7 +84,7 @@ class OrderService:
         # Calculate total charge: base + (max_distance * rate)
         total_charge = base_charge + (max_distance * rate_per_km)
 
-        return total_charge.quantize(Decimal('0.01'))
+        return total_charge.quantize(Decimal("0.01"))
 
     async def _determine_store_assignments(
         self, session, cart_groups: List[CartGroupSchema], location, location_obj
@@ -89,55 +97,62 @@ class OrderService:
         cart_items = []
         for group in cart_groups:
             for item in group.items:
-                cart_items.append({
-                    "product_id": item.product_id,
-                    "quantity": item.quantity,
-                    "cart_id": group.cart_id
-                })
+                cart_items.append(
+                    {
+                        "product_id": item.product_id,
+                        "quantity": item.quantity,
+                        "cart_id": group.cart_id,
+                    }
+                )
 
         if location.mode == "pickup":
             # Use store selection service for pickup validation
             pickup_result = await self.store_selection_service.validate_pickup_store(
-                store_id=location_obj.id,
-                cart_items=cart_items,
-                session=session
+                store_id=location_obj.id, cart_items=cart_items, session=session
             )
 
             if not pickup_result["all_items_available"]:
-                unavailable_products = [item["product_id"] for item in pickup_result["unavailable_items"]]
+                unavailable_products = [
+                    item["product_id"] for item in pickup_result["unavailable_items"]
+                ]
                 raise ValidationException(
                     f"Items not available at pickup store: {unavailable_products}"
                 )
 
-            return [{
-                "store_id": location_obj.id,
-                "store_name": location_obj.name,
-                "store_lat": float(location_obj.latitude),
-                "store_lng": float(location_obj.longitude),
-                "delivery_lat": None,
-                "delivery_lng": None,
-                "cart_ids": [group.cart_id for group in cart_groups],
-                "store_total": sum(group.cart_total for group in cart_groups)
-            }]
+            return [
+                {
+                    "store_id": location_obj.id,
+                    "store_name": location_obj.name,
+                    "store_lat": float(location_obj.latitude),
+                    "store_lng": float(location_obj.longitude),
+                    "delivery_lat": None,
+                    "delivery_lng": None,
+                    "cart_ids": [group.cart_id for group in cart_groups],
+                    "store_total": sum(group.cart_total for group in cart_groups),
+                }
+            ]
 
         else:
             # Delivery mode: use smart store selection
             # Clean cart_items format for store selection service (remove cart_id)
             clean_cart_items = []
             for item in cart_items:
-                clean_cart_items.append({
-                    "product_id": item["product_id"],
-                    "quantity": item["quantity"]
-                })
+                clean_cart_items.append(
+                    {"product_id": item["product_id"], "quantity": item["quantity"]}
+                )
 
-            delivery_result = await self.store_selection_service.select_stores_for_delivery(
-                address_id=location_obj.id,
-                cart_items=clean_cart_items,
-                session=session
+            delivery_result = (
+                await self.store_selection_service.select_stores_for_delivery(
+                    address_id=location_obj.id,
+                    cart_items=clean_cart_items,
+                    session=session,
+                )
             )
 
             if delivery_result["unavailable_items"]:
-                unavailable_products = [item["product_id"] for item in delivery_result["unavailable_items"]]
+                unavailable_products = [
+                    item["product_id"] for item in delivery_result["unavailable_items"]
+                ]
                 raise ValidationException(
                     f"Items not available for delivery: {unavailable_products}"
                 )
@@ -150,22 +165,29 @@ class OrderService:
             if assigned_store_ids:
                 stores_query = select(Store).where(Store.id.in_(assigned_store_ids))
                 stores_result = await session.execute(stores_query)
-                stores_dict = {store.id: store for store in stores_result.scalars().all()}
+                stores_dict = {
+                    store.id: store for store in stores_result.scalars().all()
+                }
             else:
                 stores_dict = {}
 
-            for store_id, assigned_items in delivery_result["store_assignments"].items():
+            for store_id, assigned_items in delivery_result[
+                "store_assignments"
+            ].items():
                 # Get cart IDs for this store by matching product IDs back to cart_items
                 store_cart_ids = []
                 for assigned_item in assigned_items:
                     for cart_item in cart_items:
-                        if (cart_item["product_id"] == assigned_item["product_id"] and
-                            cart_item["cart_id"] not in store_cart_ids):
+                        if (
+                            cart_item["product_id"] == assigned_item["product_id"]
+                            and cart_item["cart_id"] not in store_cart_ids
+                        ):
                             store_cart_ids.append(cart_item["cart_id"])
 
                 # Calculate store total from assigned cart groups
                 store_total = sum(
-                    group.cart_total for group in cart_groups
+                    group.cart_total
+                    for group in cart_groups
                     if group.cart_id in store_cart_ids
                 )
 
@@ -182,16 +204,18 @@ class OrderService:
                     store_lat = float(store.latitude)
                     store_lng = float(store.longitude)
 
-                store_assignments.append({
-                    "store_id": int(store_id),
-                    "store_name": store_name,
-                    "store_lat": store_lat,
-                    "store_lng": store_lng,
-                    "delivery_lat": float(location_obj.latitude),
-                    "delivery_lng": float(location_obj.longitude),
-                    "cart_ids": store_cart_ids,
-                    "store_total": store_total
-                })
+                store_assignments.append(
+                    {
+                        "store_id": int(store_id),
+                        "store_name": store_name,
+                        "store_lat": store_lat,
+                        "store_lng": store_lng,
+                        "delivery_lat": float(location_obj.latitude),
+                        "delivery_lng": float(location_obj.longitude),
+                        "cart_ids": store_cart_ids,
+                        "store_total": store_total,
+                    }
+                )
 
             return store_assignments
 
@@ -214,10 +238,12 @@ class OrderService:
 
             # Update user record
             await session.execute(
-                update(User).where(User.firebase_uid == user_id).values(
+                update(User)
+                .where(User.firebase_uid == user_id)
+                .values(
                     total_orders=new_total_orders,
                     lifetime_value=new_lifetime_value,
-                    last_order_at=datetime.now()
+                    last_order_at=datetime.now(),
                 )
             )
 
@@ -279,7 +305,7 @@ class OrderService:
                         product_id=item_data.product_id,
                         store_id=order_data.store_id,
                         quantity=item_data.quantity,
-                        session=session
+                        session=session,
                     )
 
                     price = product.base_price
@@ -313,26 +339,32 @@ class OrderService:
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 result = await session.execute(
-                    select(Order).options(selectinload(Order.items)).filter(Order.id == order_id)
+                    select(Order)
+                    .options(selectinload(Order.items))
+                    .filter(Order.id == order_id)
                 )
                 order = result.scalars().first()
 
                 if not order:
-                    raise ResourceNotFoundException(f"Order with ID {order_id} not found.")
+                    raise ResourceNotFoundException(
+                        f"Order with ID {order_id} not found."
+                    )
 
                 if order.status == status_update.status:
-                    return OrderSchema.model_validate(order) # No change
+                    return OrderSchema.model_validate(order)  # No change
 
                 # Logic for status transitions
                 if status_update.status == OrderStatus.CONFIRMED:
                     if order.status != OrderStatus.PENDING:
-                        raise ValidationException("Order must be PENDING to be CONFIRMED.")
+                        raise ValidationException(
+                            "Order must be PENDING to be CONFIRMED."
+                        )
                     for item in order.items:
                         await self.inventory_service.confirm_reservation(
                             product_id=item.product_id,
                             store_id=order.store_id,
                             quantity=item.quantity,
-                            session=session
+                            session=session,
                         )
                 elif status_update.status == OrderStatus.CANCELLED:
                     if order.status == OrderStatus.PENDING:
@@ -342,22 +374,26 @@ class OrderService:
                                 product_id=item.product_id,
                                 store_id=order.store_id,
                                 quantity=item.quantity,
-                                session=session
+                                session=session,
                             )
                     elif order.status == OrderStatus.CONFIRMED:
                         # This would be a more complex "cancellation" that might
                         # involve releasing a reservation. For now, let's assume
                         # only PENDING orders can be cancelled.
-                        raise ValidationException("Cannot cancel a CONFIRMED order directly. Process a return instead.")
+                        raise ValidationException(
+                            "Cannot cancel a CONFIRMED order directly. Process a return instead."
+                        )
                 elif status_update.status == OrderStatus.SHIPPED:
                     if order.status != OrderStatus.CONFIRMED:
-                        raise ValidationException("Order must be CONFIRMED to be SHIPPED.")
+                        raise ValidationException(
+                            "Order must be CONFIRMED to be SHIPPED."
+                        )
                     for item in order.items:
                         await self.inventory_service.fulfill_order(
                             product_id=item.product_id,
                             store_id=order.store_id,
                             quantity=item.quantity,
-                            session=session
+                            session=session,
                         )
 
                 order.status = status_update.status
@@ -373,16 +409,20 @@ class OrderService:
 
         # STEP 1: Validate checkout data OUTSIDE transaction
         async with AsyncSessionLocal() as validation_session:
-            validation_data = await CartService.validate_checkout_data(validation_session, user_id, checkout_data)
+            validation_data = await CartService.validate_checkout_data(
+                validation_session, user_id, checkout_data
+            )
 
         # STEP 2: Calculate pricing separately (no session needed)
-        pricing_data = await CartService.fetch_products_and_calculate_pricing(validation_data)
+        pricing_data = await CartService.fetch_products_and_calculate_pricing(
+            validation_data
+        )
 
         # STEP 3: Build cart groups with pricing (no DB needed)
         cart_groups = CartService.build_cart_groups(validation_data, pricing_data)
 
         # STEP 4: Calculate totals
-        total_amount = Decimal('0.00')
+        total_amount = Decimal("0.00")
         for group in cart_groups:
             total_amount += Decimal(str(group.cart_total))
 
@@ -396,7 +436,9 @@ class OrderService:
                 )
 
                 if not store_assignments:
-                    raise ValidationException("Could not find any stores to fulfill the order.")
+                    raise ValidationException(
+                        "Could not find any stores to fulfill the order."
+                    )
 
                 # STEP 7: Calculate delivery charges
                 delivery_charge = self.calculate_delivery_charge(store_assignments)
@@ -409,7 +451,7 @@ class OrderService:
                     user_id=user_id,
                     store_id=main_store_id,
                     total_amount=final_total,
-                    status=OrderStatus.PENDING
+                    status=OrderStatus.PENDING,
                 )
                 session.add(new_order)
                 await session.flush()
@@ -420,9 +462,13 @@ class OrderService:
                     for cart_group in cart_groups:
                         # Find the assigned store for this cart's items
                         assigned_store = next(
-                            (store for store in store_assignments
-                             if cart_group.cart_id in store.get("cart_ids", [cart_group.cart_id])),
-                            store_assignments[0]  # Fallback to main store
+                            (
+                                store
+                                for store in store_assignments
+                                if cart_group.cart_id
+                                in store.get("cart_ids", [cart_group.cart_id])
+                            ),
+                            store_assignments[0],  # Fallback to main store
                         )
 
                         for item in cart_group.items:
@@ -433,7 +479,7 @@ class OrderService:
                                 product_id=item.product_id,
                                 quantity=item.quantity,
                                 unit_price=Decimal(str(item.final_price)),
-                                total_price=Decimal(str(item.total_price))
+                                total_price=Decimal(str(item.total_price)),
                             )
                             session.add(order_item)
 
@@ -442,22 +488,25 @@ class OrderService:
                                 product_id=item.product_id,
                                 store_id=assigned_store["store_id"],
                                 quantity=item.quantity,
-                                session=session
+                                session=session,
                             )
 
                             # Track successful hold for potential rollback
-                            placed_holds.append({
-                                "product_id": item.product_id,
-                                "store_id": assigned_store["store_id"],
-                                "quantity": item.quantity
-                            })
+                            placed_holds.append(
+                                {
+                                    "product_id": item.product_id,
+                                    "store_id": assigned_store["store_id"],
+                                    "quantity": item.quantity,
+                                }
+                            )
 
                     # STEP 10: Update cart statuses to ordered
                     for cart_id in checkout_data.cart_ids:
                         await session.execute(
-                            update(Cart).where(Cart.id == cart_id).values(
-                                status=CartStatus.ORDERED,
-                                ordered_at=datetime.now()
+                            update(Cart)
+                            .where(Cart.id == cart_id)
+                            .values(
+                                status=CartStatus.ORDERED, ordered_at=datetime.now()
                             )
                         )
 
@@ -470,7 +519,7 @@ class OrderService:
                                 product_id=hold["product_id"],
                                 store_id=hold["store_id"],
                                 quantity=hold["quantity"],
-                                session=session
+                                session=session,
                             )
                         except Exception:
                             # Log but don't fail the rollback
@@ -482,7 +531,7 @@ class OrderService:
                 order_id=new_order.id,
                 total_amount=final_total,
                 user_id=user_id,
-                payment_method="card"
+                payment_method="card",
             )
 
             return CheckoutResponseSchema(
@@ -493,7 +542,7 @@ class OrderService:
                 created_at=new_order.created_at,
                 payment_url=payment_result["payment_url"],
                 payment_reference=payment_result["payment_reference"],
-                payment_expires_at=payment_result["expires_at"]
+                payment_expires_at=payment_result["expires_at"],
             )
 
     @handle_service_errors("processing payment callback")
@@ -501,7 +550,9 @@ class OrderService:
         """Process payment gateway callback and update order status"""
 
         # Process callback through payment service
-        callback_result = await self.payment_service.process_payment_callback(callback_data)
+        callback_result = await self.payment_service.process_payment_callback(
+            callback_data
+        )
 
         if callback_result["status"] == "error":
             return callback_result
@@ -520,7 +571,9 @@ class OrderService:
 
             # Update user statistics for successful payment
             try:
-                await self.update_user_statistics(updated_order.user_id, Decimal(str(updated_order.total_amount)))
+                await self.update_user_statistics(
+                    updated_order.user_id, Decimal(str(updated_order.total_amount))
+                )
             except Exception as e:
                 # Log but don't fail the payment processing
                 self._error_handler.logger.error(
@@ -532,7 +585,7 @@ class OrderService:
                 "order_id": order_id,
                 "order_status": updated_order.status,
                 "payment_reference": callback_result["payment_reference"],
-                "transaction_id": callback_result["transaction_id"]
+                "transaction_id": callback_result["transaction_id"],
             }
         else:
             # Payment failed - cancel order and release holds
@@ -543,5 +596,5 @@ class OrderService:
                 "status": "failed",
                 "order_id": order_id,
                 "order_status": updated_order.status,
-                "payment_reference": callback_result["payment_reference"]
+                "payment_reference": callback_result["payment_reference"],
             }

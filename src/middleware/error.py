@@ -1,6 +1,5 @@
-from fastapi import Request, HTTPException
+from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
-from src.shared.exceptions import *
 from src.shared.utils import get_logger
 
 logger = get_logger(__name__)

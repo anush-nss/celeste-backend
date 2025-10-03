@@ -12,6 +12,8 @@ dist/
 virtualenv/
 env/
 venv/
+.pytest_cache/
+.ruff_cache/
 
 # IDEs
 .idea/
@@ -32,3 +34,6 @@ service-account.json
 
 # Logs
 *.log
+
+# Claude files
+.claude/ 

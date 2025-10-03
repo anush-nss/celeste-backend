@@ -2,11 +2,13 @@
 Tiers-specific cache operations
 """
 
-from typing import Optional, List
-from src.shared.core_cache import core_cache
+from typing import List, Optional
+
 from src.config.cache_config import cache_config
-from src.shared.utils import get_logger
 from src.shared.cache_invalidation import cache_invalidation_manager
+from src.shared.core_cache import core_cache
+from src.shared.utils import get_logger
+from src.config.constants import Collections
 
 logger = get_logger(__name__)
 
@@ -101,7 +103,6 @@ class TiersCache:
             # Invalidate all tiers
             deleted += self.cache.delete_pattern(f"{self.prefix}:*")
 
-
         if deleted > 0:
             logger.info(
                 f"Invalidated {deleted} tiers cache keys for tier: {tier_id or tier_code or 'all'}"
@@ -113,6 +114,6 @@ class TiersCache:
 # Global tiers cache instance
 tiers_cache = TiersCache()
 
-# Register with invalidation manager
-from src.config.constants import Collections
-cache_invalidation_manager.register_domain_cache(Collections.CUSTOMER_TIERS, tiers_cache)
+cache_invalidation_manager.register_domain_cache(
+    Collections.CUSTOMER_TIERS, tiers_cache
+)

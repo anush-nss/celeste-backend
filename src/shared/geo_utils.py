@@ -2,14 +2,16 @@
 Geospatial utilities for location-based operations using geopy
 """
 
-from typing import Tuple, List, Optional, Union, Any
+from typing import Any, List, Tuple
+
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
+
 from src.config.constants import (
-    MIN_LATITUDE,
     MAX_LATITUDE,
-    MIN_LONGITUDE,
     MAX_LONGITUDE,
+    MIN_LATITUDE,
+    MIN_LONGITUDE,
 )
 
 
@@ -67,7 +69,11 @@ class GeoUtils:
         try:
             # Use Any type to avoid async/coroutine type issues
             location: Any = GeoUtils._geolocator.geocode(address)
-            if location is not None and hasattr(location, 'latitude') and hasattr(location, 'longitude'):
+            if (
+                location is not None
+                and hasattr(location, "latitude")
+                and hasattr(location, "longitude")
+            ):
                 return float(location.latitude), float(location.longitude)
             else:
                 raise ValueError(f"Could not geocode address: {address}")
@@ -92,10 +98,12 @@ class GeoUtils:
         try:
             # Use Any type to avoid async/coroutine type issues
             location: Any = GeoUtils._geolocator.reverse(f"{latitude}, {longitude}")
-            if location is not None and hasattr(location, 'address'):
+            if location is not None and hasattr(location, "address"):
                 return str(location.address)
             else:
-                raise ValueError(f"Could not reverse geocode coordinates: {latitude}, {longitude}")
+                raise ValueError(
+                    f"Could not reverse geocode coordinates: {latitude}, {longitude}"
+                )
         except Exception as e:
             raise ValueError(f"Reverse geocoding failed: {str(e)}")
 
@@ -116,15 +124,15 @@ class GeoUtils:
         """
         from geopy import Point
         from geopy.distance import distance
-        
+
         center = Point(latitude, longitude)
-        
+
         # Calculate boundary points
         north = distance(kilometers=radius_km).destination(center, bearing=0)
         south = distance(kilometers=radius_km).destination(center, bearing=180)
         east = distance(kilometers=radius_km).destination(center, bearing=90)
         west = distance(kilometers=radius_km).destination(center, bearing=270)
-        
+
         min_lat = south.latitude
         max_lat = north.latitude
         min_lon = west.longitude
@@ -153,7 +161,6 @@ class GeoUtils:
         return (MIN_LATITUDE <= latitude <= MAX_LATITUDE) and (
             MIN_LONGITUDE <= longitude <= MAX_LONGITUDE
         )
-
 
     @staticmethod
     def filter_by_radius(

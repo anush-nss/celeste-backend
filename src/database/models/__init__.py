@@ -1,20 +1,21 @@
 # Import all models to ensure they are registered with SQLAlchemy
 # This ensures all relationships can be resolved properly
 
-from .user import User
 from .address import Address
-from .cart import Cart, CartUser, CartItem
-from .category import Category
-from .product import Product, Tag, ProductTag
 from .associations import product_categories
-from .tier import Tier
-from .tier_benefit import Benefit, tier_benefits
-from .price_list import PriceList
-from .price_list_line import PriceListLine
-from .tier_price_list import TierPriceList
-from .store import Store
+from .cart import Cart, CartItem, CartUser
+from .category import Category
 from .inventory import Inventory
 from .order import Order, OrderItem
+from .price_list import PriceList
+from .price_list_line import PriceListLine
+from .product import Product, ProductTag, Tag
+from .store import Store
+from .store_tag import StoreTag
+from .tier import Tier
+from .tier_benefit import Benefit, tier_benefits
+from .tier_price_list import TierPriceList
+from .user import User
 
 __all__ = [
     "User",
@@ -34,6 +35,7 @@ __all__ = [
     "PriceListLine",
     "TierPriceList",
     "Store",
+    "StoreTag",
     "Inventory",
     "Order",
     "OrderItem",

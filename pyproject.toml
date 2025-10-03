@@ -1,24 +1,27 @@
-[tool.black]
-line-length = 88
-target-version = ['py312']
-include = '\.pyi?$'
-skip-string-normalization = false
-skip-magic-trailing-comma = false
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-  | node_modules
-  | venv
-  | service-account\.json
-)/
-'''
+[project]
+name = "celeste"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "asyncpg>=0.30.0",
+    "email-validator>=2.3.0",
+    "fastapi>=0.118.0",
+    "firebase-admin>=7.1.0",
+    "geopy>=2.4.1",
+    "gunicorn>=23.0.0",
+    "pydantic>=2.11.9",
+    "python-dotenv>=1.1.1",
+    "requests>=2.32.5",
+    "sqlalchemy>=2.0.43",
+    "uvicorn>=0.37.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.406",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "ruff>=0.13.3",
+]

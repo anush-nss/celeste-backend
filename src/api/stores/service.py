@@ -1,33 +1,33 @@
-from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import and_, text
+from sqlalchemy.exc import IntegrityError, ProgrammingError, StatementError
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import and_, text
-from src.api.tags.models import CreateTagSchema
-from src.database.connection import AsyncSessionLocal
-from src.database.models.store import Store
-from src.database.models.store_tag import StoreTag
-from src.database.models.product import Tag
-from src.shared.geo_utils import GeoUtils
-from src.api.tags.service import TagService
+
 from src.api.stores.models import (
-    StoreSchema,
     CreateStoreSchema,
-    UpdateStoreSchema,
-    StoreQuerySchema,
     StoreLocationResponse,
+    StoreQuerySchema,
+    StoreSchema,
+    UpdateStoreSchema,
 )
+from src.api.tags.models import CreateTagSchema
+from src.api.tags.service import TagService
 from src.config.constants import (
     DEFAULT_SEARCH_RADIUS_KM,
-    MAX_SEARCH_RADIUS_KM,
     DEFAULT_STORES_LIMIT,
+    MAX_SEARCH_RADIUS_KM,
     MAX_STORES_LIMIT,
 )
-from src.shared.exceptions import ValidationException, ConflictException, ResourceNotFoundException
+from src.database.connection import AsyncSessionLocal
+from src.database.models.product import Tag
+from src.database.models.store import Store
+from src.database.models.store_tag import StoreTag
 from src.shared.error_handler import ErrorHandler, handle_service_errors
-from sqlalchemy.exc import ProgrammingError, StatementError
+from src.shared.exceptions import ConflictException, ValidationException
+from src.shared.geo_utils import GeoUtils
 from src.shared.performance_utils import async_timer
-from sqlalchemy.exc import IntegrityError
 
 
 class StoreService:
@@ -37,12 +37,14 @@ class StoreService:
 
     def calculate_bounding_box(self, lat: float, lng: float, radius_km: float) -> dict:
         """Calculate bounding box for efficient spatial filtering"""
-        min_lat, max_lat, min_lng, max_lng = GeoUtils.get_bounding_box(lat, lng, radius_km)
+        min_lat, max_lat, min_lng, max_lng = GeoUtils.get_bounding_box(
+            lat, lng, radius_km
+        )
         return {
-            'lat_min': min_lat,
-            'lat_max': max_lat,
-            'lng_min': min_lng,
-            'lng_max': max_lng
+            "lat_min": min_lat,
+            "lat_max": max_lat,
+            "lng_min": min_lng,
+            "lng_max": max_lng,
         }
 
     async def get_all_stores(
@@ -68,14 +70,16 @@ class StoreService:
             # Handle new tag filtering
             tag_params = {}
             if query_params and query_params.tags:
-                tag_filter_result = self.tag_service.parse_tag_filters(query_params.tags)
-                if tag_filter_result['needs_joins'] and tag_filter_result['conditions']:
+                tag_filter_result = self.tag_service.parse_tag_filters(
+                    query_params.tags
+                )
+                if tag_filter_result["needs_joins"] and tag_filter_result["conditions"]:
                     # Join with store_tags and tags tables
                     query = query.join(Store.store_tags).join(StoreTag.tag)
                     # Add tag filter conditions
-                    tag_conditions_str = " OR ".join(tag_filter_result['conditions'])
+                    tag_conditions_str = " OR ".join(tag_filter_result["conditions"])
                     conditions.append(text(f"({tag_conditions_str})"))
-                    tag_params.update(tag_filter_result['params'])
+                    tag_params.update(tag_filter_result["params"])
 
             if conditions:
                 query = query.filter(and_(*conditions))
@@ -92,38 +96,44 @@ class StoreService:
             stores = []
             for store_model in store_models:
                 store_dict = {
-                    'id': store_model.id,
-                    'name': store_model.name,
-                    'description': store_model.description,
-                    'address': store_model.address,
-                    'latitude': store_model.latitude,
-                    'longitude': store_model.longitude,
-                    'email': store_model.email,
-                    'phone': store_model.phone,
-                    'is_active': store_model.is_active,
-                    'created_at': store_model.created_at,
-                    'updated_at': store_model.updated_at
+                    "id": store_model.id,
+                    "name": store_model.name,
+                    "description": store_model.description,
+                    "address": store_model.address,
+                    "latitude": store_model.latitude,
+                    "longitude": store_model.longitude,
+                    "email": store_model.email,
+                    "phone": store_model.phone,
+                    "is_active": store_model.is_active,
+                    "created_at": store_model.created_at,
+                    "updated_at": store_model.updated_at,
                 }
 
                 # Add distance if location provided
-                if (query_params and query_params.include_distance and
-                    query_params.latitude is not None and query_params.longitude is not None):
+                if (
+                    query_params
+                    and query_params.include_distance
+                    and query_params.latitude is not None
+                    and query_params.longitude is not None
+                ):
                     distance = GeoUtils.calculate_distance(
-                        query_params.latitude, query_params.longitude,
-                        store_model.latitude, store_model.longitude
+                        query_params.latitude,
+                        query_params.longitude,
+                        store_model.latitude,
+                        store_model.longitude,
                     )
-                    store_dict['distance'] = round(distance, 1)
+                    store_dict["distance"] = round(distance, 1)
 
                 # Add tags if requested
                 if query_params and query_params.include_tags:
-                    store_dict['store_tags'] = [
+                    store_dict["store_tags"] = [
                         {
-                            'id': st.tag.id,
-                            'tag_type': st.tag.tag_type,
-                            'name': st.tag.name,
-                            'slug': st.tag.slug,
-                            'description': st.tag.description,
-                            'value': st.value
+                            "id": st.tag.id,
+                            "tag_type": st.tag.tag_type,
+                            "name": st.tag.name,
+                            "slug": st.tag.slug,
+                            "description": st.tag.description,
+                            "value": st.value,
                         }
                         for st in store_model.store_tags
                     ]
@@ -153,13 +163,20 @@ class StoreService:
 
         async with AsyncSessionLocal() as session:
             # Calculate bounding box for pre-filtering
-            bbox = self.calculate_bounding_box(query_params.latitude, query_params.longitude, radius)
+            bbox = self.calculate_bounding_box(
+                query_params.latitude, query_params.longitude, radius
+            )
 
             # Build base query with bounding box
             query = select(Store).where(
-                Store.is_active == (query_params.is_active if query_params.is_active is not None else True),
-                Store.latitude.between(bbox['lat_min'], bbox['lat_max']),
-                Store.longitude.between(bbox['lng_min'], bbox['lng_max'])
+                Store.is_active
+                == (
+                    query_params.is_active
+                    if query_params.is_active is not None
+                    else True
+                ),
+                Store.latitude.between(bbox["lat_min"], bbox["lat_max"]),
+                Store.longitude.between(bbox["lng_min"], bbox["lng_max"]),
             )
 
             # Include tag relationships if needed
@@ -176,24 +193,30 @@ class StoreService:
                     raise ValidationException(detail="Tags parameter must be a list")
 
                 # Filter out invalid tag values
-                valid_tags = [tag for tag in query_params.tags if tag and isinstance(tag, str) and tag.strip()]
+                valid_tags = [
+                    tag
+                    for tag in query_params.tags
+                    if tag and isinstance(tag, str) and tag.strip()
+                ]
                 if not valid_tags:
-                    raise ValidationException(detail="At least one valid tag must be provided")
+                    raise ValidationException(
+                        detail="At least one valid tag must be provided"
+                    )
 
                 tag_filter_result = self.tag_service.parse_tag_filters(valid_tags)
-                if tag_filter_result['needs_joins'] and tag_filter_result['conditions']:
+                if tag_filter_result["needs_joins"] and tag_filter_result["conditions"]:
                     # Join with store_tags and tags tables
                     query = query.join(Store.store_tags).join(StoreTag.tag)
                     # Replace table alias 't' with 'tags' in conditions
                     tag_conditions = []
-                    for condition in tag_filter_result['conditions']:
+                    for condition in tag_filter_result["conditions"]:
                         # Replace 't.' with 'tags.' in SQL conditions
-                        fixed_condition = condition.replace('t.', 'tags.')
+                        fixed_condition = condition.replace("t.", "tags.")
                         tag_conditions.append(fixed_condition)
 
                     tag_conditions_str = " OR ".join(tag_conditions)
                     query = query.filter(text(f"({tag_conditions_str})"))
-                    tag_params.update(tag_filter_result['params'])
+                    tag_params.update(tag_filter_result["params"])
 
             # Execute query with error handling
             try:
@@ -201,29 +224,39 @@ class StoreService:
                 store_models = result.scalars().unique().all()
             except (ProgrammingError, StatementError) as e:
                 # Convert SQL errors to validation errors
-                error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
-                if 'missing FROM-clause entry' in error_msg or 'UndefinedTableError' in error_msg:
-                    raise ValidationException(detail="Invalid tag filter parameters provided")
-                elif 'syntax error' in error_msg.lower():
-                    raise ValidationException(detail="Invalid filter syntax in tag parameters")
+                error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+                if (
+                    "missing FROM-clause entry" in error_msg
+                    or "UndefinedTableError" in error_msg
+                ):
+                    raise ValidationException(
+                        detail="Invalid tag filter parameters provided"
+                    )
+                elif "syntax error" in error_msg.lower():
+                    raise ValidationException(
+                        detail="Invalid filter syntax in tag parameters"
+                    )
                 else:
-                    raise ValidationException(detail="Invalid query parameters provided")
+                    raise ValidationException(
+                        detail="Invalid query parameters provided"
+                    )
 
             # Calculate exact distances and filter by radius
             stores_with_distance = []
             for store_model in store_models:
                 distance = GeoUtils.calculate_distance(
-                    query_params.latitude, query_params.longitude,
-                    store_model.latitude, store_model.longitude
+                    query_params.latitude,
+                    query_params.longitude,
+                    store_model.latitude,
+                    store_model.longitude,
                 )
                 if distance <= radius:
-                    stores_with_distance.append({
-                        'store': store_model,
-                        'distance': distance
-                    })
+                    stores_with_distance.append(
+                        {"store": store_model, "distance": distance}
+                    )
 
             # Sort by distance and apply limit
-            stores_with_distance.sort(key=lambda x: x['distance'])
+            stores_with_distance.sort(key=lambda x: x["distance"])
             limit = query_params.limit or DEFAULT_STORES_LIMIT
             limit = min(limit, MAX_STORES_LIMIT)
             stores_with_distance = stores_with_distance[:limit]
@@ -231,35 +264,35 @@ class StoreService:
             # Convert to schemas
             stores = []
             for item in stores_with_distance:
-                store_model = item['store']
+                store_model = item["store"]
                 store_dict = {
-                    'id': store_model.id,
-                    'name': store_model.name,
-                    'description': store_model.description,
-                    'address': store_model.address,
-                    'latitude': store_model.latitude,
-                    'longitude': store_model.longitude,
-                    'email': store_model.email,
-                    'phone': store_model.phone,
-                    'is_active': store_model.is_active,
-                    'created_at': store_model.created_at,
-                    'updated_at': store_model.updated_at
+                    "id": store_model.id,
+                    "name": store_model.name,
+                    "description": store_model.description,
+                    "address": store_model.address,
+                    "latitude": store_model.latitude,
+                    "longitude": store_model.longitude,
+                    "email": store_model.email,
+                    "phone": store_model.phone,
+                    "is_active": store_model.is_active,
+                    "created_at": store_model.created_at,
+                    "updated_at": store_model.updated_at,
                 }
 
                 # Add distance
                 if query_params.include_distance:
-                    store_dict['distance'] = round(item['distance'], 1)
+                    store_dict["distance"] = round(item["distance"], 1)
 
                 # Add tags if requested
                 if query_params.include_tags:
-                    store_dict['store_tags'] = [
+                    store_dict["store_tags"] = [
                         {
-                            'id': st.tag.id,
-                            'tag_type': st.tag.tag_type,
-                            'name': st.tag.name,
-                            'slug': st.tag.slug,
-                            'description': st.tag.description,
-                            'value': st.value
+                            "id": st.tag.id,
+                            "tag_type": st.tag.tag_type,
+                            "name": st.tag.name,
+                            "slug": st.tag.slug,
+                            "description": st.tag.description,
+                            "value": st.value,
                         }
                         for st in store_model.store_tags
                     ]
@@ -267,7 +300,6 @@ class StoreService:
                 stores.append(StoreSchema(**store_dict))
 
             return [store.model_dump(mode="json") for store in stores]
-
 
     def _build_location_response(
         self,
@@ -294,7 +326,9 @@ class StoreService:
             returned=len(stores),
         )
 
-    async def get_store_by_id(self, store_id: int, include_tags: Optional[bool] = False) -> Optional[StoreSchema]:
+    async def get_store_by_id(
+        self, store_id: int, include_tags: Optional[bool] = False
+    ) -> Optional[StoreSchema]:
         """Get store by ID"""
         async with AsyncSessionLocal() as session:
             query = select(Store).filter(Store.id == store_id)
@@ -311,28 +345,28 @@ class StoreService:
                 return None
 
             store_dict = {
-                'id': store_model.id,
-                'name': store_model.name,
-                'description': store_model.description,
-                'address': store_model.address,
-                'latitude': store_model.latitude,
-                'longitude': store_model.longitude,
-                'email': store_model.email,
-                'phone': store_model.phone,
-                'is_active': store_model.is_active,
-                'created_at': store_model.created_at,
-                'updated_at': store_model.updated_at
+                "id": store_model.id,
+                "name": store_model.name,
+                "description": store_model.description,
+                "address": store_model.address,
+                "latitude": store_model.latitude,
+                "longitude": store_model.longitude,
+                "email": store_model.email,
+                "phone": store_model.phone,
+                "is_active": store_model.is_active,
+                "created_at": store_model.created_at,
+                "updated_at": store_model.updated_at,
             }
 
             if include_tags:
-                store_dict['store_tags'] = [
+                store_dict["store_tags"] = [
                     {
-                        'id': st.tag.id,
-                        'tag_type': st.tag.tag_type,
-                        'name': st.tag.name,
-                        'slug': st.tag.slug,
-                        'description': st.tag.description,
-                        'value': st.value
+                        "id": st.tag.id,
+                        "tag_type": st.tag.tag_type,
+                        "name": st.tag.name,
+                        "slug": st.tag.slug,
+                        "description": st.tag.description,
+                        "value": st.value,
                     }
                     for st in store_model.store_tags
                 ]
@@ -363,7 +397,7 @@ class StoreService:
                     longitude=store_data.longitude,
                     email=store_data.email,
                     phone=store_data.phone,
-                    is_active=store_data.is_active
+                    is_active=store_data.is_active,
                 )
 
                 session.add(new_store)
@@ -372,10 +406,7 @@ class StoreService:
                 # Add tag associations
                 if store_data.tag_ids:
                     for tag_id in store_data.tag_ids:
-                        store_tag = StoreTag(
-                            store_id=new_store.id,
-                            tag_id=tag_id
-                        )
+                        store_tag = StoreTag(store_id=new_store.id, tag_id=tag_id)
                         session.add(store_tag)
 
                 await session.commit()
@@ -393,17 +424,21 @@ class StoreService:
                     is_active=new_store.is_active,
                     created_at=new_store.created_at,
                     updated_at=new_store.updated_at,
-                    distance=None
+                    distance=None,
                 )
 
             except IntegrityError as e:
                 await session.rollback()
                 self._error_handler.logger.error(f"Failed to create store: {str(e)}")
-                raise ConflictException(detail="Store creation failed due to constraint violation")
+                raise ConflictException(
+                    detail="Store creation failed due to constraint violation"
+                )
             except Exception as e:
                 await session.rollback()
                 self._error_handler.logger.error(f"Failed to create store: {str(e)}")
-                raise ValidationException(detail="Failed to create store due to database error")
+                raise ValidationException(
+                    detail="Failed to create store due to database error"
+                )
 
     async def update_store(
         self, store_id: int, store_data: UpdateStoreSchema
@@ -421,7 +456,9 @@ class StoreService:
                     return None
 
                 # Update store fields
-                update_dict = store_data.model_dump(exclude_unset=True, exclude={'tag_ids'})
+                update_dict = store_data.model_dump(
+                    exclude_unset=True, exclude={"tag_ids"}
+                )
                 for field, value in update_dict.items():
                     setattr(store, field, value)
 
@@ -431,19 +468,22 @@ class StoreService:
                     await session.execute(
                         select(StoreTag).filter(StoreTag.store_id == store_id)
                     )
-                    existing_tags = (await session.execute(
-                        select(StoreTag).filter(StoreTag.store_id == store_id)
-                    )).scalars().all()
+                    existing_tags = (
+                        (
+                            await session.execute(
+                                select(StoreTag).filter(StoreTag.store_id == store_id)
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
 
                     for tag in existing_tags:
                         await session.delete(tag)
 
                     # Add new associations
                     for tag_id in store_data.tag_ids:
-                        store_tag = StoreTag(
-                            store_id=store_id,
-                            tag_id=tag_id
-                        )
+                        store_tag = StoreTag(store_id=store_id, tag_id=tag_id)
                         session.add(store_tag)
 
                 await session.commit()
@@ -461,7 +501,7 @@ class StoreService:
                     is_active=store.is_active,
                     created_at=store.created_at,
                     updated_at=store.updated_at,
-                    distance=None
+                    distance=None,
                 )
 
             except Exception as e:
@@ -472,9 +512,7 @@ class StoreService:
     async def delete_store(self, store_id: int) -> bool:
         """Delete a store"""
         async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Store).filter(Store.id == store_id)
-            )
+            result = await session.execute(select(Store).filter(Store.id == store_id))
             store = result.scalars().first()
 
             if not store:
@@ -485,14 +523,21 @@ class StoreService:
             return True
 
     # Tag management methods
-    async def create_store_tag(self, name: str, tag_type_suffix: str, slug: Optional[str] = None, description: Optional[str] = None):
+    async def create_store_tag(
+        self,
+        name: str,
+        tag_type_suffix: str,
+        slug: Optional[str] = None,
+        description: Optional[str] = None,
+    ):
         """Create a new store tag with specific type (e.g., 'features', 'amenities')"""
         from src.api.tags.models import CreateTagSchema
+
         tag_data = CreateTagSchema(
             tag_type=tag_type_suffix,  # Will become "store_{tag_type_suffix}"
             name=name,
             slug=slug,
-            description=description
+            description=description,
         )
         return await self.tag_service.create_tag(tag_data)
 
@@ -500,11 +545,15 @@ class StoreService:
         """Create multiple new store tags with specific type (e.g., 'features', 'amenities')"""
         return await self.tag_service.create_tags(tags_data)
 
-    async def get_store_tags(self, is_active: bool = True, tag_type_suffix: Optional[str] = None):
+    async def get_store_tags(
+        self, is_active: bool = True, tag_type_suffix: Optional[str] = None
+    ):
         """Get store tags, optionally filtered by type suffix (e.g., 'features', 'amenities')"""
         return await self.tag_service.get_tags_by_type(is_active, tag_type_suffix)
 
-    async def assign_tag_to_store(self, store_id: int, tag_id: int, value: Optional[str] = None):
+    async def assign_tag_to_store(
+        self, store_id: int, tag_id: int, value: Optional[str] = None
+    ):
         """Assign a tag to a store using shared TagService"""
         await self.tag_service.assign_tag_to_entity(store_id, tag_id, value)
 

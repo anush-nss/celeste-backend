@@ -1,16 +1,17 @@
-from typing import Optional, List, Dict, Any, Sequence, Union
+import asyncio
+from typing import Any, Dict, List, Optional, Sequence
+
 from sqlalchemy import text
-from src.database.connection import AsyncSessionLocal
+
 from src.api.products.models import (
-    ProductQuerySchema,
     EnhancedProductSchema,
     PaginatedProductsResponse,
+    ProductQuerySchema,
 )
 from src.api.tags.service import TagService
-from src.shared.error_handler import ErrorHandler
+from src.database.connection import AsyncSessionLocal
 from src.shared.cache_service import cache_service
-import asyncio
-import json
+from src.shared.error_handler import ErrorHandler
 
 
 class ProductQueryService:
@@ -39,7 +40,9 @@ class ProductQueryService:
 
         async with AsyncSessionLocal() as session:
             # Build comprehensive SQL query with joins
-            sql_query, params = self._build_comprehensive_sql(query_params, customer_tier, store_ids)
+            sql_query, params = self._build_comprehensive_sql(
+                query_params, customer_tier, store_ids
+            )
 
             # Execute single query
             result = await session.execute(text(sql_query), params)
@@ -49,8 +52,7 @@ class ProductQueryService:
             products, pagination = await self._process_results_fast(rows, query_params)
 
             response = PaginatedProductsResponse(
-                products=products,
-                pagination=pagination
+                products=products, pagination=pagination
             )
 
             # Cache result for 5 minutes
@@ -62,44 +64,60 @@ class ProductQueryService:
         self,
         query_params: ProductQuerySchema,
         customer_tier: Optional[int] = None,
-        store_ids: Optional[List[int]] = None
+        store_ids: Optional[List[int]] = None,
     ) -> tuple[str, Dict[str, Any]]:
         """Build comprehensive SQL query with integrated joins and filtering"""
 
         # Base SELECT with all needed fields
         select_fields = [
-            "p.id", "p.ref", "p.name", "p.description", "p.brand",
-            "p.base_price", "p.unit_measure", "p.image_urls",
-            "p.ecommerce_category_id", "p.ecommerce_subcategory_id",
-            "p.created_at", "p.updated_at"
+            "p.id",
+            "p.ref",
+            "p.name",
+            "p.description",
+            "p.brand",
+            "p.base_price",
+            "p.unit_measure",
+            "p.image_urls",
+            "p.ecommerce_category_id",
+            "p.ecommerce_subcategory_id",
+            "p.created_at",
+            "p.updated_at",
         ]
 
         # Add category fields if requested
         if query_params.include_categories:
-            select_fields.extend([
-                "STRING_AGG(DISTINCT CONCAT(c.id, '|', c.name, '|', COALESCE(c.description, ''), '|', COALESCE(c.sort_order::text, ''), '|', COALESCE(c.image_url, ''), '|', COALESCE(c.parent_category_id::text, '')), ';') as categories_data"
-            ])
+            select_fields.extend(
+                [
+                    "STRING_AGG(DISTINCT CONCAT(c.id, '|', c.name, '|', COALESCE(c.description, ''), '|', COALESCE(c.sort_order::text, ''), '|', COALESCE(c.image_url, ''), '|', COALESCE(c.parent_category_id::text, '')), ';') as categories_data"
+                ]
+            )
 
         # Add tag fields if requested
         if query_params.include_tags:
-            select_fields.extend([
-                "STRING_AGG(DISTINCT CONCAT(t.id::text, '|', COALESCE(t.tag_type, ''), '|', COALESCE(t.name, ''), '|', COALESCE(t.slug, ''), '|', COALESCE(t.description, ''), '|', COALESCE(pt.value, '')), ';') as tags_data"
-            ])
+            select_fields.extend(
+                [
+                    "STRING_AGG(DISTINCT CONCAT(t.id::text, '|', COALESCE(t.tag_type, ''), '|', COALESCE(t.name, ''), '|', COALESCE(t.slug, ''), '|', COALESCE(t.description, ''), '|', COALESCE(pt.value, '')), ';') as tags_data"
+                ]
+            )
 
         # Add inventory fields if requested
         if query_params.include_inventory and store_ids:
-            select_fields.extend([
-                "STRING_AGG(DISTINCT CONCAT(inv.store_id, '|', inv.quantity_available, '|', inv.quantity_on_hold, '|', inv.quantity_reserved), ';') as inventory_data"
-            ])
+            select_fields.extend(
+                [
+                    "STRING_AGG(DISTINCT CONCAT(inv.store_id, '|', inv.quantity_available, '|', inv.quantity_on_hold, '|', inv.quantity_reserved), ';') as inventory_data"
+                ]
+            )
 
         # Add pricing fields if requested
         if query_params.include_pricing and customer_tier:
-            select_fields.extend([
-                "COALESCE(pricing.final_price, p.base_price) as final_price",
-                "COALESCE(pricing.savings, 0) as savings",
-                "COALESCE(pricing.discount_percentage, 0) as discount_percentage",
-                "pricing.price_list_names"
-            ])
+            select_fields.extend(
+                [
+                    "COALESCE(pricing.final_price, p.base_price) as final_price",
+                    "COALESCE(pricing.savings, 0) as savings",
+                    "COALESCE(pricing.discount_percentage, 0) as discount_percentage",
+                    "pricing.price_list_names",
+                ]
+            )
 
         # Build FROM clause with optimal JOINs
         joins = ["FROM products p"]
@@ -113,11 +131,13 @@ class ProductQueryService:
             joins.append("LEFT JOIN tags t ON pt.tag_id = t.id")
 
         if query_params.include_inventory and store_ids:
-            joins.append(f"LEFT JOIN inventory inv ON p.id = inv.product_id AND inv.store_id = ANY(ARRAY{store_ids})")
+            joins.append(
+                f"LEFT JOIN inventory inv ON p.id = inv.product_id AND inv.store_id = ANY(ARRAY{store_ids})"
+            )
 
         if query_params.include_pricing and customer_tier:
             # Integrated pricing calculation subquery
-            pricing_cte = f"""
+            pricing_cte = """
             WITH pricing AS (
                 SELECT
                     p.id as product_id,
@@ -173,24 +193,32 @@ class ProductQueryService:
             )
             """
             joins.insert(0, pricing_cte)
-            joins.append("LEFT JOIN pricing ON p.id = pricing.product_id AND pricing.rn = 1")
+            joins.append(
+                "LEFT JOIN pricing ON p.id = pricing.product_id AND pricing.rn = 1"
+            )
 
         # Build WHERE conditions
         where_conditions = []
-        params: Dict[str, Any] = {"customer_tier": customer_tier} if customer_tier else {}
+        params: Dict[str, Any] = (
+            {"customer_tier": customer_tier} if customer_tier else {}
+        )
 
         if query_params.category_ids:
-            where_conditions.append("p.id IN (SELECT product_id FROM product_categories WHERE category_id = ANY(:category_ids))")
+            where_conditions.append(
+                "p.id IN (SELECT product_id FROM product_categories WHERE category_id = ANY(:category_ids))"
+            )
             params["category_ids"] = list(query_params.category_ids)
 
         if query_params.tags:
             tag_filter_result = self.tag_service.parse_tag_filters(query_params.tags)
-            if tag_filter_result['conditions']:
+            if tag_filter_result["conditions"]:
                 # Use the conditions generated by tag service directly
-                tag_conditions = " OR ".join(tag_filter_result['conditions'])
+                tag_conditions = " OR ".join(tag_filter_result["conditions"])
                 if tag_conditions:
-                    where_conditions.append(f"p.id IN (SELECT DISTINCT pt.product_id FROM product_tags pt JOIN tags t ON pt.tag_id = t.id WHERE {tag_conditions})")
-                    params.update(tag_filter_result['params'])
+                    where_conditions.append(
+                        f"p.id IN (SELECT DISTINCT pt.product_id FROM product_tags pt JOIN tags t ON pt.tag_id = t.id WHERE {tag_conditions})"
+                    )
+                    params.update(tag_filter_result["params"])
 
         if query_params.min_price is not None:
             where_conditions.append("p.base_price >= :min_price")
@@ -204,24 +232,30 @@ class ProductQueryService:
             where_conditions.append("p.id > :cursor")
             params["cursor"] = query_params.cursor
 
-        if query_params.only_discounted and query_params.include_pricing and customer_tier:
+        if (
+            query_params.only_discounted
+            and query_params.include_pricing
+            and customer_tier
+        ):
             where_conditions.append("pricing.savings > 0")
 
         # Build complete query
-        where_clause = f"WHERE {' AND '.join(where_conditions)}" if where_conditions else ""
+        where_clause = (
+            f"WHERE {' AND '.join(where_conditions)}" if where_conditions else ""
+        )
 
         limit = query_params.limit if query_params.limit is not None else 20
         params["limit"] = limit + 1  # +1 to check if more exist
 
         sql_query = f"""
-        {joins[0] if 'WITH' in joins[0] else ''}
-        SELECT {', '.join(select_fields)}
-        {' '.join(joins[1:] if 'WITH' in joins[0] else joins)}
+        {joins[0] if "WITH" in joins[0] else ""}
+        SELECT {", ".join(select_fields)}
+        {" ".join(joins[1:] if "WITH" in joins[0] else joins)}
         {where_clause}
         GROUP BY p.id, p.ref, p.name, p.description, p.brand, p.base_price,
                  p.unit_measure, p.image_urls, p.ecommerce_category_id,
                  p.ecommerce_subcategory_id, p.created_at, p.updated_at
-                 {', pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names' if query_params.include_pricing and customer_tier else ''}
+                 {", pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names" if query_params.include_pricing and customer_tier else ""}
         ORDER BY p.id
         LIMIT :limit
         """
@@ -229,9 +263,7 @@ class ProductQueryService:
         return sql_query, params
 
     async def _process_results_fast(
-        self,
-        rows: Sequence[Any],
-        query_params: ProductQuerySchema
+        self, rows: Sequence[Any], query_params: ProductQuerySchema
     ) -> tuple[List[EnhancedProductSchema], Dict]:
         """Fast result processing without ORM overhead"""
 
@@ -254,7 +286,7 @@ class ProductQueryService:
         tasks = []
 
         for i in range(0, len(actual_rows), batch_size):
-            batch = actual_rows[i:i + batch_size]
+            batch = actual_rows[i : i + batch_size]
             task = self._process_row_batch(batch, query_params)
             tasks.append(task)
 
@@ -277,9 +309,7 @@ class ProductQueryService:
         return products, pagination
 
     async def _process_row_batch(
-        self,
-        rows: Sequence[Any],
-        query_params: ProductQuerySchema
+        self, rows: Sequence[Any], query_params: ProductQuerySchema
     ) -> List[EnhancedProductSchema]:
         """Process a batch of rows efficiently"""
         products = []
@@ -302,25 +332,37 @@ class ProductQueryService:
                 "categories": [],
                 "product_tags": [],
                 "pricing": None,
-                "inventory": None
+                "inventory": None,
             }
 
             # Parse categories efficiently
-            if query_params.include_categories and hasattr(row, 'categories_data') and row.categories_data:
+            if (
+                query_params.include_categories
+                and hasattr(row, "categories_data")
+                and row.categories_data
+            ):
                 categories = []
-                for cat_data in row.categories_data.split(';'):
+                for cat_data in row.categories_data.split(";"):
                     if cat_data:
-                        parts = cat_data.split('|')
+                        parts = cat_data.split("|")
                         if len(parts) >= 6:
                             try:
-                                categories.append({
-                                    "id": int(parts[0]) if parts[0].strip() else None,
-                                    "name": parts[1],
-                                    "description": parts[2] or None,
-                                    "sort_order": int(parts[3]) if parts[3].strip() else None,
-                                    "image_url": parts[4] or None,
-                                    "parent_category_id": int(parts[5]) if parts[5].strip() else None
-                                })
+                                categories.append(
+                                    {
+                                        "id": int(parts[0])
+                                        if parts[0].strip()
+                                        else None,
+                                        "name": parts[1],
+                                        "description": parts[2] or None,
+                                        "sort_order": int(parts[3])
+                                        if parts[3].strip()
+                                        else None,
+                                        "image_url": parts[4] or None,
+                                        "parent_category_id": int(parts[5])
+                                        if parts[5].strip()
+                                        else None,
+                                    }
+                                )
                             except (ValueError, IndexError):
                                 # Skip malformed category data
                                 continue
@@ -329,69 +371,102 @@ class ProductQueryService:
             # Parse tags efficiently
             if query_params.include_tags:
                 tags = []
-                if hasattr(row, 'tags_data') and row.tags_data:
-                    for tag_data in row.tags_data.split(';'):
+                if hasattr(row, "tags_data") and row.tags_data:
+                    for tag_data in row.tags_data.split(";"):
                         if tag_data.strip():  # Only process non-empty tag data
-                            parts = tag_data.split('|')
+                            parts = tag_data.split("|")
                             if len(parts) >= 6:
                                 try:
                                     # Skip entries where essential fields are empty
                                     if not parts[0].strip():  # Skip if no tag ID
                                         continue
-                                    tags.append({
-                                        "id": int(parts[0].strip()),
-                                        "tag_type": parts[1],
-                                        "name": parts[2],
-                                        "slug": parts[3],
-                                        "description": parts[4] or None,
-                                        "value": parts[5] or None
-                                    })
+                                    tags.append(
+                                        {
+                                            "id": int(parts[0].strip()),
+                                            "tag_type": parts[1],
+                                            "name": parts[2],
+                                            "slug": parts[3],
+                                            "description": parts[4] or None,
+                                            "value": parts[5] or None,
+                                        }
+                                    )
                                 except (ValueError, IndexError):
                                     # Skip malformed tag data
                                     continue
                 product_data["product_tags"] = tags
 
             # Parse inventory efficiently
-            if query_params.include_inventory and hasattr(row, 'inventory_data') and row.inventory_data:
+            if (
+                query_params.include_inventory
+                and hasattr(row, "inventory_data")
+                and row.inventory_data
+            ):
                 inventory = []
-                for inv_data in row.inventory_data.split(';'):
+                for inv_data in row.inventory_data.split(";"):
                     if inv_data:
-                        parts = inv_data.split('|')
+                        parts = inv_data.split("|")
                         if len(parts) >= 4:
                             try:
                                 store_id = int(parts[0]) if parts[0].strip() else None
-                                quantity_available = int(parts[1]) if parts[1].strip() else 0
-                                quantity_on_hold = int(parts[2]) if parts[2].strip() else 0
-                                quantity_reserved = int(parts[3]) if parts[3].strip() else 0
+                                quantity_available = (
+                                    int(parts[1]) if parts[1].strip() else 0
+                                )
+                                quantity_on_hold = (
+                                    int(parts[2]) if parts[2].strip() else 0
+                                )
+                                quantity_reserved = (
+                                    int(parts[3]) if parts[3].strip() else 0
+                                )
 
                                 if store_id is not None:
-                                    inventory.append({
-                                        "store_id": store_id,
-                                        "in_stock": quantity_available > 0,
-                                        "quantity_available": quantity_available,
-                                        "quantity_on_hold": quantity_on_hold,
-                                        "quantity_reserved": quantity_reserved
-                                    })
+                                    inventory.append(
+                                        {
+                                            "store_id": store_id,
+                                            "in_stock": quantity_available > 0,
+                                            "quantity_available": quantity_available,
+                                            "quantity_on_hold": quantity_on_hold,
+                                            "quantity_reserved": quantity_reserved,
+                                        }
+                                    )
                             except (ValueError, IndexError):
                                 # Skip malformed inventory data
                                 continue
                 product_data["inventory"] = inventory
 
             # Parse pricing efficiently
-            if query_params.include_pricing and hasattr(row, 'final_price'):
+            if query_params.include_pricing and hasattr(row, "final_price"):
                 try:
-                    base_price = float(row.base_price) if row.base_price is not None else 0.0
-                    final_price = float(row.final_price) if row.final_price is not None else base_price
-                    savings = float(row.savings) if hasattr(row, 'savings') and row.savings is not None else 0.0
-                    discount_percentage = float(row.discount_percentage) if hasattr(row, 'discount_percentage') and row.discount_percentage is not None else 0.0
-                    price_list_names = row.price_list_names.split(';') if hasattr(row, 'price_list_names') and row.price_list_names else []
+                    base_price = (
+                        float(row.base_price) if row.base_price is not None else 0.0
+                    )
+                    final_price = (
+                        float(row.final_price)
+                        if row.final_price is not None
+                        else base_price
+                    )
+                    savings = (
+                        float(row.savings)
+                        if hasattr(row, "savings") and row.savings is not None
+                        else 0.0
+                    )
+                    discount_percentage = (
+                        float(row.discount_percentage)
+                        if hasattr(row, "discount_percentage")
+                        and row.discount_percentage is not None
+                        else 0.0
+                    )
+                    price_list_names = (
+                        row.price_list_names.split(";")
+                        if hasattr(row, "price_list_names") and row.price_list_names
+                        else []
+                    )
 
                     product_data["pricing"] = {
                         "base_price": base_price,
                         "final_price": final_price,
                         "discount_applied": savings,
                         "discount_percentage": discount_percentage,
-                        "applied_price_lists": price_list_names
+                        "applied_price_lists": price_list_names,
                     }
                 except (ValueError, TypeError):
                     # Skip pricing if data is malformed
@@ -405,11 +480,11 @@ class ProductQueryService:
         self,
         query_params: ProductQuerySchema,
         customer_tier: Optional[int],
-        store_ids: Optional[List[int]]
+        store_ids: Optional[List[int]],
     ) -> str:
         """Generate cache key for query parameters"""
         key_parts = [
-            f"products_v2",
+            "products_v2",
             f"limit_{query_params.limit or 20}",
             f"cursor_{query_params.cursor or 0}",
             f"pricing_{query_params.include_pricing}",
@@ -443,7 +518,7 @@ class ProductQueryService:
                 query_params=query_params,
                 customer_tier=customer_tier,
                 store_ids=store_ids,
-                quantity=quantity
+                quantity=quantity,
             )
 
             # Execute query
@@ -474,7 +549,7 @@ class ProductQueryService:
                 query_params=query_params,
                 customer_tier=customer_tier,
                 store_ids=store_ids,
-                quantity=quantity
+                quantity=quantity,
             )
 
             # Execute query
@@ -501,38 +576,54 @@ class ProductQueryService:
 
         # Base SELECT with all needed fields
         select_fields = [
-            "p.id", "p.ref", "p.name", "p.description", "p.brand",
-            "p.base_price", "p.unit_measure", "p.image_urls",
-            "p.ecommerce_category_id", "p.ecommerce_subcategory_id",
-            "p.created_at", "p.updated_at"
+            "p.id",
+            "p.ref",
+            "p.name",
+            "p.description",
+            "p.brand",
+            "p.base_price",
+            "p.unit_measure",
+            "p.image_urls",
+            "p.ecommerce_category_id",
+            "p.ecommerce_subcategory_id",
+            "p.created_at",
+            "p.updated_at",
         ]
 
         # Add category fields if requested
         if query_params.include_categories:
-            select_fields.extend([
-                "STRING_AGG(DISTINCT CONCAT(c.id, '|', c.name, '|', COALESCE(c.description, ''), '|', COALESCE(c.sort_order::text, ''), '|', COALESCE(c.image_url, ''), '|', COALESCE(c.parent_category_id::text, '')), ';') as categories_data"
-            ])
+            select_fields.extend(
+                [
+                    "STRING_AGG(DISTINCT CONCAT(c.id, '|', c.name, '|', COALESCE(c.description, ''), '|', COALESCE(c.sort_order::text, ''), '|', COALESCE(c.image_url, ''), '|', COALESCE(c.parent_category_id::text, '')), ';') as categories_data"
+                ]
+            )
 
         # Add tag fields if requested
         if query_params.include_tags:
-            select_fields.extend([
-                "STRING_AGG(DISTINCT CONCAT(t.id::text, '|', COALESCE(t.tag_type, ''), '|', COALESCE(t.name, ''), '|', COALESCE(t.slug, ''), '|', COALESCE(t.description, ''), '|', COALESCE(pt.value, '')), ';') as tags_data"
-            ])
+            select_fields.extend(
+                [
+                    "STRING_AGG(DISTINCT CONCAT(t.id::text, '|', COALESCE(t.tag_type, ''), '|', COALESCE(t.name, ''), '|', COALESCE(t.slug, ''), '|', COALESCE(t.description, ''), '|', COALESCE(pt.value, '')), ';') as tags_data"
+                ]
+            )
 
         # Add inventory fields if requested
         if query_params.include_inventory and store_ids:
-            select_fields.extend([
-                "STRING_AGG(DISTINCT CONCAT(inv.store_id, '|', inv.quantity_available, '|', inv.quantity_on_hold, '|', inv.quantity_reserved), ';') as inventory_data"
-            ])
+            select_fields.extend(
+                [
+                    "STRING_AGG(DISTINCT CONCAT(inv.store_id, '|', inv.quantity_available, '|', inv.quantity_on_hold, '|', inv.quantity_reserved), ';') as inventory_data"
+                ]
+            )
 
         # Add pricing fields if requested
         if query_params.include_pricing and customer_tier:
-            select_fields.extend([
-                "COALESCE(pricing.final_price, p.base_price) as final_price",
-                "COALESCE(pricing.savings, 0) as savings",
-                "COALESCE(pricing.discount_percentage, 0) as discount_percentage",
-                "pricing.price_list_names"
-            ])
+            select_fields.extend(
+                [
+                    "COALESCE(pricing.final_price, p.base_price) as final_price",
+                    "COALESCE(pricing.savings, 0) as savings",
+                    "COALESCE(pricing.discount_percentage, 0) as discount_percentage",
+                    "pricing.price_list_names",
+                ]
+            )
 
         # Build FROM clause with optimal JOINs
         joins = ["FROM products p"]
@@ -546,11 +637,13 @@ class ProductQueryService:
             joins.append("LEFT JOIN tags t ON pt.tag_id = t.id")
 
         if query_params.include_inventory and store_ids:
-            joins.append(f"LEFT JOIN inventory inv ON p.id = inv.product_id AND inv.store_id = ANY(ARRAY{store_ids})")
+            joins.append(
+                f"LEFT JOIN inventory inv ON p.id = inv.product_id AND inv.store_id = ANY(ARRAY{store_ids})"
+            )
 
         if query_params.include_pricing and customer_tier:
             # Use same pricing CTE as bulk query
-            pricing_cte = f"""
+            pricing_cte = """
             WITH pricing AS (
                 SELECT
                     p.id as product_id,
@@ -606,14 +699,17 @@ class ProductQueryService:
             )
             """
             joins.insert(0, pricing_cte)
-            joins.append("LEFT JOIN pricing ON p.id = pricing.product_id AND pricing.rn = 1")
+            joins.append(
+                "LEFT JOIN pricing ON p.id = pricing.product_id AND pricing.rn = 1"
+            )
 
         # Build WHERE conditions for single product
         where_conditions = []
-        params: Dict[str, Any] = {
-            "customer_tier": customer_tier,
-            "quantity": quantity
-        } if customer_tier else {"quantity": quantity}
+        params: Dict[str, Any] = (
+            {"customer_tier": customer_tier, "quantity": quantity}
+            if customer_tier
+            else {"quantity": quantity}
+        )
 
         # Add product filter (ID or ref)
         if product_id is not None:
@@ -624,25 +720,25 @@ class ProductQueryService:
             params["product_ref"] = product_ref
 
         # Build complete query
-        where_clause = f"WHERE {' AND '.join(where_conditions)}" if where_conditions else ""
+        where_clause = (
+            f"WHERE {' AND '.join(where_conditions)}" if where_conditions else ""
+        )
 
         sql_query = f"""
-        {joins[0] if 'WITH' in joins[0] else ''}
-        SELECT {', '.join(select_fields)}
-        {' '.join(joins[1:] if 'WITH' in joins[0] else joins)}
+        {joins[0] if "WITH" in joins[0] else ""}
+        SELECT {", ".join(select_fields)}
+        {" ".join(joins[1:] if "WITH" in joins[0] else joins)}
         {where_clause}
         GROUP BY p.id, p.ref, p.name, p.description, p.brand, p.base_price,
                  p.unit_measure, p.image_urls, p.ecommerce_category_id,
                  p.ecommerce_subcategory_id, p.created_at, p.updated_at
-                 {', pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names' if query_params.include_pricing and customer_tier else ''}
+                 {", pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names" if query_params.include_pricing and customer_tier else ""}
         """
 
         return sql_query, params
 
     async def _process_single_row(
-        self,
-        row: Any,
-        query_params: ProductQuerySchema
+        self, row: Any, query_params: ProductQuerySchema
     ) -> List[EnhancedProductSchema]:
         """Process single row result using same logic as bulk processing"""
         return await self._process_row_batch([row], query_params)
@@ -674,8 +770,7 @@ class ProductQueryService:
             """
 
             result = await session.execute(
-                text(recent_products_query),
-                {"user_id": user_id, "limit": limit}
+                text(recent_products_query), {"user_id": user_id, "limit": limit}
             )
             product_rows = result.fetchall()
 
@@ -704,12 +799,22 @@ class ProductQueryService:
 
             # Step 4: Process results using existing logic
             from src.api.products.models import ProductQuerySchema
+
             query_params = ProductQuerySchema(
                 limit=limit,
+                cursor=None,
+                store_id=store_ids,
                 include_pricing=include_pricing,
+                include_inventory=include_inventory,
                 include_categories=include_categories,
                 include_tags=include_tags,
-                include_inventory=include_inventory,
+                category_ids=None,
+                tags=None,
+                min_price=None,
+                max_price=None,
+                only_discounted=False,
+                latitude=None,
+                longitude=None,
             )
 
             products = await self._process_row_batch(rows, query_params)
@@ -734,38 +839,54 @@ class ProductQueryService:
 
         # Base SELECT with all needed fields
         select_fields = [
-            "p.id", "p.ref", "p.name", "p.description", "p.brand",
-            "p.base_price", "p.unit_measure", "p.image_urls",
-            "p.ecommerce_category_id", "p.ecommerce_subcategory_id",
-            "p.created_at", "p.updated_at"
+            "p.id",
+            "p.ref",
+            "p.name",
+            "p.description",
+            "p.brand",
+            "p.base_price",
+            "p.unit_measure",
+            "p.image_urls",
+            "p.ecommerce_category_id",
+            "p.ecommerce_subcategory_id",
+            "p.created_at",
+            "p.updated_at",
         ]
 
         # Add category fields if requested
         if include_categories:
-            select_fields.extend([
-                "STRING_AGG(DISTINCT CONCAT(c.id, '|', c.name, '|', COALESCE(c.description, ''), '|', COALESCE(c.sort_order::text, ''), '|', COALESCE(c.image_url, ''), '|', COALESCE(c.parent_category_id::text, '')), ';') as categories_data"
-            ])
+            select_fields.extend(
+                [
+                    "STRING_AGG(DISTINCT CONCAT(c.id, '|', c.name, '|', COALESCE(c.description, ''), '|', COALESCE(c.sort_order::text, ''), '|', COALESCE(c.image_url, ''), '|', COALESCE(c.parent_category_id::text, '')), ';') as categories_data"
+                ]
+            )
 
         # Add tag fields if requested
         if include_tags:
-            select_fields.extend([
-                "STRING_AGG(DISTINCT CONCAT(t.id::text, '|', COALESCE(t.tag_type, ''), '|', COALESCE(t.name, ''), '|', COALESCE(t.slug, ''), '|', COALESCE(t.description, ''), '|', COALESCE(pt.value, '')), ';') as tags_data"
-            ])
+            select_fields.extend(
+                [
+                    "STRING_AGG(DISTINCT CONCAT(t.id::text, '|', COALESCE(t.tag_type, ''), '|', COALESCE(t.name, ''), '|', COALESCE(t.slug, ''), '|', COALESCE(t.description, ''), '|', COALESCE(pt.value, '')), ';') as tags_data"
+                ]
+            )
 
         # Add inventory fields if requested
         if include_inventory and store_ids:
-            select_fields.extend([
-                "STRING_AGG(DISTINCT CONCAT(inv.store_id, '|', inv.quantity_available, '|', inv.quantity_on_hold, '|', inv.quantity_reserved), ';') as inventory_data"
-            ])
+            select_fields.extend(
+                [
+                    "STRING_AGG(DISTINCT CONCAT(inv.store_id, '|', inv.quantity_available, '|', inv.quantity_on_hold, '|', inv.quantity_reserved), ';') as inventory_data"
+                ]
+            )
 
         # Add pricing fields if requested
         if include_pricing and customer_tier:
-            select_fields.extend([
-                "COALESCE(pricing.final_price, p.base_price) as final_price",
-                "COALESCE(pricing.savings, 0) as savings",
-                "COALESCE(pricing.discount_percentage, 0) as discount_percentage",
-                "pricing.price_list_names"
-            ])
+            select_fields.extend(
+                [
+                    "COALESCE(pricing.final_price, p.base_price) as final_price",
+                    "COALESCE(pricing.savings, 0) as savings",
+                    "COALESCE(pricing.discount_percentage, 0) as discount_percentage",
+                    "pricing.price_list_names",
+                ]
+            )
 
         # Build FROM clause with optimal JOINs
         joins = ["FROM products p"]
@@ -779,11 +900,13 @@ class ProductQueryService:
             joins.append("LEFT JOIN tags t ON pt.tag_id = t.id")
 
         if include_inventory and store_ids:
-            joins.append(f"LEFT JOIN inventory inv ON p.id = inv.product_id AND inv.store_id = ANY(ARRAY{store_ids})")
+            joins.append(
+                f"LEFT JOIN inventory inv ON p.id = inv.product_id AND inv.store_id = ANY(ARRAY{store_ids})"
+            )
 
         if include_pricing and customer_tier:
             # Integrated pricing calculation subquery
-            pricing_cte = f"""
+            pricing_cte = """
             WITH pricing AS (
                 SELECT
                     p.id as product_id,
@@ -840,7 +963,9 @@ class ProductQueryService:
             )
             """
             joins.insert(0, pricing_cte)
-            joins.append("LEFT JOIN pricing ON p.id = pricing.product_id AND pricing.rn = 1")
+            joins.append(
+                "LEFT JOIN pricing ON p.id = pricing.product_id AND pricing.rn = 1"
+            )
 
         # Build WHERE conditions
         params: Dict[str, Any] = {"product_ids": product_ids}
@@ -850,14 +975,14 @@ class ProductQueryService:
         where_clause = "WHERE p.id = ANY(:product_ids)"
 
         sql_query = f"""
-        {joins[0] if 'WITH' in joins[0] else ''}
-        SELECT {', '.join(select_fields)}
-        {' '.join(joins[1:] if 'WITH' in joins[0] else joins)}
+        {joins[0] if "WITH" in joins[0] else ""}
+        SELECT {", ".join(select_fields)}
+        {" ".join(joins[1:] if "WITH" in joins[0] else joins)}
         {where_clause}
         GROUP BY p.id, p.ref, p.name, p.description, p.brand, p.base_price,
                  p.unit_measure, p.image_urls, p.ecommerce_category_id,
                  p.ecommerce_subcategory_id, p.created_at, p.updated_at
-                 {', pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names' if include_pricing and customer_tier else ''}
+                 {", pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names" if include_pricing and customer_tier else ""}
         """
 
         return sql_query, params

@@ -1,8 +1,10 @@
 from typing import Optional
+
 from fastapi import Depends
+
 from src.api.auth.models import DecodedToken
-from src.dependencies.auth import get_optional_user
 from src.api.tiers.service import TierService
+from src.dependencies.auth import get_optional_user
 
 
 async def get_user_tier(

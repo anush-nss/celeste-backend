@@ -3,10 +3,14 @@ Products-specific cache operations
 """
 
 from typing import Optional
-from src.shared.core_cache import core_cache
+
 from src.config.cache_config import cache_config
-from src.shared.utils import get_logger
 from src.shared.cache_invalidation import cache_invalidation_manager
+from src.shared.core_cache import core_cache
+from src.shared.utils import get_logger
+
+# Register with invalidation manager
+from src.config.constants import Collections
 
 logger = get_logger(__name__)
 
@@ -61,6 +65,5 @@ class ProductsCache:
 # Global products cache instance
 products_cache = ProductsCache()
 
-# Register with invalidation manager
-from src.config.constants import Collections
+
 cache_invalidation_manager.register_domain_cache(Collections.PRODUCTS, products_cache)

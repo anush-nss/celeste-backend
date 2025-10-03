@@ -37,7 +37,8 @@ The API follows a clean, modular architecture with clear separation of concerns:
 │   ├── 📁 services/          # Business logic layer
 │   └── 📁 shared/            # Shared constants & utilities
 ├── 📁 docs/                  # Documentation
-└── 📄 requirements.txt       # Dependencies
+├── 📄 pyproject.toml         # Project metadata and dependencies
+└── 📄 uv.lock                # Lock file for reproducible builds
 ```
 
 ## 🚀 Quick Start
@@ -56,20 +57,31 @@ The API follows a clean, modular architecture with clear separation of concerns:
    cd celeste
    ```
 
-2. **Create and activate virtual environment:**
+2.  **Install uv:**
+    ```bash
+    pip install uv
+    ```
+
+3. **Create and activate virtual environment:**
    ```bash
-   python -m venv venv
+   uv venv
    
    # Windows
-   venv\Scripts\activate
+   .venv\Scripts\activate
    
    # macOS/Linux
-   source venv/bin/activate
+   source .venv/bin/activate
    ```
 
-3. **Install dependencies:**
+4. **Install dependencies:**
    ```bash
-   pip install -r requirements.txt
+   uv pip sync uv.lock
+   ```
+
+5. **Sync requirements.txt (before deployment):**
+   When deploying to cloud environments that use `requirements.txt`, sync it from the uv lock file:
+   ```bash
+   uv export --format requirements-txt > requirements.txt
    ```
 
 ### Firebase Setup
@@ -206,7 +218,7 @@ All API responses follow a consistent format:
 
 ```bash
 # Install development dependencies
-pip install pytest pytest-asyncio httpx
+uv pip install pytest pytest-asyncio httpx
 
 # Run tests
 pytest
@@ -238,11 +250,15 @@ Comprehensive documentation is available in the `docs/` folder:
 
 1.  **Create Dockerfile:**
    ```dockerfile
-   FROM python:3.12-slim
+   FROM python:3.13-slim
 
    WORKDIR /app
-   COPY requirements.txt .
-   RUN pip install --no-cache-dir -r requirements.txt
+   
+   # Install uv
+   RUN pip install uv
+   
+   COPY uv.lock .
+   RUN uv pip sync uv.lock
 
    COPY . .
 

@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends, status, HTTPException, Request
-from typing import List, Annotated
+from typing import Annotated, List
+
+from fastapi import APIRouter, Depends, Request, status
+
 from src.api.auth.models import DecodedToken
-from src.api.orders.models import OrderSchema, CreateOrderSchema, UpdateOrderSchema
+from src.api.orders.models import CreateOrderSchema, OrderSchema, UpdateOrderSchema
 from src.api.orders.service import OrderService
-from src.dependencies.auth import get_current_user, RoleChecker
 from src.config.constants import UserRole
-from src.shared.exceptions import ResourceNotFoundException, ForbiddenException
+from src.dependencies.auth import RoleChecker, get_current_user
+from src.shared.exceptions import ForbiddenException, ResourceNotFoundException
 from src.shared.responses import success_response
 
 orders_router = APIRouter(prefix="/orders", tags=["Orders"])
@@ -49,7 +51,9 @@ async def create__order(
     current_user: DecodedToken = Depends(get_current_user),
 ):
     new_order = await order_service.create_order(order_data, current_user.uid)
-    return success_response(new_order.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
+    return success_response(
+        new_order.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+    )
 
 
 @orders_router.put(
@@ -66,7 +70,7 @@ async def update_order_status(order_id: int, order_data: UpdateOrderSchema):
 @orders_router.post(
     "/payment/callback",
     summary="Handle payment gateway callback",
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
 )
 async def payment_callback(request: Request):
     """Handle payment gateway callback (webhook)"""
@@ -86,12 +90,12 @@ async def payment_callback(request: Request):
 @orders_router.post(
     "/{order_id}/payment/verify",
     summary="Verify payment status",
-    dependencies=[Depends(get_current_user)]
+    dependencies=[Depends(get_current_user)],
 )
 async def verify_payment(
     order_id: int,
     payment_reference: str,
-    current_user: Annotated[DecodedToken, Depends(get_current_user)]
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
     """Verify payment status for an order"""
 

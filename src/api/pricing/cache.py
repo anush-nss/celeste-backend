@@ -2,13 +2,17 @@
 Pricing-specific cache operations
 """
 
-from typing import List, Dict, Optional
-from src.shared.core_cache import core_cache
-from src.config.cache_config import cache_config
-from src.shared.utils import get_logger
 import hashlib
+from typing import Dict, List, Optional
 
 from src.api.pricing.models import PriceListLineSchema, PriceListSchema
+from src.config.cache_config import cache_config
+from src.shared.core_cache import core_cache
+from src.shared.utils import get_logger
+
+# Register with invalidation manager
+from src.config.constants import Collections
+from src.shared.cache_invalidation import cache_invalidation_manager
 
 logger = get_logger(__name__)
 
@@ -49,7 +53,8 @@ class PricingCache:
     def get_price_lists_key(self, active_only: bool = False) -> str:
         """Generate cache key for price lists"""
         return self.cache.generate_key(
-            f"{self.prefix}_lists", "active" if active_only else cache_config.INVALIDATION_SCOPE_ALL
+            f"{self.prefix}_lists",
+            "active" if active_only else cache_config.INVALIDATION_SCOPE_ALL,
         )
 
     def get_price_list_lines_key(self, price_list_id: str) -> str:
@@ -102,7 +107,9 @@ class PricingCache:
         ttl = cache_config.get_ttl("bulk_pricing")
         return self.cache.set(key, pricing_data, ttl_seconds=ttl)
 
-    def get_price_lists(self, active_only: bool = False) -> Optional[List[PriceListSchema]]:
+    def get_price_lists(
+        self, active_only: bool = False
+    ) -> Optional[List[PriceListSchema]]:
         """Get cached price lists"""
         key = self.get_price_lists_key(active_only)
         cached_data = self.cache.get(key)
@@ -110,13 +117,19 @@ class PricingCache:
             return [PriceListSchema(**item) for item in cached_data]
         return None
 
-    def set_price_lists(self, price_lists: List[PriceListSchema], active_only: bool = False) -> bool:
+    def set_price_lists(
+        self, price_lists: List[PriceListSchema], active_only: bool = False
+    ) -> bool:
         """Cache price lists with configured TTL"""
         key = self.get_price_lists_key(active_only)
         ttl = cache_config.get_ttl("price_lists")
-        return self.cache.set(key, [pl.model_dump() for pl in price_lists], ttl_seconds=ttl)
+        return self.cache.set(
+            key, [pl.model_dump() for pl in price_lists], ttl_seconds=ttl
+        )
 
-    def get_price_list_lines(self, price_list_id: str) -> Optional[List[PriceListLineSchema]]:
+    def get_price_list_lines(
+        self, price_list_id: str
+    ) -> Optional[List[PriceListLineSchema]]:
         """Get cached price list lines"""
         key = self.get_price_list_lines_key(price_list_id)
         cached_data = self.cache.get(key)
@@ -124,11 +137,15 @@ class PricingCache:
             return [PriceListLineSchema(**item) for item in cached_data]
         return None
 
-    def set_price_list_lines(self, price_list_id: str, lines: List[PriceListLineSchema]) -> bool:
+    def set_price_list_lines(
+        self, price_list_id: str, lines: List[PriceListLineSchema]
+    ) -> bool:
         """Cache price list lines with configured TTL"""
         key = self.get_price_list_lines_key(price_list_id)
         ttl = cache_config.get_ttl("price_list_lines")
-        return self.cache.set(key, [line.model_dump() for line in lines], ttl_seconds=ttl)
+        return self.cache.set(
+            key, [line.model_dump() for line in lines], ttl_seconds=ttl
+        )
 
     # Cache invalidation methods
     def invalidate_pricing_cache(self, scope: Optional[str] = None) -> int:
@@ -136,7 +153,7 @@ class PricingCache:
         # Default scope if not provided
         if scope is None:
             scope = self.prefix
-            
+
         patterns = {
             cache_config.INVALIDATION_SCOPE_ALL: [
                 f"{self.prefix}_product:*",
@@ -185,9 +202,5 @@ class PricingCache:
 
 # Global pricing cache instance
 pricing_cache = PricingCache()
-
-# Register with invalidation manager
-from src.shared.cache_invalidation import cache_invalidation_manager
-from src.config.constants import Collections
 
 cache_invalidation_manager.register_domain_cache(Collections.PRICE_LISTS, pricing_cache)

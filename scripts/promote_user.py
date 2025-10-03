@@ -1,34 +1,21 @@
+import argparse
+import asyncio
 import os
 import sys
-import asyncio
-import argparse
+
 import firebase_admin
-from firebase_admin import credentials
 import google.auth
+from firebase_admin import credentials
 
 # Add the project root to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.api.users.service import UserService
 from src.api.auth.service import AuthService
+from src.api.users.service import UserService
 from src.config.constants import UserRole
 
 # Import all database models to ensure SQLAlchemy relationships are properly registered
-from src.database.models.user import User
-from src.database.models.address import Address
-from src.database.models.cart import Cart
-from src.database.models.category import Category
-from src.database.models.product import Product, Tag, ProductTag
-from src.database.models.associations import product_categories
-from src.database.models.store import Store
-from src.database.models.store_tag import StoreTag
-from src.database.models.tier import Tier
-from src.database.models.tier_benefit import Benefit, tier_benefits
-from src.database.models.price_list import PriceList
-from src.database.models.price_list_line import PriceListLine
-from src.database.models.tier_price_list import TierPriceList
-from src.database.models.inventory import Inventory
-from src.database.models.order import Order, OrderItem
+
 
 def initialize_firebase():
     """Initialize Firebase Admin SDK"""
@@ -39,7 +26,9 @@ def initialize_firebase():
             # Local dev: must use service account key
             service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
             if not service_account_path:
-                raise ValueError("GOOGLE_APPLICATION_CREDENTIALS environment variable not set.")
+                raise ValueError(
+                    "GOOGLE_APPLICATION_CREDENTIALS environment variable not set."
+                )
             cred = credentials.Certificate(service_account_path)
             firebase_admin.initialize_app(cred)
         else:
@@ -52,12 +41,16 @@ def initialize_firebase():
             if not project_id:
                 raise ValueError("Project ID could not be inferred from environment.")
 
-            firebase_admin.initialize_app(credential=credentials.ApplicationDefault(), options={"projectId": project_id})
+            firebase_admin.initialize_app(
+                credential=credentials.ApplicationDefault(),
+                options={"projectId": project_id},
+            )
+
 
 async def promote_user(uid: str):
     """Promote a user to ADMIN."""
     print(f"Promoting user with UID: {uid}")
-    
+
     auth_service = AuthService()
     user_service = UserService()
 
@@ -86,19 +79,26 @@ async def promote_user(uid: str):
 
         # 5. Verify the change
         updated_user = await user_service.get_user_by_id(uid)
-        
+
         # Verify Firebase Auth custom claims
         firebase_user = auth_service.get_user_by_uid(uid)
-        
-        if updated_user and updated_user.role == UserRole.ADMIN and firebase_user.custom_claims.get('role') == UserRole.ADMIN.value:
+
+        if (
+            updated_user
+            and updated_user.role == UserRole.ADMIN
+            and firebase_user.custom_claims.get("role") == UserRole.ADMIN.value
+        ):
             print(f"\nSuccessfully promoted user {uid} to ADMIN.")
             print(f"Verified PostgreSQL role: {updated_user.role}")
-            print(f"Verified Firebase Auth role claim: {firebase_user.custom_claims.get('role')}")
+            print(
+                f"Verified Firebase Auth role claim: {firebase_user.custom_claims.get('role')}"
+            )
         else:
             print("\nError: Promotion verification failed.")
 
     except Exception as e:
         print(f"\nAn error occurred: {e}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Promote a user to an admin role.")

@@ -1,27 +1,29 @@
-from fastapi import APIRouter, Depends, status, Query, HTTPException
-from typing import Annotated, List, Optional, Union
+from typing import List, Optional, Union
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
 from src.api.stores.models import (
-    StoreSchema,
     CreateStoreSchema,
-    UpdateStoreSchema,
-    StoreQuerySchema,
     StoreLocationResponse,
+    StoreQuerySchema,
+    StoreSchema,
     StoreTagSchema,
+    UpdateStoreSchema,
 )
-from src.api.tags.models import CreateTagSchema, TagSchema, UpdateTagSchema
 from src.api.stores.service import StoreService
-from src.dependencies.auth import RoleChecker
+from src.api.tags.models import CreateTagSchema, TagSchema, UpdateTagSchema
 from src.config.constants import (
-    UserRole,
     DEFAULT_SEARCH_RADIUS_KM,
-    MAX_SEARCH_RADIUS_KM,
     DEFAULT_STORES_LIMIT,
+    MAX_LATITUDE,
+    MAX_LONGITUDE,
+    MAX_SEARCH_RADIUS_KM,
     MAX_STORES_LIMIT,
     MIN_LATITUDE,
-    MAX_LATITUDE,
     MIN_LONGITUDE,
-    MAX_LONGITUDE,
+    UserRole,
 )
+from src.dependencies.auth import RoleChecker
 from src.shared.exceptions import ResourceNotFoundException
 from src.shared.responses import success_response
 
@@ -30,6 +32,7 @@ store_service = StoreService()
 
 
 # ===== STORE TAG CRUD ROUTES (must come before /{id} route) =====
+
 
 @stores_router.post(
     "/tags",
@@ -44,13 +47,16 @@ async def create_store_tags(payload: Union[CreateTagSchema, List[CreateTagSchema
     tags_to_create = payload if is_list else [payload]
 
     if not tags_to_create:
-        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+        raise HTTPException(
+            status_code=400, detail="Request body cannot be an empty list."
+        )
 
     created_tags = await store_service.create_store_tags(tags_to_create)
 
     if is_list:
         return success_response(
-            [t.model_dump(mode="json") for t in created_tags], status_code=status.HTTP_201_CREATED
+            [t.model_dump(mode="json") for t in created_tags],
+            status_code=status.HTTP_201_CREATED,
         )
     else:
         return success_response(
@@ -65,10 +71,15 @@ async def create_store_tags(payload: Union[CreateTagSchema, List[CreateTagSchema
 )
 async def get_store_tags(
     is_active: Optional[bool] = Query(True, description="Filter by active status"),
-    tag_type_suffix: Optional[str] = Query(None, description="Filter by tag type suffix (e.g., 'features', 'amenities')"),
+    tag_type_suffix: Optional[str] = Query(
+        None, description="Filter by tag type suffix (e.g., 'features', 'amenities')"
+    ),
 ):
     """Get all store tags."""
-    tags = await store_service.get_store_tags(is_active=is_active if is_active is not None else True, tag_type_suffix=tag_type_suffix)
+    tags = await store_service.get_store_tags(
+        is_active=is_active if is_active is not None else True,
+        tag_type_suffix=tag_type_suffix,
+    )
     return success_response(
         [TagSchema.model_validate(tag).model_dump(mode="json") for tag in tags]
     )
@@ -84,14 +95,16 @@ async def get_store_tag_types():
     from src.database.connection import AsyncSessionLocal
 
     async with AsyncSessionLocal() as session:
-        from sqlalchemy.future import select
         from sqlalchemy import distinct
+        from sqlalchemy.future import select
+
         from src.database.models.product import Tag
 
-        query = select(distinct(Tag.tag_type)).filter(
-            Tag.is_active == True,
-            Tag.tag_type.like('store_%')
-        ).order_by(Tag.tag_type)
+        query = (
+            select(distinct(Tag.tag_type))
+            .filter(Tag.is_active, Tag.tag_type.like("store_%"))
+            .order_by(Tag.tag_type)
+        )
         result = await session.execute(query)
         tag_types = result.scalars().all()
 
@@ -126,7 +139,9 @@ async def update_store_tag(tag_id: int, tag_data: UpdateTagSchema):
     if not updated_tag:
         raise ResourceNotFoundException(detail=f"Store tag with ID {tag_id} not found")
 
-    return success_response(TagSchema.model_validate(updated_tag).model_dump(mode="json"))
+    return success_response(
+        TagSchema.model_validate(updated_tag).model_dump(mode="json")
+    )
 
 
 @stores_router.delete(
@@ -141,18 +156,31 @@ async def delete_store_tag(tag_id: int):
     if not success:
         raise ResourceNotFoundException(detail=f"Store tag with ID {tag_id} not found")
 
-    return success_response({"id": tag_id, "message": "Store tag deactivated successfully"})
+    return success_response(
+        {"id": tag_id, "message": "Store tag deactivated successfully"}
+    )
 
 
 # ===== STORE ROUTES =====
 
-@stores_router.get("/", summary="Get all stores with optional location filtering", response_model=StoreLocationResponse)
+
+@stores_router.get(
+    "/",
+    summary="Get all stores with optional location filtering",
+    response_model=StoreLocationResponse,
+)
 async def get_all_stores(
     latitude: Optional[float] = Query(
-        None, ge=MIN_LATITUDE, le=MAX_LATITUDE, description="User latitude for distance calculations"
+        None,
+        ge=MIN_LATITUDE,
+        le=MAX_LATITUDE,
+        description="User latitude for distance calculations",
     ),
     longitude: Optional[float] = Query(
-        None, ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="User longitude for distance calculations"
+        None,
+        ge=MIN_LONGITUDE,
+        le=MAX_LONGITUDE,
+        description="User longitude for distance calculations",
     ),
     radius: Optional[float] = Query(
         None,
@@ -168,14 +196,13 @@ async def get_all_stores(
     ),
     is_active: Optional[bool] = Query(True, description="Filter by store status"),
     tags: Optional[List[str]] = Query(
-        None, description="Filter by tags (flexible syntax: 'organic', 'id:5', 'type:amenities', 'value:wifi')"
+        None,
+        description="Filter by tags (flexible syntax: 'organic', 'id:5', 'type:amenities', 'value:wifi')",
     ),
     include_distance: Optional[bool] = Query(
         True, description="Include distance calculations (requires lat/lon)"
     ),
-    include_tags: Optional[bool] = Query(
-        False, description="Include tag information"
-    ),
+    include_tags: Optional[bool] = Query(False, description="Include tag information"),
 ):
     """
     Get all stores with optional location-based filtering and distance calculations.
@@ -184,7 +211,7 @@ async def get_all_stores(
     - **Multi-filter**: Combine location, features, status
     - **Configurable**: Control what data is included in response
     - **Performance optimized**: Cached results for non-location queries
-    
+
     If latitude/longitude provided, acts like nearby search with radius filtering.
     If no location provided, returns all stores (cached for performance).
     """
@@ -204,7 +231,9 @@ async def get_all_stores(
         limit=limit,
         is_active=is_active,
         tags=tags,
-        include_distance=include_distance if (latitude is not None and longitude is not None) else False,
+        include_distance=include_distance
+        if (latitude is not None and longitude is not None)
+        else False,
         include_tags=include_tags,
     )
 
@@ -247,14 +276,13 @@ async def get_nearby_stores(
         description="Max stores to return",
     ),
     tags: Optional[List[str]] = Query(
-        None, description="Filter by tags (flexible syntax: 'organic', 'id:5', 'type:amenities', 'value:wifi')"
+        None,
+        description="Filter by tags (flexible syntax: 'organic', 'id:5', 'type:amenities', 'value:wifi')",
     ),
     include_distance: Optional[bool] = Query(
         True, description="Include distance calculations"
     ),
-    include_tags: Optional[bool] = Query(
-        False, description="Include tag information"
-    ),
+    include_tags: Optional[bool] = Query(False, description="Include tag information"),
 ):
     """
     Optimized endpoint for finding nearby stores.
@@ -275,17 +303,13 @@ async def get_nearby_stores(
     )
 
     result = await store_service.get_stores_by_location(query_params)
-    return success_response(
-        result, status_code=status.HTTP_200_OK
-    )
+    return success_response(result, status_code=status.HTTP_200_OK)
 
 
 @stores_router.get("/{store_id}", summary="Get store by ID", response_model=StoreSchema)
 async def get_store_by_id(
     store_id: int,
-    include_tags: Optional[bool] = Query(
-        False, description="Include tag information"
-    ),
+    include_tags: Optional[bool] = Query(False, description="Include tag information"),
 ):
     """Get detailed information about a specific store."""
     store = await store_service.get_store_by_id(store_id, include_tags=include_tags)
@@ -375,9 +399,7 @@ async def update_store(store_id: int, store_data: UpdateStoreSchema):
     """
     updated_store = await store_service.update_store(store_id, store_data)
     if not updated_store:
-        raise ResourceNotFoundException(
-            detail=f"Store with ID {store_id} not found"
-        )
+        raise ResourceNotFoundException(detail=f"Store with ID {store_id} not found")
     return success_response(
         updated_store.model_dump(mode="json"), status_code=status.HTTP_200_OK
     )
@@ -403,6 +425,7 @@ async def delete_store(store_id: int):
 
 
 # Store-Tag assignment routes (tag CRUD is handled by /tags API)
+
 
 @stores_router.post(
     "/{store_id}/tags/{tag_id}",
@@ -447,10 +470,13 @@ async def get_store_tags_by_id(store_id: int):
     store = await store_service.get_store_by_id(store_id, include_tags=True)
     if not store:
         raise ResourceNotFoundException(detail=f"Store with ID {store_id} not found")
-    
+
     if not store.store_tags:
         return success_response([])
-    
+
     return success_response(
-        [StoreTagSchema.model_validate(tag).model_dump(mode="json") for tag in store.store_tags]
+        [
+            StoreTagSchema.model_validate(tag).model_dump(mode="json")
+            for tag in store.store_tags
+        ]
     )

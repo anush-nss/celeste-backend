@@ -1,5 +1,7 @@
 import os
+
 from dotenv import load_dotenv
+
 from src.shared.utils import get_logger
 
 logger = get_logger(__name__)

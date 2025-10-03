@@ -1,23 +1,26 @@
-from typing import Optional, List
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy.exc import IntegrityError
-from src.database.connection import AsyncSessionLocal
-from src.database.models.product import Product, ProductTag, Tag
-from src.database.models.category import Category
-from src.api.products.models import (
-    ProductSchema,
-    CreateProductSchema,
-    UpdateProductSchema,
-    EnhancedProductSchema,
-)
-from src.api.categories.models import CategorySchema
-from src.config.constants import Collections
-from src.shared.cache_invalidation import cache_invalidation_manager
+
 from src.api.products.cache import products_cache
-from src.shared.sqlalchemy_utils import safe_model_validate
-from src.shared.exceptions import ResourceNotFoundException, ConflictException, ValidationException
+from src.api.products.models import (
+    CreateProductSchema,
+    EnhancedProductSchema,
+    ProductSchema,
+    UpdateProductSchema,
+)
+from src.config.constants import Collections
+from src.database.connection import AsyncSessionLocal
+from src.database.models.category import Category
+from src.database.models.product import Product, ProductTag
+from src.shared.cache_invalidation import cache_invalidation_manager
 from src.shared.error_handler import ErrorHandler, handle_service_errors
+from src.shared.exceptions import (
+    ConflictException,
+    ResourceNotFoundException,
+    ValidationException,
+)
+from src.shared.sqlalchemy_utils import safe_model_validate
 
 
 class ProductCoreService:
@@ -56,12 +59,12 @@ class ProductCoreService:
 
             if product:
                 pydantic_product = safe_model_validate(
-                    EnhancedProductSchema,
-                    product,
-                    max_depth=3
+                    EnhancedProductSchema, product, max_depth=3
                 )
 
-                products_cache.set_product(str(product_id), pydantic_product.model_dump(mode="json"))
+                products_cache.set_product(
+                    str(product_id), pydantic_product.model_dump(mode="json")
+                )
                 return pydantic_product
 
             return None
@@ -94,9 +97,7 @@ class ProductCoreService:
 
             if product:
                 pydantic_product = safe_model_validate(
-                    EnhancedProductSchema,
-                    product,
-                    max_depth=3
+                    EnhancedProductSchema, product, max_depth=3
                 )
                 return pydantic_product
 
@@ -125,7 +126,9 @@ class ProductCoreService:
                     select(Product).filter(Product.ref == product_data.ref.strip())
                 )
                 if existing_ref.scalars().first():
-                    raise ConflictException(detail=f"Product with ref '{product_data.ref}' already exists")
+                    raise ConflictException(
+                        detail=f"Product with ref '{product_data.ref}' already exists"
+                    )
 
             # Check if ID is manually specified and already exists
             if product_data.id:
@@ -133,17 +136,21 @@ class ProductCoreService:
                     select(Product).filter(Product.id == product_data.id)
                 )
                 if existing_id.scalars().first():
-                    raise ConflictException(detail=f"Product with ID {product_data.id} already exists")
+                    raise ConflictException(
+                        detail=f"Product with ID {product_data.id} already exists"
+                    )
 
             # Create the product
             product_kwargs = {
                 "name": product_data.name.strip(),
-                "description": product_data.description.strip() if product_data.description else None,
+                "description": product_data.description.strip()
+                if product_data.description
+                else None,
                 "brand": product_data.brand.strip() if product_data.brand else None,
                 "base_price": product_data.base_price,
                 "unit_measure": product_data.unit_measure.strip(),
                 "image_urls": product_data.image_urls or [],
-                "ref": product_data.ref.strip() if product_data.ref else None
+                "ref": product_data.ref.strip() if product_data.ref else None,
             }
 
             if product_data.id:
@@ -162,7 +169,9 @@ class ProductCoreService:
                 categories = category_result.scalars().all()
 
                 found_category_ids = {cat.id for cat in categories}
-                missing_category_ids = set(product_data.category_ids) - found_category_ids
+                missing_category_ids = (
+                    set(product_data.category_ids) - found_category_ids
+                )
                 if missing_category_ids:
                     raise ResourceNotFoundException(
                         detail=f"Categories with IDs {list(missing_category_ids)} not found"
@@ -176,9 +185,7 @@ class ProductCoreService:
                 unique_tag_ids = list(set(product_data.tag_ids))
                 for tag_id in unique_tag_ids:
                     product_tag = ProductTag(
-                        product_id=new_product.id,
-                        tag_id=tag_id,
-                        created_by="system"
+                        product_id=new_product.id, tag_id=tag_id, created_by="system"
                     )
                     session.add(product_tag)
 
@@ -187,9 +194,7 @@ class ProductCoreService:
             await session.refresh(new_product, ["categories", "product_tags"])
 
             pydantic_product = safe_model_validate(
-                ProductSchema,
-                new_product,
-                max_depth=3
+                ProductSchema, new_product, max_depth=3
             )
 
             cache_invalidation_manager.invalidate_entity(Collections.PRODUCTS)
@@ -201,14 +206,18 @@ class ProductCoreService:
         """Update an existing product"""
         async with AsyncSessionLocal() as session:
             try:
-                result = await session.execute(select(Product).filter(Product.id == product_id))
+                result = await session.execute(
+                    select(Product).filter(Product.id == product_id)
+                )
                 product = result.scalars().first()
 
                 if not product:
                     return None
 
                 # Update basic fields
-                update_dict = product_data.model_dump(mode="json", exclude_unset=True, exclude={'category_ids', 'tag_ids'})
+                update_dict = product_data.model_dump(
+                    mode="json", exclude_unset=True, exclude={"category_ids", "tag_ids"}
+                )
                 for field, value in update_dict.items():
                     setattr(product, field, value)
 
@@ -218,12 +227,16 @@ class ProductCoreService:
                     product.categories.clear()
                     if product_data.category_ids:
                         category_result = await session.execute(
-                            select(Category).filter(Category.id.in_(product_data.category_ids))
+                            select(Category).filter(
+                                Category.id.in_(product_data.category_ids)
+                            )
                         )
                         categories = category_result.scalars().all()
 
                         found_category_ids = {cat.id for cat in categories}
-                        missing_category_ids = set(product_data.category_ids) - found_category_ids
+                        missing_category_ids = (
+                            set(product_data.category_ids) - found_category_ids
+                        )
                         if missing_category_ids:
                             raise ResourceNotFoundException(
                                 detail=f"Categories with IDs {list(missing_category_ids)} not found"
@@ -234,14 +247,14 @@ class ProductCoreService:
                 # Update tags if provided
                 if product_data.tag_ids is not None:
                     await session.execute(
-                        ProductTag.__table__.delete().where(ProductTag.product_id == product_id)
+                        ProductTag.__table__.delete().where(
+                            ProductTag.product_id == product_id
+                        )
                     )
                     unique_tag_ids = list(set(product_data.tag_ids))
                     for tag_id in unique_tag_ids:
                         product_tag = ProductTag(
-                            product_id=product_id,
-                            tag_id=tag_id,
-                            created_by="system"
+                            product_id=product_id, tag_id=tag_id, created_by="system"
                         )
                         session.add(product_tag)
 
@@ -250,27 +263,31 @@ class ProductCoreService:
                 await session.refresh(product, ["categories", "product_tags"])
 
                 pydantic_product = safe_model_validate(
-                    ProductSchema,
-                    product,
-                    max_depth=3
+                    ProductSchema, product, max_depth=3
                 )
 
                 products_cache.invalidate_product_cache(str(product_id))
-                cache_invalidation_manager.invalidate_entity(Collections.PRODUCTS, str(product_id))
+                cache_invalidation_manager.invalidate_entity(
+                    Collections.PRODUCTS, str(product_id)
+                )
 
                 return pydantic_product
 
             except IntegrityError as e:
                 await session.rollback()
                 if "tag_id" in str(e.orig) and "is not present" in str(e.orig):
-                    raise ResourceNotFoundException(detail="One or more specified tags not found")
+                    raise ResourceNotFoundException(
+                        detail="One or more specified tags not found"
+                    )
                 else:
                     raise
 
     async def delete_product(self, product_id: int) -> bool:
         """Delete a product"""
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Product).filter(Product.id == product_id))
+            result = await session.execute(
+                select(Product).filter(Product.id == product_id)
+            )
             product = result.scalars().first()
 
             if not product:
@@ -280,6 +297,8 @@ class ProductCoreService:
             await session.commit()
 
             products_cache.invalidate_product_cache(str(product_id))
-            cache_invalidation_manager.invalidate_entity(Collections.PRODUCTS, str(product_id))
+            cache_invalidation_manager.invalidate_entity(
+                Collections.PRODUCTS, str(product_id)
+            )
 
             return True
