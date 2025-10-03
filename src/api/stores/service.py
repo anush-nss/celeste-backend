@@ -25,6 +25,7 @@ from src.config.constants import (
 )
 from src.shared.exceptions import ValidationException, ConflictException, ResourceNotFoundException
 from src.shared.error_handler import ErrorHandler, handle_service_errors
+from sqlalchemy.exc import ProgrammingError, StatementError
 from src.shared.performance_utils import async_timer
 from sqlalchemy.exc import IntegrityError
 
@@ -131,6 +132,7 @@ class StoreService:
 
             return self._build_location_response(stores, query_params)
 
+    @handle_service_errors("retrieving stores by location")
     async def get_stores_by_location(
         self, query_params: StoreQuerySchema
     ) -> List[Dict[str, Any]]:
@@ -169,18 +171,43 @@ class StoreService:
             # Handle new tag filtering
             tag_params = {}
             if query_params.tags:
-                tag_filter_result = self.tag_service.parse_tag_filters(query_params.tags)
+                # Validate tags parameter
+                if not isinstance(query_params.tags, list):
+                    raise ValidationException(detail="Tags parameter must be a list")
+
+                # Filter out invalid tag values
+                valid_tags = [tag for tag in query_params.tags if tag and isinstance(tag, str) and tag.strip()]
+                if not valid_tags:
+                    raise ValidationException(detail="At least one valid tag must be provided")
+
+                tag_filter_result = self.tag_service.parse_tag_filters(valid_tags)
                 if tag_filter_result['needs_joins'] and tag_filter_result['conditions']:
                     # Join with store_tags and tags tables
                     query = query.join(Store.store_tags).join(StoreTag.tag)
-                    # Add tag filter conditions
-                    tag_conditions_str = " OR ".join(tag_filter_result['conditions'])
+                    # Replace table alias 't' with 'tags' in conditions
+                    tag_conditions = []
+                    for condition in tag_filter_result['conditions']:
+                        # Replace 't.' with 'tags.' in SQL conditions
+                        fixed_condition = condition.replace('t.', 'tags.')
+                        tag_conditions.append(fixed_condition)
+
+                    tag_conditions_str = " OR ".join(tag_conditions)
                     query = query.filter(text(f"({tag_conditions_str})"))
                     tag_params.update(tag_filter_result['params'])
 
-            # Execute query
-            result = await session.execute(query, tag_params)
-            store_models = result.scalars().unique().all()
+            # Execute query with error handling
+            try:
+                result = await session.execute(query, tag_params)
+                store_models = result.scalars().unique().all()
+            except (ProgrammingError, StatementError) as e:
+                # Convert SQL errors to validation errors
+                error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+                if 'missing FROM-clause entry' in error_msg or 'UndefinedTableError' in error_msg:
+                    raise ValidationException(detail="Invalid tag filter parameters provided")
+                elif 'syntax error' in error_msg.lower():
+                    raise ValidationException(detail="Invalid filter syntax in tag parameters")
+                else:
+                    raise ValidationException(detail="Invalid query parameters provided")
 
             # Calculate exact distances and filter by radius
             stores_with_distance = []

@@ -6,16 +6,20 @@ from src.config.constants import OrderStatus
 
 class OrderItemSchema(BaseModel):
     id: int
+    order_id: int
+    source_cart_id: int
     product_id: int
     quantity: int
-    price: float
+    unit_price: float
+    total_price: float
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class OrderSchema(BaseModel):
     id: int
-    user_id: int
+    user_id: str  # Changed from int to str to match Firebase UID
     store_id: int
     total_amount: float
     status: OrderStatus

@@ -20,13 +20,15 @@ class ProductSchema(BaseModel):
     ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
-    brand: str = Field(..., min_length=1)
+    brand: Optional[str] = Field(None, min_length=1)
     base_price: float = Field(..., ge=0)
     unit_measure: str
     image_urls: List[str] = []        # First image is primary
+    ecommerce_category_id: Optional[int] = None
+    ecommerce_subcategory_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    
+
     # Relationships (loaded when needed)
     categories: Optional[List[Dict[str, Any]]] = None  # Will be CategorySchema when imported
     product_tags: Optional[List[Dict[str, Any]]] = None  # Raw product_tags data
@@ -44,10 +46,12 @@ class CreateProductSchema(BaseModel):
     ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
-    brand: str = Field(..., min_length=1)
+    brand: Optional[str] = Field(None, min_length=1)
     base_price: float = Field(..., ge=0)
     unit_measure: str
     image_urls: List[str] = []
+    ecommerce_category_id: Optional[int] = None
+    ecommerce_subcategory_id: Optional[int] = None
     category_ids: List[int] = []      # IDs of categories to assign
     tag_ids: List[int] = []           # IDs of tags to assign
 
@@ -60,6 +64,8 @@ class UpdateProductSchema(BaseModel):
     base_price: Optional[float] = Field(None, ge=0)
     unit_measure: Optional[str] = None
     image_urls: Optional[List[str]] = None
+    ecommerce_category_id: Optional[int] = None
+    ecommerce_subcategory_id: Optional[int] = None
     category_ids: Optional[List[int]] = None
     tag_ids: Optional[List[int]] = None
 
@@ -95,16 +101,18 @@ class EnhancedProductSchema(BaseModel):
     ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
-    brand: str = Field(..., min_length=1)
+    brand: Optional[str] = Field(None, min_length=1)
     base_price: float = Field(..., ge=0, description="Base price of the product")
     unit_measure: str
     image_urls: List[str] = []        # First image is primary
+    ecommerce_category_id: Optional[int] = None
+    ecommerce_subcategory_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     # Relationships
-    categories: Optional[List[Dict[int, Any]]] = None
-    product_tags: Optional[List[Dict[int, Any]]] = None
+    categories: Optional[List[Dict[str, Any]]] = None
+    product_tags: Optional[List[Dict[str, Any]]] = None
 
     # Enhanced fields
     pricing: Optional[PricingInfoSchema] = Field(

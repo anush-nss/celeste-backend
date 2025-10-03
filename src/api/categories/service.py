@@ -28,18 +28,55 @@ class CategoryService:
 
     @handle_service_errors("retrieving all categories")
     @async_timer("get_all_categories")
-    async def get_all_categories(self, include_subcategories: Optional[bool] = True) -> list[CategorySchema]:
-        """Get all categories with optimized caching and loading"""
-        # Check cache first
-        cached_categories = categories_cache.get_all_categories()
-        if cached_categories is not None:
-            return [CategorySchema.model_validate(c) for c in cached_categories]
+    async def get_all_categories(
+        self,
+        include_subcategories: Optional[bool] = True,
+        parent_only: Optional[bool] = False,
+        parent_id: Optional[int] = None,
+        subcategories_only: Optional[bool] = False
+    ) -> list[CategorySchema]:
+        """Get categories with flexible filtering options"""
+        # Generate cache key based on filter parameters
+        filter_type = None
+        filter_value = None
+
+        if parent_only:
+            filter_type = "parent_only" + ("_with_subs" if include_subcategories else "")
+        elif parent_id is not None:
+            filter_type = "parent"
+            filter_value = str(parent_id) + ("_with_subs" if include_subcategories else "")
+        elif subcategories_only:
+            filter_type = "subcategories_only" + ("_with_subs" if include_subcategories else "")
+        else:
+            # Default 'all' case
+            if include_subcategories:
+                cached_categories = categories_cache.get_all_categories()
+                if cached_categories is not None:
+                    return [CategorySchema.model_validate(c) for c in cached_categories]
+
+        # Check cache for filtered results
+        if filter_type:
+            cached_categories = categories_cache.get_filtered_categories(filter_type, filter_value)
+            if cached_categories is not None:
+                return [CategorySchema.model_validate(c) for c in cached_categories]
 
         async with AsyncSessionLocal() as session:
-            # Optimized query with conditional loading
+            # Build query with filters
             stmt = select(Category)
+
+            # Apply filtering conditions
+            if parent_only:
+                stmt = stmt.filter(Category.parent_category_id.is_(None))
+            elif parent_id is not None:
+                stmt = stmt.filter(Category.parent_category_id == parent_id)
+            elif subcategories_only:
+                stmt = stmt.filter(Category.parent_category_id.is_not(None))
+
+            # Add subcategories loading if requested
             if include_subcategories:
                 stmt = stmt.options(selectinload(Category.subcategories))
+
+            # Order by sort_order
             stmt = stmt.order_by(Category.sort_order)
 
             result = await session.execute(stmt)
@@ -53,9 +90,18 @@ class CategoryService:
                     categories,
                     include_relationships=include_relationships
                 )
-                # Cache the dict representations asynchronously (non-blocking)
+
+                # Cache results based on filter type
                 category_dicts = [cat.model_dump(mode="json") for cat in pydantic_categories]
-                categories_cache.set_all_categories(category_dicts)
+
+                if filter_type:
+                    # Cache filtered results
+                    categories_cache.set_filtered_categories(category_dicts, filter_type, filter_value)
+                else:
+                    # Default 'all categories' case
+                    if include_subcategories:
+                        categories_cache.set_all_categories(category_dicts)
+
                 return pydantic_categories
 
             return []
@@ -97,13 +143,6 @@ class CategoryService:
             raise ValidationException(detail="Sort order cannot be negative")
 
         async with AsyncSessionLocal() as session:
-            # Check for duplicate name
-            existing = await session.execute(
-                select(Category).filter(Category.name == category_data.name.strip())
-            )
-            if existing.scalars().first():
-                raise ConflictException(detail=f"Category with name '{category_data.name}' already exists")
-
             # Check if ID is manually specified and already exists
             if category_data.id:
                 existing_id = await session.execute(
@@ -221,12 +260,13 @@ class CategoryService:
                 if category_data.sort_order < 0:
                     raise ValidationException(detail="Sort order cannot be negative")
 
-                # Check for duplicate name
-                existing = await session.execute(
-                    select(Category).filter(Category.name == category_data.name.strip())
-                )
-                if existing.scalars().first():
-                    raise ConflictException(detail=f"Category with name '{category_data.name}' already exists")
+                # Check if ID is manually specified and already exists
+                if category_data.id:
+                    existing_id = await session.execute(
+                        select(Category).filter(Category.id == category_data.id)
+                    )
+                    if existing_id.scalars().first():
+                        raise ConflictException(detail=f"Category with ID {category_data.id} already exists")
 
                 # Validate parent category if provided
                 if category_data.parent_category_id:
@@ -238,13 +278,20 @@ class CategoryService:
                             detail=f"Parent category with ID {category_data.parent_category_id} not found"
                         )
 
-                new_category = Category(
-                    name=category_data.name.strip(),
-                    description=category_data.description.strip() if category_data.description else None,
-                    sort_order=category_data.sort_order,
-                    image_url=category_data.image_url,
-                    parent_category_id=category_data.parent_category_id
-                )
+                # Create category with optional ID
+                category_kwargs = {
+                    "name": category_data.name.strip(),
+                    "description": category_data.description.strip() if category_data.description else None,
+                    "sort_order": category_data.sort_order,
+                    "image_url": category_data.image_url,
+                    "parent_category_id": category_data.parent_category_id
+                }
+
+                # Add manual ID if specified
+                if category_data.id:
+                    category_kwargs["id"] = category_data.id
+
+                new_category = Category(**category_kwargs)
                 session.add(new_category)
                 created_categories.append(new_category)
 

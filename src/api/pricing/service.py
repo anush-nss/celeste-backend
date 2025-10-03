@@ -30,6 +30,7 @@ from src.api.pricing.models import (
 )
 from src.shared.exceptions import ResourceNotFoundException, ValidationException, ConflictException
 from src.shared.error_handler import ErrorHandler, handle_service_errors
+from src.api.pricing.cache import pricing_cache
 
 logger = get_logger(__name__)
 
@@ -475,8 +476,8 @@ class PricingService:
         
         return base_price
 
-    async def calculate_bulk_product_pricing_optimized(self, product_data: List[Dict[str, Any]], user_tier_id: Optional[int]) -> List[ProductPricingSchema]:
-        """Calculate pricing for multiple products using optimized SQL query"""
+    async def calculate_bulk_product_pricing(self, product_data: List[Dict[str, Any]], user_tier_id: Optional[int]) -> List[ProductPricingSchema]:
+        """Calculate pricing for multiple products using comprehensive SQL query"""
         if not user_tier_id:
             # If no tier, return base pricing for all products
             return [
@@ -491,11 +492,16 @@ class PricingService:
                 )
                 for p_data in product_data
             ]
-        
+
         product_ids = [int(p_data["id"]) for p_data in product_data]
         if not product_ids:
             return []
-        
+
+        # Check cache first
+        cached_pricing = pricing_cache.get_bulk_pricing(str(user_tier_id), [str(pid) for pid in product_ids])
+        if cached_pricing:
+            return [ProductPricingSchema(**item) for item in cached_pricing]
+
         async with AsyncSessionLocal() as session:
             # Optimized bulk pricing query
             pricing_query = """
@@ -513,9 +519,10 @@ class PricingService:
                       AND (pl.valid_until IS NULL OR pl.valid_until >= NOW())
                 ),
                 applicable_price_list_lines AS (
-                    SELECT 
+                    SELECT
                         pll.*,
-                        apl.priority as price_list_priority
+                        apl.priority as price_list_priority,
+                        apl.price_list_name
                     FROM price_list_lines pll
                     JOIN active_price_lists apl ON pll.price_list_id = apl.price_list_id
                     WHERE pll.is_active = true
@@ -523,8 +530,8 @@ class PricingService:
                       AND (
                           pll.product_id = ANY(:product_ids) OR
                           (pll.product_id IS NULL AND pll.category_id IN (
-                              SELECT pc.category_id 
-                              FROM product_categories pc 
+                              SELECT pc.category_id
+                              FROM product_categories pc
                               WHERE pc.product_id = ANY(:product_ids)
                           )) OR
                           (pll.product_id IS NULL AND pll.category_id IS NULL)
@@ -657,37 +664,11 @@ class PricingService:
                     applied_discounts=applied_discounts
                 ))
             
+            # Cache the results
+            pricing_cache.set_bulk_pricing(str(user_tier_id), [str(pid) for pid in product_ids], [r.model_dump() for r in results])
+
             return results
 
-    async def calculate_bulk_product_pricing(self, product_data: List[Dict[str, Any]], user_tier_id: Optional[int]) -> List[ProductPricingSchema]:
-        """Calculate pricing for multiple products"""
-        # Process products in parallel for better performance
-        import asyncio
-        
-        async def process_single_product(p_data):
-            product_id = int(p_data["id"])
-            quantity = p_data.get("quantity", 1)
-            product_category_ids = p_data.get("category_ids", [])
-            try:
-                pricing = await self.calculate_product_price(user_tier_id, product_id, product_category_ids, quantity)
-                return pricing
-            except ResourceNotFoundException:
-                # Skip products that don't exist
-                return None
-        
-        # Create tasks for all products
-        tasks = [process_single_product(p_data) for p_data in product_data]
-        
-        # Execute all tasks concurrently
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Filter out None values and exceptions
-        valid_results = []
-        for result in results:
-            if result is not None and not isinstance(result, Exception):
-                valid_results.append(result)
-        
-        return valid_results
 
     # Helper methods
     async def _price_list_to_schema(self, price_list: PriceList) -> PriceListSchema:

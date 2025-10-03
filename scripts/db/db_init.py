@@ -12,6 +12,7 @@ from src.database.models.user import User  # Import User model to ensure it's re
 from src.database.models.address import Address  # Added import
 from src.database.models.cart import Cart  # Added import
 from src.database.models.category import Category  # Added import
+from src.database.models.ecommerce_category import EcommerceCategory  # Added ecommerce category model
 from src.database.models.product import Product, Tag, ProductTag  # Added product models
 from src.database.models.associations import product_categories  # Import association table
 from src.database.models.store import Store  # Added store model

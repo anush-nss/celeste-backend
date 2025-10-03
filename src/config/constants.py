@@ -42,6 +42,9 @@ class Collections(str, Enum):
     PRICE_LISTS = "price_lists"
     PRICE_LIST_LINES = "price_list_lines"
     CUSTOMER_TIERS = "customer_tiers"
+    CARTS = "carts"
+    CART_USERS = "cart_users"
+    CART_ITEMS = "cart_items"
 
 
 # Store-related constants
@@ -78,6 +81,18 @@ DISTANCE_PRECISION = 0.1
 
 # Business hours format
 HOUR_FORMAT = "%H:%M"
+
+
+# Cart-related constants
+class CartStatus(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    ORDERED = "ordered"
+
+
+class CartUserRole(str, Enum):
+    OWNER = "owner"
+    VIEWER = "viewer"
 
 
 # Cache invalidation scope constants

@@ -10,6 +10,7 @@ from src.api.inventory.models import (
     UpdateInventorySchema,
     AdjustInventorySchema,
 )
+from src.api.inventory.services import InventoryTransactionService
 from src.shared.exceptions import ResourceNotFoundException, ValidationException, ConflictException
 from src.shared.error_handler import ErrorHandler, handle_service_errors
 from sqlalchemy.exc import IntegrityError
@@ -18,11 +19,12 @@ from sqlalchemy.exc import IntegrityError
 class InventoryService:
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
+        self.transaction_service = InventoryTransactionService()
 
     @handle_service_errors("retrieving inventory")
     async def get_inventory_by_product_and_store(
         self, product_id: int, store_id: int
-    ) -> Inventory:
+    ) -> InventorySchema | None:
         """Get inventory by product and store ID, raising an error if not found."""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -33,7 +35,7 @@ class InventoryService:
                 raise ResourceNotFoundException(
                     f"Inventory for product {product_id} at store {store_id} not found"
                 )
-            return inventory
+            return InventorySchema.model_validate(inventory)
 
     @handle_service_errors("retrieving all inventory")
     async def get_all_inventory(
@@ -78,6 +80,41 @@ class InventoryService:
                 "Inventory entry for this product and store already exists."
             )
 
+    @handle_service_errors("creating multiple inventory items")
+    async def create_inventory_items(
+        self, inventory_data_list: List[CreateInventorySchema]
+    ) -> List[InventorySchema]:
+        """Create multiple inventory items in a single transaction."""
+        if not inventory_data_list:
+            return []
+
+        try:
+            async with AsyncSessionLocal() as session:
+                created_inventory_items = []
+
+                for inventory_data in inventory_data_list:
+                    new_inventory = Inventory(**inventory_data.model_dump())
+                    session.add(new_inventory)
+                    created_inventory_items.append(new_inventory)
+
+                await session.commit()
+
+                # Refresh all items to get their IDs and updated timestamps
+                for inventory in created_inventory_items:
+                    await session.refresh(inventory)
+
+                return [InventorySchema.model_validate(inventory) for inventory in created_inventory_items]
+
+        except IntegrityError as e:
+            # Check if it's a unique constraint violation
+            if "unique constraint" in str(e).lower() or "duplicate key" in str(e).lower():
+                raise ConflictException(
+                    "One or more inventory entries for the specified product and store combinations already exist."
+                )
+            raise ConflictException(f"Database integrity error: {str(e)}")
+        except Exception as e:
+            raise ValidationException(f"Error creating inventory items: {str(e)}")
+
     @handle_service_errors("updating inventory")
     async def update_inventory(
         self, inventory_id: int, inventory_data: UpdateInventorySchema
@@ -116,98 +153,28 @@ class InventoryService:
             await session.commit()
             return True
 
-    @handle_service_errors("adjusting stock")
+    # Transaction methods - delegated to InventoryTransactionService
     async def adjust_inventory_stock(
-        self, adjustment_data: AdjustInventorySchema
+        self, adjustment_data: AdjustInventorySchema, session
     ) -> InventorySchema:
         """Atomically adjust stock, hold, or reserved quantities."""
-        async with AsyncSessionLocal() as session:
-            # Lock the specific inventory row for the duration of the transaction
-            result = await session.execute(
-                select(Inventory).filter_by(
-                    product_id=adjustment_data.product_id,
-                    store_id=adjustment_data.store_id
-                ).with_for_update()
-            )
-            inventory = result.scalars().first()
+        return await self.transaction_service.adjust_inventory_stock(adjustment_data, session)
 
-            if not inventory:
-                raise ResourceNotFoundException(
-                    f"Inventory for product {adjustment_data.product_id} at store {adjustment_data.store_id} not found."
-                )
-
-            # Calculate proposed changes
-            new_available = inventory.quantity_available + adjustment_data.available_change
-            new_on_hold = inventory.quantity_on_hold + adjustment_data.on_hold_change
-            new_reserved = inventory.quantity_reserved + adjustment_data.reserved_change
-
-            # Validate that no quantity goes below zero
-            if new_available < 0:
-                raise ValidationException("Insufficient stock for this operation.")
-            if new_on_hold < 0:
-                raise ValidationException("Cannot release more items than are on hold.")
-            if new_reserved < 0:
-                raise ValidationException("Cannot release more items than are reserved.")
-
-            # Apply changes
-            inventory.quantity_available = new_available
-            inventory.quantity_on_hold = new_on_hold
-            inventory.quantity_reserved = new_reserved
-
-            await session.commit()
-            await session.refresh(inventory)
-            return InventorySchema.model_validate(inventory)
-
-    async def place_hold(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
+    async def place_hold(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
         """Place a hold on inventory for an order."""
-        if quantity <= 0:
-            raise ValidationException("Quantity must be positive.")
+        return await self.transaction_service.place_hold(product_id, store_id, quantity, session)
 
-        adjustment = AdjustInventorySchema(
-            product_id=product_id,
-            store_id=store_id,
-            available_change=-quantity,
-            on_hold_change=quantity
-        )
-        return await self.adjust_inventory_stock(adjustment)
-
-    async def release_hold(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
+    async def release_hold(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
         """Release a hold on inventory (e.g., order cancelled)."""
-        if quantity <= 0:
-            raise ValidationException("Quantity must be positive.")
+        return await self.transaction_service.release_hold(product_id, store_id, quantity, session)
 
-        adjustment = AdjustInventorySchema(
-            product_id=product_id,
-            store_id=store_id,
-            available_change=quantity,
-            on_hold_change=-quantity
-        )
-        return await self.adjust_inventory_stock(adjustment)
-
-    async def confirm_reservation(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
+    async def confirm_reservation(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
         """Convert a hold to a reservation (e.g., payment confirmed)."""
-        if quantity <= 0:
-            raise ValidationException("Quantity must be positive.")
+        return await self.transaction_service.confirm_reservation(product_id, store_id, quantity, session)
 
-        adjustment = AdjustInventorySchema(
-            product_id=product_id,
-            store_id=store_id,
-            on_hold_change=-quantity,
-            reserved_change=quantity
-        )
-        return await self.adjust_inventory_stock(adjustment)
-
-    async def fulfill_order(self, product_id: int, store_id: int, quantity: int) -> InventorySchema:
+    async def fulfill_order(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
         """Fulfill an order by removing reserved stock."""
-        if quantity <= 0:
-            raise ValidationException("Quantity must be positive.")
-
-        adjustment = AdjustInventorySchema(
-            product_id=product_id,
-            store_id=store_id,
-            reserved_change=-quantity
-        )
-        return await self.adjust_inventory_stock(adjustment)
+        return await self.transaction_service.fulfill_order(product_id, store_id, quantity, session)
 
     @handle_service_errors("retrieving inventory for products")
     async def get_inventory_for_products_in_store(

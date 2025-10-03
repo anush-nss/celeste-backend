@@ -14,10 +14,29 @@ class Category(Base):
     __tablename__ = "categories"
     __table_args__ = (
         CheckConstraint('sort_order >= 0', name='check_sort_order_non_negative'),
-        Index('idx_categories_name', 'name'),
-        Index('idx_categories_parent', 'parent_category_id'),
-        Index('idx_categories_sort_order', 'sort_order'),
+
+        # Core category navigation indexes
         Index('idx_categories_parent_sort', 'parent_category_id', 'sort_order'),
+        Index('idx_categories_sort_order', 'sort_order'),
+        Index('idx_categories_parent', 'parent_category_id'),
+
+        # Category hierarchy queries
+        Index('idx_categories_hierarchy_root', 'parent_category_id', 'name',
+              postgresql_where="parent_category_id IS NULL"),
+        Index('idx_categories_hierarchy_children', 'parent_category_id', 'sort_order', 'name',
+              postgresql_where="parent_category_id IS NOT NULL"),
+
+        # Search and filtering indexes
+        Index('idx_categories_name_trgm', 'name', postgresql_using='gin', postgresql_ops={'name': 'gin_trgm_ops'}),
+        Index('idx_categories_name_exact', 'name', unique=True),
+
+        # Administrative and timestamp indexes
+        Index('idx_categories_created_at', 'created_at'),
+        Index('idx_categories_updated_at', 'updated_at'),
+
+        # Composite indexes for common queries
+        Index('idx_categories_parent_name', 'parent_category_id', 'name'),
+        Index('idx_categories_sort_name', 'sort_order', 'name'),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)

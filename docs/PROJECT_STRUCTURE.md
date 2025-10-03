@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Celeste is a FastAPI-based e-commerce backend API that provides comprehensive functionality for managing users, products, orders, inventory, and more. The application uses Firebase for authentication, Firestore as the primary database, and Redis for caching.
+Celeste is a FastAPI-based e-commerce backend API that provides comprehensive functionality for managing users, products, orders, inventory, and more. The application uses Firebase for authentication, PostgreSQL for the primary database, and Redis for caching.
 
 ## Technology Stack
 
@@ -13,17 +13,16 @@ Celeste is a FastAPI-based e-commerce backend API that provides comprehensive fu
 - **Pydantic**: Data validation and serialization
 - **Uvicorn**: ASGI server for running the application
 - **Redis**: In-memory data store for caching
+- **SQLAlchemy**: ORM for PostgreSQL
 
 ### Database & Authentication
-- **Firebase Firestore**: NoSQL document database
+- **PostgreSQL**: Relational database
 - **Firebase Auth**: Authentication and user management
 - **JWT**: JSON Web Tokens for secure API access
 
 ### Development Tools
 - **Python-dotenv**: Environment variable management
-- **Email-validator**: Email validation utilities
-- **Requests**: HTTP library for external API calls
-- **Geopy**: Geospatial library for distance calculations and geocoding
+- **Alembic**: Database migration tool
 
 ## Project Structure
 
@@ -36,78 +35,49 @@ celeste/
 │   ├── __init__.py
 │   ├── api/                        # Modular API structure
 │   │   ├── admin/                  # Admin functionality
-│   │   │   ├── routes.py           # Admin routes (dev tools)
-│   │   │   └── __init__.py
+│   │   │   └── routes.py           # Admin routes (dev tools)
 │   │   ├── auth/                   # Authentication module
 │   │   │   ├── routes.py           # Authentication routes
 │   │   │   ├── models.py           # Authentication models
-│   │   │   └── __init__.py
+│   │   │   └── service.py          # Authentication service
+│   │   ├── carts/                  # Cart management
+│   │   │   └── service.py          # Cart service
 │   │   ├── categories/             # Category management
-│   │   │   ├── routes.py           # Category routes
-│   │   │   ├── models.py           # Category models
-│   │   │   ├── service.py          # Category services
-│   │   │   ├── cache.py            # Category caching
-│   │   │   └── __init__.py
+│   │   │   ├── routes.py, models.py, service.py, cache.py
+│   │   ├── ecommerce_categories/   # Ecommerce Category management
+│   │   │   ├── routes.py, models.py, service.py
 │   │   ├── inventory/              # Inventory management
-│   │   │   ├── routes.py           # Inventory routes
-│   │   │   ├── models.py           # Inventory models
-│   │   │   ├── service.py          # Inventory services
-│   │   │   └── __init__.py
+│   │   │   ├── routes.py, models.py, service.py
 │   │   ├── orders/                 # Order management
-│   │   │   ├── routes.py           # Order routes
-│   │   │   ├── models.py           # Order models
-│   │   │   ├── service.py          # Order services
-│   │   │   └── __init__.py
+│   │   │   ├── routes.py, models.py, service.py
 │   │   ├── pricing/                # Pricing management
-│   │   │   ├── routes.py           # Pricing management routes
-│   │   │   ├── models.py           # Pricing and tier models
-│   │   │   ├── service.py          # Pricing calculations service
-│   │   │   ├── cache.py            # Pricing caching
-│   │   │   └── __init__.py
+│   │   │   ├── routes.py, models.py, service.py, cache.py
 │   │   ├── products/               # Product management
-│   │   │   ├── routes.py           # Enhanced products with smart pricing
-│   │   │   ├── models.py           # Enhanced product models with pricing
-│   │   │   ├── service.py          # Enhanced product service with pagination
-│   │   │   ├── cache.py            # Product caching
-│   │   │   └── __init__.py
-│   │   ├── stores/                 # Store management with geospatial features
-│   │   │   ├── routes.py           # Store routes with location-based search
-│   │   │   ├── models.py           # Store models with location schemas
-│   │   │   ├── service.py          # Store services with geopy integration
-│   │   │   ├── cache.py            # Store caching (non-location queries only)
-│   │   │   └── __init__.py
+│   │   │   ├── routes.py, models.py, service.py, cache.py
+│   │   ├── stores/                 # Store management
+│   │   │   ├── routes.py, models.py, service.py, cache.py
+│   │   ├── tags/                   # Tag management
+│   │   │   ├── routes.py, models.py, service.py
 │   │   ├── tiers/                  # Customer tier management
-│   │   │   ├── routes.py           # Tier management routes (admin + user)
-│   │   │   ├── models.py           # Customer tier models and schemas
-│   │   │   ├── service.py          # Tier evaluation and management service
-│   │   │   ├── cache.py            # Tier caching
-│   │   │   └── __init__.py
+│   │   │   ├── routes.py, models.py, service.py, cache.py
 │   │   └── users/                  # User management
-│   │       ├── routes.py           # User routes with tier support
-│   │       ├── models.py           # Enhanced user models with tiers
-│   │       ├── service.py          # Enhanced user service with tiers
-│   │       └── __init__.py
+│   │       ├── routes.py, models.py, service.py
 │   ├── config/                     # Configuration management
-│   │   ├── constants.py            # Enhanced constants with tiers and pricing
-│   │   ├── settings.py             # Application settings
-│   │   └── cache_config.py         # Cache configuration
+│   │   ├── constants.py, settings.py, cache_config.py
+│   ├── database/                   # Database configuration and models
+│   │   ├── connection.py, base.py, performance_config.py
+│   │   └── models/                 # SQLAlchemy models
 │   ├── dependencies/               # Dependency injection
-│   │   ├── auth.py                 # Auth dependencies and role checking
-│   │   ├── tiers.py                # Tier-related dependencies
-│   │   └── __init__.py
+│   │   ├── auth.py, tiers.py
 │   ├── middleware/                 # Middleware components
-│   │   ├── timing.py               # Request timing middleware
-│   │   └── __init__.py
+│   │   ├── error.py, timing.py
 │   └── shared/                     # Shared utilities
-│       ├── db_client.py            # Firestore client initialization
-│       ├── core_cache.py           # Core Redis cache connection
-│       ├── cache_invalidation.py   # Cross-domain cache invalidation manager
-│       ├── geo_utils.py            # Geospatial utilities with geopy integration
-│       ├── exceptions.py           # Custom exceptions
-│       └── responses.py            # Response formatting
+│       ├── db_client.py, core_cache.py, cache_invalidation.py, geo_utils.py, etc.
 ├── main.py                         # Application entry point
 ├── requirements.txt                # Python dependencies
-├── .env.example                    # Environment variables example
+├── pyproject.toml                  # Project configuration
+├── alembic.ini                     # Alembic configuration
+├── migrations/                     # Database migrations
 └── README.md                       # Project readme
 ```
 
@@ -125,29 +95,17 @@ The main application file that:
 
 All business logic is encapsulated in asynchronous service classes. This ensures that all database operations are non-blocking, leading to higher performance and scalability.
 
-#### General Service Patterns
-- **Fully Asynchronous:** All methods that perform I/O are `async`.
-- **Separation of Concerns:** Services are responsible for business logic, keeping the route handlers clean and focused on handling HTTP requests.
-- **Database Interaction:** All interaction with Firestore is handled within the service layer.
-
 ### 3. Caching Layer (`src/api/{domain}/cache.py`)
 
 To ensure high performance and reduce database load, the application uses a Redis-based caching layer.
 
-- **`src/shared/core_cache.py`**: Provides the core Redis connection and basic cache operations (get, set, delete).
-- **`src/api/{domain}/cache.py`**: Each domain has its own cache module that defines domain-specific caching logic, keys, and TTLs.
-- **`src/shared/cache_invalidation.py`**: A centralized manager for handling cross-domain cache invalidation, ensuring data consistency.
+- **`src/shared/core_cache.py`**: Provides the core Redis connection and basic cache operations.
+- **`src/api/{domain}/cache.py`**: Each domain has its own cache module that defines domain-specific caching logic.
+- **`src/shared/cache_invalidation.py`**: A centralized manager for handling cross-domain cache invalidation.
 
 ### 4. API Routes (Domain-Specific `src/api/{domain}/routes.py`)
 
 Each route module handles a specific domain of functionality. All route handlers are `async` and `await` calls to the service layer.
-
-#### Store Routes with Geospatial Features
-The stores module includes advanced geospatial functionality:
-- **Unified Endpoint**: `/stores` handles both simple queries and location-based searches
-- **Distance Calculations**: Uses geopy for precise geodesic distance calculations (in kilometers)
-- **Smart Caching**: Caches non-location queries while calculating distances in real-time
-- **Feature Filtering**: Supports multiple store feature filtering (wifi, parking, etc.)
 
 ### 5. Data Models (Domain-Specific `src/api/{domain}/models.py`)
 
@@ -161,23 +119,7 @@ FastAPI's dependency injection system is used for:
 
 ### 7. Shared Components (`src/shared/`)
 
-- **`db_client.py`**: Initializes the asynchronous Firestore client.
-- **`geo_utils.py`**: Geospatial utilities using geopy for distance calculations, geocoding, and reverse geocoding.
-- **`exceptions.py`**: Defines custom exception classes.
-- **`responses.py`**: Standardizes API response formats.
-
-## Design Patterns & Principles
-
-- **Separation of Concerns**: Routers, services, and models are kept in separate modules.
-- **Asynchronous Everywhere**: The entire application is built on an async-first principle for performance.
-- **Dependency Injection**: Used extensively for managing dependencies like authentication and services.
-- **Centralized Caching**: A dedicated caching layer with cross-domain invalidation logic.
-
-## Future Enhancements
-
-### Potential Improvements
-1. **File Storage**: Cloud storage for product images.
-2. **Search**: Elasticsearch for advanced product search.
-3. **Notifications**: Push notifications for order status updates and promotions.
-4. **Analytics**: User behavior, pricing effectiveness, and sales analytics.
-5. **Testing**: A comprehensive test suite for all services and endpoints.
+- **`database/connection.py`**: Initializes the asynchronous SQLAlchemy session.
+- **`shared/geo_utils.py`**: Geospatial utilities for distance calculations.
+- **`shared/exceptions.py`**: Defines custom exception classes.
+- **`shared/responses.py`**: Standardizes API response formats.

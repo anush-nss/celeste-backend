@@ -17,10 +17,20 @@ category_service = CategoryService()
 
 
 @categories_router.get(
-    "/", summary="Get all categories", response_model=List[CategorySchema]
+    "/", summary="Get categories with flexible filtering", response_model=List[CategorySchema]
 )
-async def get_all_categories(query: CategoryQuerySchema = Query(True, description="Whether to include subcategories in the response")):
-    categories = await category_service.get_all_categories(include_subcategories=query.include_subcategories)
+async def get_all_categories(
+    include_subcategories: bool = Query(True, description="Whether to include subcategories in the response"),
+    parent_only: bool = Query(False, description="Get only parent categories (no parent)"),
+    parent_id: int = Query(None, description="Get subcategories of specific parent ID"),
+    subcategories_only: bool = Query(False, description="Get only subcategories (have parent)")
+):
+    categories = await category_service.get_all_categories(
+        include_subcategories=include_subcategories,
+        parent_only=parent_only,
+        parent_id=parent_id,
+        subcategories_only=subcategories_only
+    )
     return success_response([c.model_dump(mode="json") for c in categories])
 
 

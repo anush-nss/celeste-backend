@@ -9,10 +9,25 @@ from src.api.users.models import (
     UpdateCartItemSchema,
     AddressSchema,
     UpdateAddressSchema,
-    CartItemSchema
+    CartItemSchema,
+    # Multi-cart models
+    CreateCartSchema,
+    UpdateCartSchema,
+    CartSchema,
+    CartListSchema,
+    AddCartItemSchema,
+    UpdateCartItemQuantitySchema,
+    ShareCartSchema,
+    CartSharingDetailsSchema,
+    MultiCartCheckoutSchema,
+    OrderPreviewSchema,
+    CheckoutResponseSchema,
+    CartItemDetailSchema
 )
 from src.api.auth.models import DecodedToken
 from src.api.users.service import UserService
+from src.api.carts.service import CartService
+from src.api.orders.service import OrderService
 from src.dependencies.auth import get_current_user, RoleChecker
 from src.config.constants import UserRole
 from src.shared.exceptions import ResourceNotFoundException, ForbiddenException, UnauthorizedException, ValidationException
@@ -20,6 +35,7 @@ from src.shared.responses import success_response
 
 users_router = APIRouter(prefix="/users", tags=["Users"])
 user_service = UserService()
+order_service = OrderService()
 
 
 
@@ -28,14 +44,13 @@ user_service = UserService()
 @users_router.get("/me", summary="Get current user profile")
 async def get_user_profile(
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
-    include_cart: bool = Query(True, description="Include user's cart in the response"),
     include_addresses: bool = Query(True, description="Include user's addresses in the response"),
 ):
     user_id = current_user.uid
     if not user_id:
         raise UnauthorizedException(detail="User ID not found in token")
 
-    user = await user_service.get_user_by_id(user_id, include_cart=include_cart, include_addresses=include_addresses)
+    user = await user_service.get_user_by_id(user_id, include_addresses=include_addresses)
 
     if not user:
         raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
@@ -61,68 +76,8 @@ async def update_user_profile(
     return success_response(updated_user.model_dump(mode="json"))
 
 
-@users_router.post("/me/cart", summary="Add an item to the user's cart")
-async def add_to_cart(
-    item: AddToCartSchema,
-    current_user: Annotated[DecodedToken, Depends(get_current_user)],
-):
-    user_id = current_user.uid
-    if not user_id:
-        raise UnauthorizedException(detail="User ID not found in token")
-
-    cart_item = await user_service.add_to_cart(user_id, item)
-    if not cart_item:
-        raise HTTPException(status_code=500, detail="Failed to add item to cart")
-
-    return success_response(cart_item.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
 
 
-@users_router.put("/me/cart/{product_id}", summary="Update an item in the user's cart")
-async def update_cart_item(
-    product_id: int,
-    item: UpdateCartItemSchema,
-    current_user: Annotated[DecodedToken, Depends(get_current_user)],
-):
-    user_id = current_user.uid
-    if not user_id:
-        raise UnauthorizedException(detail="User ID not found in token")
-
-    cart_item = await user_service.update_cart_item(user_id, product_id, item)
-    if not cart_item:
-        raise HTTPException(status_code=500, detail="Failed to update cart item")
-
-    return success_response(cart_item.model_dump(mode="json"))
-
-
-@users_router.delete(
-    "/me/cart/{product_id}", summary="Remove an item from the user's cart"
-)
-async def remove_from_cart(
-    product_id: int,
-    current_user: Annotated[DecodedToken, Depends(get_current_user)],
-    quantity: Optional[int] = Query(None, ge=1, description="Quantity to remove (if not specified, removes product completely)")
-):
-    user_id = current_user.uid
-    if not user_id:
-        raise UnauthorizedException(detail="User ID not found in token")
-
-    result = await user_service.remove_from_cart(user_id, product_id, quantity)
-
-    return success_response({
-        "userId": user_id,
-        "product_id": product_id,
-        **result
-    })
-
-
-@users_router.get("/me/cart", summary="Get the user's cart")
-async def get_cart(current_user: Annotated[DecodedToken, Depends(get_current_user)]):
-    user_id = current_user.uid
-    if not user_id:
-        raise UnauthorizedException(detail="User ID not found in token")
-
-    cart = await user_service.get_cart(user_id)
-    return success_response(cart)
 
 
 # Address Management Endpoints
@@ -217,3 +172,208 @@ async def set_default_address(
         raise HTTPException(status_code=500, detail="Failed to set default address")
 
     return success_response(default_address.model_dump(mode="json"))
+
+
+# Multi-Cart System Routes
+
+@users_router.post("/me/carts", summary="Create a new cart", status_code=status.HTTP_201_CREATED)
+async def create_cart(
+    cart_data: CreateCartSchema,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+) -> CartSchema:
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    cart = await CartService.create_cart(user_id, cart_data)
+    return success_response(cart.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
+
+
+@users_router.get("/me/carts", summary="Get all user carts (owned + shared)")
+async def get_user_carts(
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+) -> CartListSchema:
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    carts = await CartService.get_user_carts(user_id)
+    return success_response(carts.model_dump(mode="json"))
+
+
+@users_router.get("/me/carts/{cart_id}", summary="Get cart details")
+async def get_cart_details(
+    cart_id: int,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+) -> CartSchema:
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    cart = await CartService.get_cart_details(user_id, cart_id)
+    return success_response(cart.model_dump(mode="json"))
+
+
+@users_router.put("/me/carts/{cart_id}", summary="Update cart details (owner only)")
+async def update_cart(
+    cart_id: int,
+    cart_data: UpdateCartSchema,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+) -> CartSchema:
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    cart = await CartService.update_cart(user_id, cart_id, cart_data)
+    return success_response(cart.model_dump(mode="json"))
+
+
+@users_router.delete("/me/carts/{cart_id}", summary="Delete cart (owner only)", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_cart(
+    cart_id: int,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    await CartService.delete_cart(user_id, cart_id)
+    return success_response({"message": "Cart deleted successfully"}, status_code=status.HTTP_204_NO_CONTENT)
+
+
+# Cart Items Management
+
+@users_router.post("/me/carts/{cart_id}/items", summary="Add item to cart (owner only)", status_code=status.HTTP_201_CREATED)
+async def add_cart_item(
+    cart_id: int,
+    item_data: AddCartItemSchema,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+) -> CartItemDetailSchema:
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    item = await CartService.add_cart_item(user_id, cart_id, item_data)
+    return success_response(item.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)
+
+
+@users_router.put("/me/carts/{cart_id}/items/{item_id}", summary="Update cart item quantity (owner only)")
+async def update_cart_item(
+    cart_id: int,
+    item_id: int,
+    item_data: UpdateCartItemQuantitySchema,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+) -> CartItemDetailSchema:
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    item = await CartService.update_cart_item(user_id, cart_id, item_id, item_data)
+    return success_response(item.model_dump(mode="json"))
+
+
+@users_router.delete("/me/carts/{cart_id}/items/{product_id}", summary="Remove product from cart or reduce quantity (owner only)", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_cart_item(
+    cart_id: int,
+    product_id: int,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+    quantity: Optional[int] = Query(None, description="Quantity to reduce. If not provided, removes entire product from cart", ge=1),
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    if quantity is not None:
+        # Reduce quantity by specified amount
+        item = await CartService.reduce_cart_item_quantity_by_product(user_id, cart_id, product_id, quantity)
+        if item:
+            return success_response(item.model_dump(mode="json"))
+        else:
+            return success_response({"message": "Product removed from cart (quantity reached zero)"}, status_code=status.HTTP_204_NO_CONTENT)
+    else:
+        # Remove entire product from cart
+        await CartService.remove_cart_item_by_product(user_id, cart_id, product_id)
+        return success_response({"message": "Product removed from cart"}, status_code=status.HTTP_204_NO_CONTENT)
+
+
+# Cart Sharing
+
+@users_router.post("/me/carts/{cart_id}/share", summary="Share cart with another user (owner only)", status_code=status.HTTP_201_CREATED)
+async def share_cart(
+    cart_id: int,
+    share_data: ShareCartSchema,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    result = await CartService.share_cart(user_id, cart_id, share_data)
+    return success_response(result, status_code=status.HTTP_201_CREATED)
+
+
+@users_router.delete("/me/carts/{cart_id}/share/{target_user_id}", summary="Remove cart sharing (owner only)", status_code=status.HTTP_204_NO_CONTENT)
+async def unshare_cart(
+    cart_id: int,
+    target_user_id: str,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    await CartService.unshare_cart(user_id, cart_id, target_user_id)
+    return success_response({"message": "Cart sharing removed"}, status_code=status.HTTP_204_NO_CONTENT)
+
+
+@users_router.get("/me/carts/{cart_id}/shares", summary="Get cart sharing details (owner only)")
+async def get_cart_sharing_details(
+    cart_id: int,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+) -> CartSharingDetailsSchema:
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    details = await CartService.get_cart_sharing_details(user_id, cart_id)
+    return success_response(details.model_dump(mode="json"))
+
+
+# Multi-Cart Checkout
+
+@users_router.get("/me/checkout/carts", summary="Get available carts for checkout")
+async def get_available_carts_for_checkout(
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    carts = await CartService.get_available_carts_for_checkout(user_id)
+    return success_response({"available_carts": carts})
+
+
+@users_router.post("/me/checkout/preview", summary="Preview multi-cart order")
+async def preview_multi_cart_order(
+    checkout_data: MultiCartCheckoutSchema,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+) -> OrderPreviewSchema:
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    preview = await CartService.preview_multi_cart_order(user_id, checkout_data)
+    return success_response(preview.model_dump(mode="json"))
+
+
+@users_router.post("/me/checkout/order", summary="Create multi-cart order", status_code=status.HTTP_201_CREATED)
+async def create_multi_cart_order(
+    checkout_data: MultiCartCheckoutSchema,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+) -> CheckoutResponseSchema:
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    order = await order_service.create_multi_cart_order(user_id, checkout_data)
+    return success_response(order.model_dump(mode="json"), status_code=status.HTTP_201_CREATED)

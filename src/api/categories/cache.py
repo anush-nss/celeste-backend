@@ -24,6 +24,12 @@ class CategoriesCache:
         """Generate cache key for all categories"""
         return self.cache.generate_key(self.prefix, "all")
 
+    def get_filtered_categories_key(self, filter_type: str, filter_value: str = None) -> str:
+        """Generate cache key for filtered categories"""
+        if filter_value:
+            return self.cache.generate_key(self.prefix, f"{filter_type}_{filter_value}")
+        return self.cache.generate_key(self.prefix, filter_type)
+
     # Cache operations with domain-specific TTL
     def get_category(self, category_id: int) -> Optional[dict]: # Changed type to int
         """Get cached category data"""
@@ -44,6 +50,17 @@ class CategoriesCache:
     def set_all_categories(self, categories: List[dict]) -> bool: # Changed type hint
         """Cache all categories with configured TTL"""
         key = self.get_all_categories_key()
+        ttl = cache_config.get_ttl("categories")
+        return self.cache.set(key, categories, ttl_seconds=ttl)
+
+    def get_filtered_categories(self, filter_type: str, filter_value: str = None) -> Optional[List[dict]]:
+        """Get cached filtered categories"""
+        key = self.get_filtered_categories_key(filter_type, filter_value)
+        return self.cache.get(key)
+
+    def set_filtered_categories(self, categories: List[dict], filter_type: str, filter_value: str = None) -> bool:
+        """Cache filtered categories with configured TTL"""
+        key = self.get_filtered_categories_key(filter_type, filter_value)
         ttl = cache_config.get_ttl("categories")
         return self.cache.set(key, categories, ttl_seconds=ttl)
 
