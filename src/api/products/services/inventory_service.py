@@ -4,6 +4,7 @@ from typing import Dict, List
 from sqlalchemy import text
 
 from src.api.products.models import EnhancedProductSchema, InventoryInfoSchema
+from src.config.constants import DEFAULT_SEARCH_RADIUS_KM
 from src.database.connection import AsyncSessionLocal
 from src.shared.cache_service import cache_service
 from src.shared.error_handler import ErrorHandler
@@ -121,7 +122,7 @@ class ProductInventoryService:
         return self._apply_inventory_to_products(products, cached_inventory)
 
     async def get_stores_by_location(
-        self, latitude: float, longitude: float, radius_km: float = 10.0
+        self, latitude: float, longitude: float, radius_km: float = DEFAULT_SEARCH_RADIUS_KM
     ) -> List[int]:
         """Get stores near location using spatial query with caching"""
         cache_key = f"stores:location:{latitude:.6f}:{longitude:.6f}:{radius_km}"

@@ -54,7 +54,7 @@ class InventoryTransactionService:
         inventory.quantity_reserved = new_reserved
 
         # Note: session.commit() should be handled by the caller
-        await session.refresh(inventory)
+        # Don't refresh here - it would undo changes before commit!
         return InventorySchema.model_validate(inventory)
 
     async def place_hold(

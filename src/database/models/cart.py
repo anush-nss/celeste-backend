@@ -23,6 +23,14 @@ class Cart(Base):
         CheckConstraint(
             "status IN ('active', 'inactive', 'ordered')", name="check_cart_status"
         ),
+        # Prevent duplicate active cart names per user (partial unique index)
+        Index(
+            "unique_active_cart_name_per_user",
+            "created_by",
+            "name",
+            unique=True,
+            postgresql_where=text("status = 'active'")
+        ),
         # Core cart lookup indexes
         Index("idx_carts_created_by", "created_by"),
         Index("idx_carts_status", "status"),

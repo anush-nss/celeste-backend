@@ -1,5 +1,5 @@
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -119,6 +119,11 @@ class OrderService:
                     f"Items not available at pickup store: {unavailable_products}"
                 )
 
+            # For pickup, all products come from the same store
+            all_product_ids = [
+                item.product_id for group in cart_groups for item in group.items
+            ]
+
             return [
                 {
                     "store_id": location_obj.id,
@@ -129,6 +134,7 @@ class OrderService:
                     "delivery_lng": None,
                     "cart_ids": [group.cart_id for group in cart_groups],
                     "store_total": sum(group.cart_total for group in cart_groups),
+                    "product_ids": all_product_ids,
                 }
             ]
 
@@ -176,7 +182,10 @@ class OrderService:
             ].items():
                 # Get cart IDs for this store by matching product IDs back to cart_items
                 store_cart_ids = []
+                product_ids_for_store = []  # Track which products are from this store
+
                 for assigned_item in assigned_items:
+                    product_ids_for_store.append(assigned_item["product_id"])
                     for cart_item in cart_items:
                         if (
                             cart_item["product_id"] == assigned_item["product_id"]
@@ -214,6 +223,7 @@ class OrderService:
                         "delivery_lng": float(location_obj.longitude),
                         "cart_ids": store_cart_ids,
                         "store_total": store_total,
+                        "product_ids": product_ids_for_store,  # Add product IDs to mapping
                     }
                 )
 
@@ -308,13 +318,16 @@ class OrderService:
                         session=session,
                     )
 
-                    price = product.base_price
-                    total_amount += price * item_data.quantity
+                    unit_price = Decimal(str(product.base_price))
+                    total_price = unit_price * item_data.quantity
+                    total_amount += total_price
                     order_items_to_create.append(
                         OrderItem(
                             product_id=item_data.product_id,
+                            store_id=order_data.store_id,
                             quantity=item_data.quantity,
-                            price=price,
+                            unit_price=unit_price,
+                            total_price=total_price,
                         )
                     )
 
@@ -362,7 +375,7 @@ class OrderService:
                     for item in order.items:
                         await self.inventory_service.confirm_reservation(
                             product_id=item.product_id,
-                            store_id=order.store_id,
+                            store_id=item.store_id,
                             quantity=item.quantity,
                             session=session,
                         )
@@ -372,7 +385,7 @@ class OrderService:
                         for item in order.items:
                             await self.inventory_service.release_hold(
                                 product_id=item.product_id,
-                                store_id=order.store_id,
+                                store_id=item.store_id,
                                 quantity=item.quantity,
                                 session=session,
                             )
@@ -391,13 +404,14 @@ class OrderService:
                     for item in order.items:
                         await self.inventory_service.fulfill_order(
                             product_id=item.product_id,
-                            store_id=order.store_id,
+                            store_id=item.store_id,
                             quantity=item.quantity,
                             session=session,
                         )
 
                 order.status = status_update.status
-                await session.commit()
+                # Note: session.begin() context manager auto-commits on exit
+                await session.flush()  # Ensure changes are persisted
                 await session.refresh(order)
                 return OrderSchema.model_validate(order)
 
@@ -460,25 +474,28 @@ class OrderService:
 
                 # STEP 9: Create order items and place inventory holds
                 placed_holds = []  # Track holds for error rollback
+
+                # Build product-to-store mapping from store assignments
+                product_store_map = {}
+                for store_assignment in store_assignments:
+                    # Map each product to its assigned store
+                    for product_id in store_assignment.get("product_ids", []):
+                        product_store_map[product_id] = store_assignment
+
                 try:
                     for cart_group in cart_groups:
-                        # Find the assigned store for this cart's items
-                        assigned_store = next(
-                            (
-                                store
-                                for store in store_assignments
-                                if cart_group.cart_id
-                                in store.get("cart_ids", [cart_group.cart_id])
-                            ),
-                            store_assignments[0],  # Fallback to main store
-                        )
-
                         for item in cart_group.items:
-                            # Create order item with pricing from preview
+                            # Get the correct assigned store for this specific product
+                            assigned_store = product_store_map.get(
+                                item.product_id, store_assignments[0]
+                            )
+
+                            # Create order item with pricing from preview and assigned store
                             order_item = OrderItem(
                                 order_id=new_order.id,
                                 source_cart_id=cart_group.cart_id,
                                 product_id=item.product_id,
+                                store_id=assigned_store["store_id"],
                                 quantity=item.quantity,
                                 unit_price=Decimal(str(item.final_price)),
                                 total_price=Decimal(str(item.total_price)),
@@ -508,7 +525,7 @@ class OrderService:
                             update(Cart)
                             .where(Cart.id == cart_id)
                             .values(
-                                status=CartStatus.ORDERED, ordered_at=datetime.now()
+                                status=CartStatus.ORDERED, ordered_at=datetime.now(timezone.utc)
                             )
                         )
 

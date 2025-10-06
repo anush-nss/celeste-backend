@@ -11,6 +11,7 @@ class OrderItemSchema(BaseModel):
     order_id: int
     source_cart_id: int
     product_id: int
+    store_id: int
     quantity: int
     unit_price: float
     total_price: float

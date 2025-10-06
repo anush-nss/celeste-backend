@@ -113,9 +113,11 @@ class OrderItem(Base):
         Index("idx_order_items_order_id", "order_id"),
         Index("idx_order_items_product_id", "product_id"),
         Index("idx_order_items_source_cart_id", "source_cart_id"),
+        Index("idx_order_items_store_id", "store_id"),
         # Composite indexes for order analysis
         Index("idx_order_items_order_product", "order_id", "product_id"),
         Index("idx_order_items_product_order", "product_id", "order_id"),
+        Index("idx_order_items_order_store", "order_id", "store_id"),
         # Pricing and quantity analysis
         Index("idx_order_items_unit_price", "unit_price"),
         Index("idx_order_items_total_price", "total_price"),
@@ -149,6 +151,9 @@ class OrderItem(Base):
     )
     product_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("products.id"), nullable=False
+    )
+    store_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("stores.id"), nullable=False
     )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)

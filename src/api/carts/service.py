@@ -22,7 +22,7 @@ from src.api.users.models import (
     UpdateCartItemQuantitySchema,
     UpdateCartSchema,
 )
-from src.config.constants import CartStatus, CartUserRole
+from src.config.constants import CartStatus, CartUserRole, DEFAULT_SEARCH_RADIUS_KM
 from src.database.connection import AsyncSessionLocal
 from src.database.models.address import Address
 from src.database.models.cart import Cart, CartItem, CartUser
@@ -87,7 +87,7 @@ class CartService:
         session, cart_groups: List, location_obj, location
     ):
         """
-        Optimized inventory check: directly use location object coordinates, no extra queries.
+        Check inventory using SAME logic as actual checkout for consistency.
         Returns InventoryValidationSummary with availability details.
         """
         from src.api.orders.services.store_selection_service import (
@@ -98,20 +98,7 @@ class CartService:
             InventoryValidationSummary,
         )
 
-        # Get coordinates directly from location_obj (already fetched in validation)
-        latitude = (
-            float(location_obj.latitude)
-            if location_obj and hasattr(location_obj, "latitude")
-            else None
-        )
-        longitude = (
-            float(location_obj.longitude)
-            if location_obj and hasattr(location_obj, "longitude")
-            else None
-        )
-
-        if not latitude or not longitude:
-            # Cannot determine location - return empty validation
+        if not location_obj:
             return InventoryValidationSummary(
                 can_fulfill_all=False,
                 items_checked=0,
@@ -127,23 +114,67 @@ class CartService:
                     {"product_id": item.product_id, "quantity": item.quantity}
                 )
 
-        # Use StoreSelectionService to check inventory at nearby stores
+        # Use EXACT SAME logic as checkout to ensure consistency
         store_selection_service = StoreSelectionService()
-        fulfillment_result = (
-            await store_selection_service.check_inventory_at_nearby_stores(
-                latitude=latitude,
-                longitude=longitude,
+
+        if location.mode == "pickup":
+            # Pickup mode: validate pickup store
+            fulfillment_result = await store_selection_service.validate_pickup_store(
+                store_id=location_obj.id,
                 cart_items=cart_items,
                 session=session,
-                radius_km=50.0,
             )
-        )
+            can_fulfill = fulfillment_result["all_items_available"]
+            unavailable_items = fulfillment_result["unavailable_items"]
 
-        # Map fulfillment info back to cart items
-        fulfillment_by_product = {
-            item["product_id"]: item for item in fulfillment_result.get("items", [])
-        }
+        else:
+            # Delivery mode: use same store selection as actual checkout
+            fulfillment_result = await store_selection_service.select_stores_for_delivery(
+                address_id=location_obj.id,
+                cart_items=cart_items,
+                session=session,
+            )
+            can_fulfill = len(fulfillment_result["unavailable_items"]) == 0
+            unavailable_items = fulfillment_result["unavailable_items"]
 
+        # Map store assignments to product fulfillment info
+        fulfillment_by_product = {}
+
+        if location.mode == "pickup":
+            # For pickup, all items from same store
+            for item in cart_items:
+                fulfillment_by_product[item["product_id"]] = {
+                    "can_fulfill": item not in unavailable_items,
+                    "quantity_requested": item["quantity"],
+                    "store_id": location_obj.id,
+                    "store_name": location_obj.name,
+                }
+        else:
+            # For delivery, map from store_assignments
+            store_assignments = fulfillment_result.get("store_assignments", {})
+
+            # Query store names for all assigned stores
+            store_ids = [int(sid) for sid in store_assignments.keys()]
+            stores_query = select(Store).where(Store.id.in_(store_ids))
+            stores_result = await session.execute(stores_query)
+            stores_dict = {s.id: s.name for s in stores_result.scalars().all()}
+
+            for store_id, assigned_items in store_assignments.items():
+                store_id_int = int(store_id)
+                store_name = stores_dict.get(
+                    store_id_int,
+                    fulfillment_result.get("primary_store", {}).get("name", f"Store {store_id}")
+                )
+
+                for assigned_item in assigned_items:
+                    fulfillment_by_product[assigned_item["product_id"]] = {
+                        "can_fulfill": True,
+                        "quantity_requested": assigned_item["quantity"],
+                        "store_id": store_id_int,
+                        "store_name": store_name,
+                    }
+
+        # Apply fulfillment status to cart items
         items_available = 0
         items_out_of_stock = 0
 
@@ -151,21 +182,17 @@ class CartService:
             for item in group.items:
                 fulfillment = fulfillment_by_product.get(item.product_id)
 
-                if fulfillment:
+                if fulfillment and fulfillment["can_fulfill"]:
                     item.inventory_status = InventoryStatusSchema(
-                        can_fulfill=fulfillment["can_fulfill"],
-                        quantity_requested=fulfillment["quantity_requested"],
-                        quantity_available=fulfillment["quantity_available"],
-                        store_id=fulfillment.get("store_id"),
-                        store_name=fulfillment.get("store_name"),
+                        can_fulfill=True,
+                        quantity_requested=item.quantity,
+                        quantity_available=item.quantity,  # At least this much available
+                        store_id=fulfillment["store_id"],
+                        store_name=fulfillment["store_name"],
                     )
-
-                    if fulfillment["can_fulfill"]:
-                        items_available += 1
-                    else:
-                        items_out_of_stock += 1
+                    items_available += 1
                 else:
-                    # No fulfillment info - treat as unavailable
+                    # Item is unavailable
                     item.inventory_status = InventoryStatusSchema(
                         can_fulfill=False,
                         quantity_requested=item.quantity,
@@ -176,7 +203,7 @@ class CartService:
                     items_out_of_stock += 1
 
         return InventoryValidationSummary(
-            can_fulfill_all=fulfillment_result.get("can_fulfill", False),
+            can_fulfill_all=can_fulfill,
             items_checked=len(cart_items),
             items_available=items_available,
             items_out_of_stock=items_out_of_stock,
@@ -196,7 +223,7 @@ class CartService:
                 )
             )
             existing_cart_result = await session.execute(existing_cart_query)
-            existing_cart = existing_cart_result.scalar_one_or_none()
+            existing_cart = existing_cart_result.scalars().first()
 
             if existing_cart:
                 raise ConflictException(
@@ -381,7 +408,7 @@ class CartService:
                     )
                 )
                 existing_cart_result = await session.execute(existing_cart_query)
-                existing_cart = existing_cart_result.scalar_one_or_none()
+                existing_cart = existing_cart_result.scalars().first()
 
                 if existing_cart:
                     raise ConflictException(

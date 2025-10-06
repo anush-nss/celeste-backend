@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import and_, text
 from sqlalchemy.future import select
 
+from src.config.constants import DEFAULT_SEARCH_RADIUS_KM
 from src.database.models.address import Address
 from src.database.models.inventory import Inventory
 from src.database.models.store import Store
@@ -151,12 +152,11 @@ class StoreSelectionService:
     async def _get_stores_by_distance(
         self, address_coords: Tuple[float, float], session
     ) -> List[Dict[str, Any]]:
-        """Get active stores ordered by distance from address"""
+        """Get active stores ordered by distance from address (within delivery radius)"""
 
         lat, lon = address_coords
 
-        # Use spatial query to get nearest stores
-        # This is a placeholder - real implementation would use PostGIS functions
+        # Use spatial query to get nearest stores within radius
         query = text("""
             SELECT
                 id,
@@ -170,11 +170,23 @@ class StoreSelectionService:
                 ) / 1000 as distance_km
             FROM stores
             WHERE is_active = true
+              AND ST_DWithin(
+                  ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                  ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+                  :radius_meters
+              )
             ORDER BY distance_km
             LIMIT 10
         """)
 
-        result = await session.execute(query, {"lat": lat, "lon": lon})
+        result = await session.execute(
+            query,
+            {
+                "lat": lat,
+                "lon": lon,
+                "radius_meters": DEFAULT_SEARCH_RADIUS_KM * 1000,  # Convert km to meters
+            },
+        )
         stores = []
 
         for row in result.fetchall():
@@ -265,7 +277,7 @@ class StoreSelectionService:
         longitude: float,
         cart_items: List[Dict[str, Any]],
         session,
-        radius_km: float = 50.0,
+        radius_km: float = DEFAULT_SEARCH_RADIUS_KM,
     ) -> Dict[str, Any]:
         """
         Simple inventory check: find nearby stores and check if items can be fulfilled.
