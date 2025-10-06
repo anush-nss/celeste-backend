@@ -440,8 +440,10 @@ class OrderService:
                         "Could not find any stores to fulfill the order."
                     )
 
-                # STEP 7: Calculate delivery charges
-                delivery_charge = self.calculate_delivery_charge(store_assignments)
+                # STEP 7: Calculate delivery charges (only for delivery mode)
+                delivery_charge = Decimal("0.00")
+                if checkout_data.location.mode == "delivery":
+                    delivery_charge = self.calculate_delivery_charge(store_assignments)
                 final_total = total_amount + delivery_charge
 
                 # STEP 8: Create main order record

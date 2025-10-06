@@ -309,14 +309,26 @@ class CheckoutLocationSchema(BaseModel):
             examples=["delivery", "pickup"],
         ),
     ]
-    id: Annotated[
-        int,
-        Field(
-            gt=0,
-            description="Address ID if delivery mode, Store ID if pickup mode",
-            examples=[123],
-        ),
-    ]
+    store_id: Optional[
+        Annotated[
+            int,
+            Field(
+                gt=0,
+                description="Store ID for pickup mode",
+                examples=[1],
+            ),
+        ]
+    ] = None
+    address_id: Optional[
+        Annotated[
+            int,
+            Field(
+                gt=0,
+                description="Address ID for delivery mode",
+                examples=[123],
+            ),
+        ]
+    ] = None
 
 
 class MultiCartCheckoutSchema(BaseModel):

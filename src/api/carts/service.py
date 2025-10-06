@@ -763,26 +763,32 @@ class CartService:
         # STEP 2: Validate location based on mode
         location_obj = None
         if checkout_data.location.mode == "delivery":
+            if not checkout_data.location.address_id:
+                raise ValidationException("address_id is required for delivery mode")
+
             location_query = select(Address).where(
                 and_(
-                    Address.id == checkout_data.location.id, Address.user_id == user_id
+                    Address.id == checkout_data.location.address_id, Address.user_id == user_id
                 )
             )
             location_result = await session.execute(location_query)
             location_obj = location_result.scalar_one_or_none()
             if not location_obj:
                 raise ValidationException(
-                    f"Address {checkout_data.location.id} not found or not owned by user"
+                    f"Address {checkout_data.location.address_id} not found or not owned by user"
                 )
         elif checkout_data.location.mode == "pickup":
+            if not checkout_data.location.store_id:
+                raise ValidationException("store_id is required for pickup mode")
+
             location_query = select(Store).where(
-                and_(Store.id == checkout_data.location.id, Store.is_active)
+                and_(Store.id == checkout_data.location.store_id, Store.is_active)
             )
             location_result = await session.execute(location_query)
             location_obj = location_result.scalar_one_or_none()
             if not location_obj:
                 raise ValidationException(
-                    f"Store {checkout_data.location.id} not found or inactive"
+                    f"Store {checkout_data.location.store_id} not found or inactive"
                 )
 
         validation_result["location_obj"] = location_obj
