@@ -1,13 +1,9 @@
-from fastapi import APIRouter, Depends, status
-from typing import Annotated
+from fastapi import APIRouter, status
+
 from src.api.auth.models import (
-    RegisterSchema,
-    LoginSchema,
     UserRegistration,
-    DecodedToken,
 )
 from src.api.auth.service import AuthService
-from src.dependencies.auth import get_current_user
 from src.shared.responses import success_response
 
 auth_router = APIRouter(prefix="/auth", tags=["Auth"])

@@ -1,20 +1,22 @@
-from fastapi import APIRouter, Depends, status, HTTPException
 from typing import Annotated, List
+
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from src.api.auth.models import DecodedToken
 from src.api.tiers.models import (
-    TierSchema,
-    CreateTierSchema,
-    UpdateTierSchema,
-    UserTierProgressSchema,
-    UserTierInfoSchema,
-    TierEvaluationSchema,
     BenefitSchema,
     CreateBenefitSchema,
+    CreateTierSchema,
+    TierEvaluationSchema,
+    TierSchema,
     UpdateBenefitSchema,
+    UpdateTierSchema,
+    UserTierInfoSchema,
+    UserTierProgressSchema,
 )
-from src.api.auth.models import DecodedToken
 from src.api.tiers.service import TierService
-from src.dependencies.auth import get_current_user, RoleChecker
 from src.config.constants import UserRole
+from src.dependencies.auth import RoleChecker, get_current_user
 from src.shared.exceptions import ResourceNotFoundException
 from src.shared.responses import success_response
 
@@ -23,9 +25,7 @@ tier_service = TierService()
 
 
 # Public Endpoints (No authentication required)
-@router.get(
-    "/", summary="Get all customer tiers", response_model=List[TierSchema]
-)
+@router.get("/", summary="Get all customer tiers", response_model=List[TierSchema])
 async def get_all_tiers(active_only: bool = True):
     """
     Get all customer tiers (public endpoint for displaying tier information).
@@ -36,9 +36,7 @@ async def get_all_tiers(active_only: bool = True):
     return success_response([tier.model_dump(mode="json") for tier in tiers])
 
 
-@router.get(
-    "/{tier_id}", summary="Get customer tier by ID", response_model=TierSchema
-)
+@router.get("/{tier_id}", summary="Get customer tier by ID", response_model=TierSchema)
 async def get_tier_by_id(tier_id: int):
     """Get a specific customer tier by ID (public endpoint)"""
     tier = await tier_service.get_tier_by_id(tier_id)
@@ -363,11 +361,14 @@ async def associate_benefit_to_tier(tier_id: int, benefit_id: int):
     """Associate a benefit with a tier (Admin only)"""
     is_new = await tier_service.associate_benefit_to_tier(tier_id, benefit_id)
     if is_new:
-        return success_response({
-            "tier_id": tier_id,
-            "benefit_id": benefit_id,
-            "message": "Benefit associated with tier successfully"
-        }, status_code=status.HTTP_201_CREATED)
+        return success_response(
+            {
+                "tier_id": tier_id,
+                "benefit_id": benefit_id,
+                "message": "Benefit associated with tier successfully",
+            },
+            status_code=status.HTTP_201_CREATED,
+        )
 
 
 @router.delete(
@@ -382,8 +383,10 @@ async def remove_benefit_from_tier(tier_id: int, benefit_id: int):
         raise ResourceNotFoundException(
             detail="Benefit association not found or tier/benefit doesn't exist"
         )
-    return success_response({
-        "tier_id": tier_id,
-        "benefit_id": benefit_id,
-        "message": "Benefit removed from tier successfully"
-    })
+    return success_response(
+        {
+            "tier_id": tier_id,
+            "benefit_id": benefit_id,
+            "message": "Benefit removed from tier successfully",
+        }
+    )

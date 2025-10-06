@@ -1,11 +1,12 @@
-from fastapi import Depends, Security, Request
+from typing import Annotated, List, Optional
+
+from fastapi import Depends, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
-from typing import Annotated, List, Optional
-from src.shared.database import get_firebase_auth
-from src.shared.exceptions import UnauthorizedException, ForbiddenException
-from src.config.constants import UserRole
+
 from src.api.auth.models import DecodedToken
+from src.config.constants import UserRole
+from src.shared.exceptions import ForbiddenException, UnauthorizedException
 
 security = HTTPBearer()
 optional_security = HTTPBearer(auto_error=False)

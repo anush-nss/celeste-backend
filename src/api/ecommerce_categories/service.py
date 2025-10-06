@@ -1,45 +1,57 @@
 from typing import List, Optional
-from sqlalchemy.orm import selectinload
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from src.database.connection import AsyncSessionLocal
-from src.database.models.ecommerce_category import EcommerceCategory
+from sqlalchemy.orm import selectinload
+
 from src.api.ecommerce_categories.models import (
-    EcommerceCategorySchema,
     CreateEcommerceCategorySchema,
+    EcommerceCategorySchema,
     UpdateEcommerceCategorySchema,
 )
-from src.shared.exceptions import ResourceNotFoundException, ConflictException
+from src.database.connection import AsyncSessionLocal
+from src.database.models.ecommerce_category import EcommerceCategory
+from src.shared.exceptions import ConflictException, ResourceNotFoundException
 from src.shared.sqlalchemy_utils import safe_model_validate, safe_model_validate_list
 
 
 class EcommerceCategoryService:
-    async def get_all_categories(self, include_subcategories: bool = True) -> List[EcommerceCategorySchema]:
+    async def get_all_categories(
+        self, include_subcategories: bool = True
+    ) -> List[EcommerceCategorySchema]:
         """Get all ecommerce categories, optionally including subcategories"""
         async with AsyncSessionLocal() as session:
             if include_subcategories:
-                stmt = select(EcommerceCategory).options(
-                    selectinload(EcommerceCategory.subcategories)
-                ).where(EcommerceCategory.parent_category_id.is_(None))
+                stmt = (
+                    select(EcommerceCategory)
+                    .options(selectinload(EcommerceCategory.subcategories))
+                    .where(EcommerceCategory.parent_category_id.is_(None))
+                )
             else:
                 stmt = select(EcommerceCategory)
 
             result = await session.execute(stmt)
             categories = result.scalars().all()
 
-            include_relationships = {'subcategories'} if include_subcategories else set()
+            include_relationships = (
+                {"subcategories"} if include_subcategories else set()
+            )
             return safe_model_validate_list(
                 EcommerceCategorySchema,
                 categories,
-                include_relationships=include_relationships
+                include_relationships=include_relationships,
             )
 
-    async def get_category_by_id(self, category_id: int) -> Optional[EcommerceCategorySchema]:
+    async def get_category_by_id(
+        self, category_id: int
+    ) -> Optional[EcommerceCategorySchema]:
         """Get an ecommerce category by ID"""
         async with AsyncSessionLocal() as session:
-            stmt = select(EcommerceCategory).options(
-                selectinload(EcommerceCategory.subcategories)
-            ).where(EcommerceCategory.id == category_id)
+            stmt = (
+                select(EcommerceCategory)
+                .options(selectinload(EcommerceCategory.subcategories))
+                .where(EcommerceCategory.id == category_id)
+            )
 
             result = await session.execute(stmt)
             category = result.scalar_one_or_none()
@@ -48,11 +60,13 @@ class EcommerceCategoryService:
                 return safe_model_validate(
                     EcommerceCategorySchema,
                     category,
-                    include_relationships={'subcategories'}
+                    include_relationships={"subcategories"},
                 )
             return None
 
-    async def create_categories(self, categories_data: List[CreateEcommerceCategorySchema]) -> List[EcommerceCategorySchema]:
+    async def create_categories(
+        self, categories_data: List[CreateEcommerceCategorySchema]
+    ) -> List[EcommerceCategorySchema]:
         """Create one or more ecommerce categories"""
         async with AsyncSessionLocal() as session:
             created_categories = []
@@ -61,18 +75,26 @@ class EcommerceCategoryService:
                 # Check if manual ID is provided and already exists
                 if category_data.id:
                     existing = await session.execute(
-                        select(EcommerceCategory).where(EcommerceCategory.id == category_data.id)
+                        select(EcommerceCategory).where(
+                            EcommerceCategory.id == category_data.id
+                        )
                     )
                     if existing.scalar_one_or_none():
-                        raise ConflictException(detail=f"Ecommerce category with ID {category_data.id} already exists")
+                        raise ConflictException(
+                            detail=f"Ecommerce category with ID {category_data.id} already exists"
+                        )
 
                 # Validate parent category exists if provided
                 if category_data.parent_category_id:
                     parent_result = await session.execute(
-                        select(EcommerceCategory).where(EcommerceCategory.id == category_data.parent_category_id)
+                        select(EcommerceCategory).where(
+                            EcommerceCategory.id == category_data.parent_category_id
+                        )
                     )
                     if not parent_result.scalar_one_or_none():
-                        raise ResourceNotFoundException(detail=f"Parent category with ID {category_data.parent_category_id} not found")
+                        raise ResourceNotFoundException(
+                            detail=f"Parent category with ID {category_data.parent_category_id} not found"
+                        )
 
                 # Create category
                 category_dict = category_data.model_dump(exclude_unset=True)
@@ -91,16 +113,20 @@ class EcommerceCategoryService:
                 return safe_model_validate_list(
                     EcommerceCategorySchema,
                     created_categories,
-                    include_relationships={'subcategories'}
+                    include_relationships={"subcategories"},
                 )
 
             except IntegrityError as e:
                 await session.rollback()
                 if "duplicate key" in str(e).lower():
-                    raise ConflictException(detail="Ecommerce category with this ID already exists")
+                    raise ConflictException(
+                        detail="Ecommerce category with this ID already exists"
+                    )
                 raise ConflictException(detail="Database constraint violation")
 
-    async def update_category(self, category_id: int, category_data: UpdateEcommerceCategorySchema) -> Optional[EcommerceCategorySchema]:
+    async def update_category(
+        self, category_id: int, category_data: UpdateEcommerceCategorySchema
+    ) -> Optional[EcommerceCategorySchema]:
         """Update an ecommerce category"""
         async with AsyncSessionLocal() as session:
             stmt = select(EcommerceCategory).where(EcommerceCategory.id == category_id)
@@ -113,10 +139,14 @@ class EcommerceCategoryService:
             # Validate parent category exists if provided
             if category_data.parent_category_id:
                 parent_result = await session.execute(
-                    select(EcommerceCategory).where(EcommerceCategory.id == category_data.parent_category_id)
+                    select(EcommerceCategory).where(
+                        EcommerceCategory.id == category_data.parent_category_id
+                    )
                 )
                 if not parent_result.scalar_one_or_none():
-                    raise ResourceNotFoundException(detail=f"Parent category with ID {category_data.parent_category_id} not found")
+                    raise ResourceNotFoundException(
+                        detail=f"Parent category with ID {category_data.parent_category_id} not found"
+                    )
 
             # Update fields
             update_data = category_data.model_dump(exclude_unset=True)
@@ -129,7 +159,7 @@ class EcommerceCategoryService:
                 return safe_model_validate(
                     EcommerceCategorySchema,
                     category,
-                    include_relationships={'subcategories'}
+                    include_relationships={"subcategories"},
                 )
             except IntegrityError:
                 await session.rollback()

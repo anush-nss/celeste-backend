@@ -1,15 +1,18 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+import os
+
+import firebase_admin
+import google.auth
+from firebase_admin import credentials
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 from src.config.settings import settings
 from src.shared.utils import LOG_LEVEL
-import os
-import firebase_admin
-from firebase_admin import credentials
-import google.auth
 
 DATABASE_URL = settings.DATABASE_URL
 
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL is not set in environment variables.")
+
 
 def initialize_firebase():
     """Initialize Firebase Admin SDK"""
@@ -20,7 +23,9 @@ def initialize_firebase():
             # Local dev: must use service account key
             service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
             if not service_account_path:
-                raise ValueError("GOOGLE_APPLICATION_CREDENTIALS environment variable not set.")
+                raise ValueError(
+                    "GOOGLE_APPLICATION_CREDENTIALS environment variable not set."
+                )
             cred = credentials.Certificate(service_account_path)
             firebase_admin.initialize_app(cred)
         else:
@@ -33,15 +38,18 @@ def initialize_firebase():
             if not project_id:
                 raise ValueError("Project ID could not be inferred from environment.")
 
-            firebase_admin.initialize_app(credential=credentials.ApplicationDefault(), options={"projectId": project_id})
+            firebase_admin.initialize_app(
+                credential=credentials.ApplicationDefault(),
+                options={"projectId": project_id},
+            )
 
-engine = create_async_engine(DATABASE_URL, echo=LOG_LEVEL=="DEBUG")
+
+engine = create_async_engine(DATABASE_URL, echo=LOG_LEVEL == "DEBUG")
 
 AsyncSessionLocal = async_sessionmaker(
-    engine,
-    expire_on_commit=False,
-    class_=AsyncSession
+    engine, expire_on_commit=False, class_=AsyncSession
 )
+
 
 async def get_db():
     async with AsyncSessionLocal() as session:

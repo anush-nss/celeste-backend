@@ -1,10 +1,11 @@
+from typing import Any, Dict, List, Union
+
 from fastapi import APIRouter, HTTPException, status
-from typing import Dict, List, Union, Any
-from src.shared.database import get_async_db, get_async_collection
-from src.shared.responses import success_response
-from src.api.auth.service import AuthService
 from google.cloud.firestore import SERVER_TIMESTAMP
-from datetime import datetime
+
+from src.api.auth.service import AuthService
+from src.shared.database import get_async_db
+from src.shared.responses import success_response
 
 dev_router = APIRouter(prefix="/dev", tags=["Development"])
 auth_service = AuthService()

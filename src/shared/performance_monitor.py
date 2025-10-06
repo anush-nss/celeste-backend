@@ -1,10 +1,10 @@
+import asyncio
+import logging
 import threading
 import time
-import asyncio
-from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from functools import wraps
-import logging
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PerformanceMetrics:
     """Performance metrics for a request"""
+
     endpoint: str
     duration_ms: float
     query_count: int
@@ -35,10 +36,12 @@ class PerformanceMonitor:
             "start_time": time.time(),
             "query_count": 0,
             "cache_hits": 0,
-            "cache_misses": 0
+            "cache_misses": 0,
         }
 
-    def end_request(self, request_id: str, status_code: int = 200) -> Optional[PerformanceMetrics]:
+    def end_request(
+        self, request_id: str, status_code: int = 200
+    ) -> Optional[PerformanceMetrics]:
         """End monitoring and record metrics"""
         if request_id not in self.active_requests:
             return None
@@ -52,7 +55,7 @@ class PerformanceMonitor:
             query_count=request_data["query_count"],
             cache_hits=request_data["cache_hits"],
             cache_misses=request_data["cache_misses"],
-            status_code=status_code
+            status_code=status_code,
         )
 
         # Store metrics for analysis
@@ -105,8 +108,10 @@ class PerformanceMonitor:
             "avg_queries_per_request": sum(query_counts) / len(query_counts),
             "total_cache_hits": sum(m.cache_hits for m in metrics_list),
             "total_cache_misses": sum(m.cache_misses for m in metrics_list),
-            "cache_hit_ratio": sum(m.cache_hits for m in metrics_list) / max(sum(m.cache_hits + m.cache_misses for m in metrics_list), 1),
-            "error_rate": sum(1 for m in metrics_list if m.status_code >= 400) / len(metrics_list)
+            "cache_hit_ratio": sum(m.cache_hits for m in metrics_list)
+            / max(sum(m.cache_hits + m.cache_misses for m in metrics_list), 1),
+            "error_rate": sum(1 for m in metrics_list if m.status_code >= 400)
+            / len(metrics_list),
         }
 
     def get_all_stats(self) -> Dict[str, Any]:
@@ -123,6 +128,7 @@ performance_monitor = PerformanceMonitor()
 
 def monitor_performance(endpoint_name: Optional[str] = None):
     """Decorator to monitor function performance"""
+
     def decorator(func):
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
@@ -134,7 +140,7 @@ def monitor_performance(endpoint_name: Optional[str] = None):
                 result = await func(*args, **kwargs)
                 performance_monitor.end_request(request_id, 200)
                 return result
-            except Exception as e:
+            except Exception:
                 performance_monitor.end_request(request_id, 500)
                 raise
 
@@ -148,11 +154,12 @@ def monitor_performance(endpoint_name: Optional[str] = None):
                 result = func(*args, **kwargs)
                 performance_monitor.end_request(request_id, 200)
                 return result
-            except Exception as e:
+            except Exception:
                 performance_monitor.end_request(request_id, 500)
                 raise
 
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
+
     return decorator
 
 
@@ -173,6 +180,7 @@ def log_performance_summary():
 # Add performance monitoring to critical functions
 def track_query():
     """Context manager to track database queries"""
+
     class QueryTracker:
         def __init__(self):
             self.request_id = None
@@ -184,7 +192,7 @@ def track_query():
                 if task:
                     self.request_id = f"query_{id(task)}"
                     performance_monitor.record_query(self.request_id)
-            except:
+            except RuntimeError:
                 pass
             return self
 

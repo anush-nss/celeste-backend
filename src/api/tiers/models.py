@@ -1,7 +1,8 @@
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, Field
 from enum import Enum
+from typing import List, Optional
+
+from pydantic import BaseModel, Field
 
 
 # Enums for validation
@@ -83,16 +84,16 @@ class TierSchema(BaseModel):
     description: Optional[str] = None
     sort_order: int = 0
     is_active: bool = True
-    
+
     # Requirements
     min_total_spent: float = 0.0
     min_orders_count: int = 0
     min_monthly_spent: float = 0.0
     min_monthly_orders: int = 0
-    
+
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    
+
     # Related data
     benefits: List[BenefitSchema] = Field(default_factory=list)
     price_lists: List[PriceListSchema] = Field(default_factory=list)
@@ -103,17 +104,23 @@ class CreateTierSchema(BaseModel):
     description: Optional[str] = None
     sort_order: int = 0
     is_active: bool = True
-    
+
     # Requirements
     min_total_spent: float = 0.0
     min_orders_count: int = 0
     min_monthly_spent: float = 0.0
     min_monthly_orders: int = 0
-    
+
     # Benefit IDs to associate with the tier
-    benefits: List[int] = Field(default_factory=list, description="List of benefit IDs to associate with this tier")
-    # Price list IDs to associate with the tier  
-    price_lists: List[int] = Field(default_factory=list, description="List of price list IDs to associate with this tier")
+    benefits: List[int] = Field(
+        default_factory=list,
+        description="List of benefit IDs to associate with this tier",
+    )
+    # Price list IDs to associate with the tier
+    price_lists: List[int] = Field(
+        default_factory=list,
+        description="List of price list IDs to associate with this tier",
+    )
 
 
 class UpdateTierSchema(BaseModel):
@@ -121,7 +128,7 @@ class UpdateTierSchema(BaseModel):
     description: Optional[str] = None
     sort_order: Optional[int] = None
     is_active: Optional[bool] = None
-    
+
     # Requirements
     min_total_spent: Optional[float] = None
     min_orders_count: Optional[int] = None
@@ -129,9 +136,15 @@ class UpdateTierSchema(BaseModel):
     min_monthly_orders: Optional[int] = None
 
     # Benefit IDs to associate with the tier
-    benefits: List[int] = Field(default_factory=list, description="List of benefit IDs to associate with this tier")
+    benefits: List[int] = Field(
+        default_factory=list,
+        description="List of benefit IDs to associate with this tier",
+    )
     # Price list IDs to associate with the tier
-    price_lists: List[int] = Field(default_factory=list, description="List of price list IDs to associate with this tier")
+    price_lists: List[int] = Field(
+        default_factory=list,
+        description="List of price list IDs to associate with this tier",
+    )
 
 
 # User tier progress and evaluation schemas

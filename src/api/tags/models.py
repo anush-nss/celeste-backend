@@ -1,6 +1,7 @@
-from typing import Optional
-from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class TagSchema(BaseModel):
@@ -16,27 +17,48 @@ class TagSchema(BaseModel):
 
 
 class CreateTagSchema(BaseModel):
-    tag_type: str = Field(..., min_length=1, max_length=50, description="Type of tag (product, store, etc.)")
-    name: str = Field(..., min_length=1, max_length=100, description="Display name of the tag")
-    slug: Optional[str] = Field(default=None, description="URL-friendly identifier (auto-generated if not provided)")
-    description: Optional[str] = Field(None, max_length=1000, description="Optional description")
+    tag_type: str = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="Type of tag (product, store, etc.)",
+    )
+    name: str = Field(
+        ..., min_length=1, max_length=100, description="Display name of the tag"
+    )
+    slug: Optional[str] = Field(
+        default=None,
+        description="URL-friendly identifier (auto-generated if not provided)",
+    )
+    description: Optional[str] = Field(
+        None, max_length=1000, description="Optional description"
+    )
 
 
 class UpdateTagSchema(BaseModel):
-    tag_type: Optional[str] = Field(None, min_length=1, max_length=50, description="Type of tag")
-    name: Optional[str] = Field(None, min_length=1, max_length=100, description="Display name")
-    slug: Optional[str] = Field(None, min_length=1, max_length=100, description="URL-friendly identifier")
+    tag_type: Optional[str] = Field(
+        None, min_length=1, max_length=50, description="Type of tag"
+    )
+    name: Optional[str] = Field(
+        None, min_length=1, max_length=100, description="Display name"
+    )
+    slug: Optional[str] = Field(
+        None, min_length=1, max_length=100, description="URL-friendly identifier"
+    )
     description: Optional[str] = Field(None, max_length=1000, description="Description")
     is_active: Optional[bool] = None
 
 
 class EntityTagSchema(BaseModel):
     """Base schema for entity-tag associations (product_tags, store_tags, etc.)"""
+
     id: int
     tag_type: str
     name: str
     slug: str
     description: Optional[str] = None
-    value: Optional[str] = Field(None, description="Additional tag value from association table")
+    value: Optional[str] = Field(
+        None, description="Additional tag value from association table"
+    )
 
     model_config = {"from_attributes": True}

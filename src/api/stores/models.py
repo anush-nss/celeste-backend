@@ -1,13 +1,15 @@
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, EmailStr, validator
-from src.config.constants import (
-    MIN_LATITUDE,
-    MAX_LATITUDE,
-    MIN_LONGITUDE,
-    MAX_LONGITUDE,
-)
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, EmailStr, Field, validator
+
 from src.api.tags.models import EntityTagSchema
+from src.config.constants import (
+    MAX_LATITUDE,
+    MAX_LONGITUDE,
+    MIN_LATITUDE,
+    MIN_LONGITUDE,
+)
 
 
 class LocationSchema(BaseModel):
@@ -26,6 +28,7 @@ class ContactSchema(BaseModel):
 
 class StoreTagSchema(EntityTagSchema):
     """Store-specific tag schema"""
+
     pass
 
 
@@ -38,8 +41,12 @@ class StoreSchema(BaseModel):
     address: str = Field(
         ..., min_length=1, max_length=500, description="Complete store address"
     )
-    latitude: float = Field(..., ge=MIN_LATITUDE, le=MAX_LATITUDE, description="Latitude in degrees")
-    longitude: float = Field(..., ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="Longitude in degrees")
+    latitude: float = Field(
+        ..., ge=MIN_LATITUDE, le=MAX_LATITUDE, description="Latitude in degrees"
+    )
+    longitude: float = Field(
+        ..., ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="Longitude in degrees"
+    )
     email: Optional[str] = Field(None, description="Store email address")
     phone: Optional[str] = Field(None, description="Store phone number")
     is_active: bool = Field(True, description="Whether the store is active")
@@ -63,8 +70,12 @@ class CreateStoreSchema(BaseModel):
     address: str = Field(
         ..., min_length=1, max_length=500, description="Complete store address"
     )
-    latitude: float = Field(..., ge=MIN_LATITUDE, le=MAX_LATITUDE, description="Latitude in degrees")
-    longitude: float = Field(..., ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="Longitude in degrees")
+    latitude: float = Field(
+        ..., ge=MIN_LATITUDE, le=MAX_LATITUDE, description="Latitude in degrees"
+    )
+    longitude: float = Field(
+        ..., ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="Longitude in degrees"
+    )
     email: Optional[str] = Field(None, description="Store email address")
     phone: Optional[str] = Field(None, description="Store phone number")
     tag_ids: List[int] = Field(default=[], description="IDs of tags to assign")
@@ -81,8 +92,12 @@ class UpdateStoreSchema(BaseModel):
     address: Optional[str] = Field(
         None, min_length=1, max_length=500, description="Complete store address"
     )
-    latitude: Optional[float] = Field(None, ge=MIN_LATITUDE, le=MAX_LATITUDE, description="Latitude in degrees")
-    longitude: Optional[float] = Field(None, ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="Longitude in degrees")
+    latitude: Optional[float] = Field(
+        None, ge=MIN_LATITUDE, le=MAX_LATITUDE, description="Latitude in degrees"
+    )
+    longitude: Optional[float] = Field(
+        None, ge=MIN_LONGITUDE, le=MAX_LONGITUDE, description="Longitude in degrees"
+    )
     email: Optional[str] = Field(None, description="Store email address")
     phone: Optional[str] = Field(None, description="Store phone number")
     tag_ids: Optional[List[int]] = None
@@ -109,13 +124,13 @@ class StoreQuerySchema(BaseModel):
         20, ge=1, le=100, description="Maximum number of stores to return"
     )
     is_active: Optional[bool] = Field(True, description="Filter by store status")
-    tags: Optional[List[str]] = Field(None, description="Filter by tags with flexible syntax")
+    tags: Optional[List[str]] = Field(
+        None, description="Filter by tags with flexible syntax"
+    )
     include_distance: Optional[bool] = Field(
         True, description="Include distance calculations"
     )
-    include_tags: Optional[bool] = Field(
-        False, description="Include tag information"
-    )
+    include_tags: Optional[bool] = Field(False, description="Include tag information")
 
     @validator("radius")
     def validate_radius_with_location(cls, v, values):

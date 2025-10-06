@@ -2,16 +2,14 @@
 Unified async database client with connection pooling and Firebase integration
 """
 
-import os
 import asyncio
 import threading
-from typing import Optional, Dict, Any, List
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional
 
-import firebase_admin
-from firebase_admin import credentials, auth
-from google.cloud import firestore
 from dotenv import load_dotenv
+from firebase_admin import auth
+from google.cloud import firestore
 
 load_dotenv()
 
@@ -52,8 +50,6 @@ class AsyncDatabaseClient:
         # Collection references cache
         self._collections: Dict[str, Any] = {}
         self._async_collections: Dict[str, Any] = {}
-
-    
 
     async def get_async_client(self) -> firestore.AsyncClient:
         """Get async Firestore client"""

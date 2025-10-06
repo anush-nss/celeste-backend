@@ -1,21 +1,22 @@
-from typing import Optional, List
+from typing import List, Optional
+
 from src.api.products.models import (
-    ProductSchema,
     CreateProductSchema,
-    UpdateProductSchema,
-    ProductQuerySchema,
     EnhancedProductSchema,
     PaginatedProductsResponse,
+    ProductQuerySchema,
+    ProductSchema,
+    UpdateProductSchema,
 )
 from src.api.products.services import (
-    ProductCoreService,
-    ProductTagService,
     ProductBulkService,
-    ProductQueryService,
+    ProductCoreService,
     ProductInventoryService,
+    ProductQueryService,
+    ProductTagService,
 )
-from src.database.models.product import Tag
 from src.api.tags.models import CreateTagSchema
+from src.database.models.product import Tag
 from src.shared.error_handler import ErrorHandler
 
 
@@ -44,7 +45,9 @@ class ProductService:
         )
 
         if product and store_id:
-            product = await self.inventory_service.add_inventory_to_single_product(product, store_id)
+            product = await self.inventory_service.add_inventory_to_single_product(
+                product, store_id
+            )
 
         return product
 
@@ -61,7 +64,9 @@ class ProductService:
         )
 
         if product and store_id:
-            product = await self.inventory_service.add_inventory_to_single_product(product, store_id)
+            product = await self.inventory_service.add_inventory_to_single_product(
+                product, store_id
+            )
 
         return product
 
@@ -166,7 +171,9 @@ class ProductService:
         return await self.core_service.delete_product(product_id)
 
     # Bulk operations
-    async def create_products(self, products_data: list[CreateProductSchema]) -> list[ProductSchema]:
+    async def create_products(
+        self, products_data: list[CreateProductSchema]
+    ) -> list[ProductSchema]:
         """Create multiple new products with validation and optimization"""
         return await self.bulk_service.create_products(products_data)
 
@@ -182,7 +189,12 @@ class ProductService:
 
         # Determine store_ids if inventory requested with location
         effective_store_ids = store_ids
-        if query_params.include_inventory and not store_ids and query_params.latitude and query_params.longitude:
+        if (
+            query_params.include_inventory
+            and not store_ids
+            and query_params.latitude
+            and query_params.longitude
+        ):
             effective_store_ids = await self.inventory_service.get_stores_by_location(
                 query_params.latitude, query_params.longitude
             )
@@ -193,19 +205,31 @@ class ProductService:
         )
 
     # Tag management methods - delegated to ProductTagService
-    async def create_product_tag(self, name: str, tag_type_suffix: str, slug: Optional[str] = None, description: Optional[str] = None) -> Tag:
+    async def create_product_tag(
+        self,
+        name: str,
+        tag_type_suffix: str,
+        slug: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> Tag:
         """Create a new product tag with specific type (e.g., 'color', 'size')"""
-        return await self.tag_service.create_product_tag(name, tag_type_suffix, slug, description)
+        return await self.tag_service.create_product_tag(
+            name, tag_type_suffix, slug, description
+        )
 
     async def create_product_tags(self, tags_data: list[CreateTagSchema]) -> list[Tag]:
         """Create multiple new product tags with specific type (e.g., 'color', 'size')"""
         return await self.tag_service.create_product_tags(tags_data)
 
-    async def get_product_tags(self, is_active: bool = True, tag_type_suffix: Optional[str] = None) -> List[Tag]:
+    async def get_product_tags(
+        self, is_active: bool = True, tag_type_suffix: Optional[str] = None
+    ) -> List[Tag]:
         """Get product tags, optionally filtered by type suffix (e.g., 'color', 'size')"""
         return await self.tag_service.get_product_tags(is_active, tag_type_suffix)
 
-    async def assign_tag_to_product(self, product_id: int, tag_id: int, value: Optional[str] = None):
+    async def assign_tag_to_product(
+        self, product_id: int, tag_id: int, value: Optional[str] = None
+    ):
         """Assign a tag to a product using shared TagService"""
         await self.tag_service.assign_tag_to_product(product_id, tag_id, value)
 

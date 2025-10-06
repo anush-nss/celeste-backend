@@ -1,10 +1,14 @@
 import pytest
 from httpx import AsyncClient
-from src.config.constants import UserRole, OrderStatus
+
+from src.config.constants import OrderStatus
+
 
 @pytest.mark.asyncio
 class TestOrdersAPI:
-    async def test_order_lifecycle(self, admin_client: AsyncClient, customer_client: AsyncClient):
+    async def test_order_lifecycle(
+        self, admin_client: AsyncClient, customer_client: AsyncClient
+    ):
         # 1. Create a product
         product_data = {
             "name": "Test Product for Order",
@@ -59,7 +63,9 @@ class TestOrdersAPI:
 
         # 6. Admin confirms the order
         update_data = {"status": OrderStatus.CONFIRMED.value}
-        response = await admin_client.put(f"/orders/{order_id}/status", json=update_data)
+        response = await admin_client.put(
+            f"/orders/{order_id}/status", json=update_data
+        )
         assert response.status_code == 200
         assert response.json()["data"]["status"] == OrderStatus.CONFIRMED.value
 
@@ -73,7 +79,9 @@ class TestOrdersAPI:
 
         # 8. Admin ships the order
         update_data = {"status": OrderStatus.SHIPPED.value}
-        response = await admin_client.put(f"/orders/{order_id}/status", json=update_data)
+        response = await admin_client.put(
+            f"/orders/{order_id}/status", json=update_data
+        )
         assert response.status_code == 200
         assert response.json()["data"]["status"] == OrderStatus.SHIPPED.value
 

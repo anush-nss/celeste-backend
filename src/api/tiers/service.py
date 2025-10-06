@@ -1,37 +1,39 @@
 import asyncio
-from datetime import datetime, timedelta
-from typing import List, Optional, Dict
+from typing import Dict, List, Optional
+
+from sqlalchemy import and_, delete, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import and_, or_, desc, delete, update
 
-from src.database.connection import AsyncSessionLocal
-# Import all models to ensure relationships are properly registered
-import src.database.models
-from src.database.models.tier import Tier
-from src.database.models.tier_benefit import Benefit
-from src.database.models.price_list import PriceList
-from src.database.models.price_list_line import PriceListLine
-from src.database.models.tier_price_list import TierPriceList
-from src.database.models.user import User
-from src.shared.utils import get_logger
 from src.api.tiers.models import (
-    TierSchema,
-    CreateTierSchema,
-    UpdateTierSchema,
     BenefitSchema,
     CreateBenefitSchema,
-    UpdateBenefitSchema,
+    CreateTierSchema,
     PriceListSchema,
-    PriceListLineSchema,
-    UserTierProgressSchema,
-    UserTierInfoSchema,
     TierEvaluationSchema,
+    TierSchema,
+    UpdateBenefitSchema,
+    UpdateTierSchema,
+    UserTierInfoSchema,
+    UserTierProgressSchema,
 )
-from src.shared.exceptions import ResourceNotFoundException, ValidationException, ConflictException
+from src.database.connection import AsyncSessionLocal
+from src.database.models.price_list import PriceList
+
+# Import all models to ensure relationships are properly registered
+from src.database.models.tier import Tier
+from src.database.models.tier_benefit import Benefit
+from src.database.models.tier_price_list import TierPriceList
+from src.database.models.user import User
 from src.shared.error_handler import ErrorHandler, handle_service_errors
-from src.shared.performance_utils import async_timer, BatchProcessor
-from sqlalchemy.exc import IntegrityError
+from src.shared.exceptions import (
+    ConflictException,
+    ResourceNotFoundException,
+    ValidationException,
+)
+from src.shared.performance_utils import BatchProcessor, async_timer
+from src.shared.utils import get_logger
 
 
 class TierService:
@@ -59,12 +61,16 @@ class TierService:
                 select(Tier).filter(Tier.name == tier_data.name.strip())
             )
             if existing.scalars().first():
-                raise ConflictException(detail=f"Tier with name '{tier_data.name}' already exists")
+                raise ConflictException(
+                    detail=f"Tier with name '{tier_data.name}' already exists"
+                )
 
             # Create the tier
             new_tier = Tier(
                 name=tier_data.name.strip(),
-                description=tier_data.description.strip() if tier_data.description else None,
+                description=tier_data.description.strip()
+                if tier_data.description
+                else None,
                 sort_order=tier_data.sort_order,
                 is_active=tier_data.is_active,
                 min_total_spent=tier_data.min_total_spent,
@@ -84,27 +90,33 @@ class TierService:
                     )
                     if existing_benefit.scalars().first():
                         from src.database.models.tier_benefit import tier_benefits
+
                         await session.execute(
-                            tier_benefits.insert().values(tier_id=new_tier.id, benefit_id=benefit_id)
+                            tier_benefits.insert().values(
+                                tier_id=new_tier.id, benefit_id=benefit_id
+                            )
                         )
 
             # Associate existing price lists if provided
             for price_list_id in tier_data.price_lists:
                 # Create TierPriceList association
                 tier_price_list = TierPriceList(
-                    tier_id=new_tier.id,
-                    price_list_id=price_list_id
+                    tier_id=new_tier.id, price_list_id=price_list_id
                 )
                 session.add(tier_price_list)
 
             await session.commit()
-            
+
             # Load the tier with relationships
             result = await session.execute(
-                select(Tier).options(
+                select(Tier)
+                .options(
                     selectinload(Tier.benefits),
-                    selectinload(Tier.price_lists).selectinload(TierPriceList.price_list)
-                ).where(Tier.id == new_tier.id)
+                    selectinload(Tier.price_lists).selectinload(
+                        TierPriceList.price_list
+                    ),
+                )
+                .where(Tier.id == new_tier.id)
             )
             tier_with_relations = result.scalars().first()
 
@@ -114,10 +126,14 @@ class TierService:
         """Get a tier by ID"""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Tier).options(
+                select(Tier)
+                .options(
                     selectinload(Tier.benefits),
-                    selectinload(Tier.price_lists).selectinload(TierPriceList.price_list)
-                ).where(Tier.id == tier_id)
+                    selectinload(Tier.price_lists).selectinload(
+                        TierPriceList.price_list
+                    ),
+                )
+                .where(Tier.id == tier_id)
             )
             tier = result.scalars().first()
             if tier:
@@ -128,10 +144,14 @@ class TierService:
         """Get a tier by name"""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Tier).options(
+                select(Tier)
+                .options(
                     selectinload(Tier.benefits),
-                    selectinload(Tier.price_lists).selectinload(TierPriceList.price_list)
-                ).where(Tier.name == name)
+                    selectinload(Tier.price_lists).selectinload(
+                        TierPriceList.price_list
+                    ),
+                )
+                .where(Tier.name == name)
             )
             tier = result.scalars().first()
             if tier:
@@ -143,12 +163,18 @@ class TierService:
     async def get_all_tiers(self, active_only: bool = False) -> List[TierSchema]:
         """Get all tiers with optimized loading"""
         async with AsyncSessionLocal() as session:
-            query = select(Tier).options(
-                selectinload(Tier.benefits),
-                selectinload(Tier.price_lists).selectinload(TierPriceList.price_list)
-            ).order_by(Tier.sort_order)
+            query = (
+                select(Tier)
+                .options(
+                    selectinload(Tier.benefits),
+                    selectinload(Tier.price_lists).selectinload(
+                        TierPriceList.price_list
+                    ),
+                )
+                .order_by(Tier.sort_order)
+            )
             if active_only:
-                query = query.where(Tier.is_active == True)
+                query = query.where(Tier.is_active)
 
             result = await session.execute(query)
             tiers = result.scalars().unique().all()  # Use unique() for selectinload
@@ -157,12 +183,14 @@ class TierService:
             if len(tiers) > 20:
                 return await self._batch_processor.process_in_batches(
                     list(tiers),
-                    lambda batch: [self._tier_to_schema(tier) for tier in batch]
+                    lambda batch: [self._tier_to_schema(tier) for tier in batch],
                 )
             else:
                 return [await self._tier_to_schema(tier) for tier in tiers]
 
-    async def update_tier(self, tier_id: int, tier_data: UpdateTierSchema) -> Optional[TierSchema]:
+    async def update_tier(
+        self, tier_id: int, tier_data: UpdateTierSchema
+    ) -> Optional[TierSchema]:
         """Update a tier"""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -171,47 +199,60 @@ class TierService:
                 .where(Tier.id == tier_id)
             )
             tier = result.scalars().first()
-            
+
             if not tier:
                 return None
-            
+
             update_data = tier_data.model_dump(exclude_unset=True)
 
             # Handle benefits and price_lists separately
-            new_benefit_ids = update_data.pop('benefits', None)
-            new_price_list_ids = update_data.pop('price_lists', None)
+            new_benefit_ids = update_data.pop("benefits", None)
+            new_price_list_ids = update_data.pop("price_lists", None)
 
             for key, value in update_data.items():
                 setattr(tier, key, value)
 
             if new_benefit_ids is not None:
                 from src.database.models.tier_benefit import tier_benefits
+
                 # Clear existing benefits and add new ones
-                await session.execute(delete(tier_benefits).where(tier_benefits.c.tier_id == tier_id))
+                await session.execute(
+                    delete(tier_benefits).where(tier_benefits.c.tier_id == tier_id)
+                )
                 for benefit_id in new_benefit_ids:
                     benefit = await session.get(Benefit, benefit_id)
                     if benefit:
                         await session.execute(
-                            tier_benefits.insert().values(tier_id=tier_id, benefit_id=benefit_id)
+                            tier_benefits.insert().values(
+                                tier_id=tier_id, benefit_id=benefit_id
+                            )
                         )
 
             if new_price_list_ids is not None:
                 # Clear existing price lists and add new ones
-                await session.execute(delete(TierPriceList).where(TierPriceList.tier_id == tier_id))
+                await session.execute(
+                    delete(TierPriceList).where(TierPriceList.tier_id == tier_id)
+                )
                 for price_list_id in new_price_list_ids:
                     price_list = await session.get(PriceList, price_list_id)
                     if price_list:
-                        new_association = TierPriceList(tier_id=tier_id, price_list_id=price_list_id)
+                        new_association = TierPriceList(
+                            tier_id=tier_id, price_list_id=price_list_id
+                        )
                         session.add(new_association)
-            
+
             await session.commit()
-            
+
             # Load the tier with relationships
             result = await session.execute(
-                select(Tier).options(
+                select(Tier)
+                .options(
                     selectinload(Tier.benefits),
-                    selectinload(Tier.price_lists).selectinload(TierPriceList.price_list)
-                ).where(Tier.id == tier_id)
+                    selectinload(Tier.price_lists).selectinload(
+                        TierPriceList.price_list
+                    ),
+                )
+                .where(Tier.id == tier_id)
             )
             tier_with_relations = result.scalars().first()
 
@@ -219,24 +260,31 @@ class TierService:
 
     async def _tier_to_schema(self, tier: Tier) -> TierSchema:
         """Convert SQLAlchemy Tier model to Pydantic schema"""
-        from src.shared.sqlalchemy_utils import sqlalchemy_to_dict, safe_model_validate_list
-        
+        from src.shared.sqlalchemy_utils import (
+            safe_model_validate_list,
+            sqlalchemy_to_dict,
+        )
+
         # Convert to dict but handle relationships properly
         tier_dict = sqlalchemy_to_dict(tier)
-        
+
         # Ensure relationship fields have proper default values
-        if 'benefits' not in tier_dict or tier_dict['benefits'] is None:
-            tier_dict['benefits'] = []
-        elif isinstance(tier_dict['benefits'], list):
+        if "benefits" not in tier_dict or tier_dict["benefits"] is None:
+            tier_dict["benefits"] = []
+        elif isinstance(tier_dict["benefits"], list):
             # Convert benefits to proper schema
-            tier_dict['benefits'] = safe_model_validate_list(BenefitSchema, tier.benefits)
-            
-        if 'price_lists' not in tier_dict or tier_dict['price_lists'] is None:
-            tier_dict['price_lists'] = []
-        elif hasattr(tier, 'price_lists') and tier.price_lists is not None:
+            tier_dict["benefits"] = safe_model_validate_list(
+                BenefitSchema, tier.benefits
+            )
+
+        if "price_lists" not in tier_dict or tier_dict["price_lists"] is None:
+            tier_dict["price_lists"] = []
+        elif hasattr(tier, "price_lists") and tier.price_lists is not None:
             # Convert price_lists to proper schema
-            tier_dict['price_lists'] = safe_model_validate_list(PriceListSchema, [tpl.price_list for tpl in tier.price_lists])
-        
+            tier_dict["price_lists"] = safe_model_validate_list(
+                PriceListSchema, [tpl.price_list for tpl in tier.price_lists]
+            )
+
         return TierSchema.model_validate(tier_dict)
 
     async def delete_tier(self, tier_id: int) -> bool:
@@ -244,10 +292,10 @@ class TierService:
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(Tier).where(Tier.id == tier_id))
             tier = result.scalars().first()
-            
+
             if not tier:
                 return False
-            
+
             await session.delete(tier)
             await session.commit()
             return True
@@ -256,7 +304,7 @@ class TierService:
         """Get the default tier (Bronze tier with lowest sort_order)"""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Tier).where(Tier.is_active == True).order_by(Tier.sort_order).limit(1)
+                select(Tier).where(Tier.is_active).order_by(Tier.sort_order).limit(1)
             )
             tier = result.scalars().first()
             return tier.id if tier else None  # Return None if no tiers exist
@@ -264,7 +312,9 @@ class TierService:
     async def get_user_tier_id(self, user_id: str) -> Optional[int]:
         """Get a user's current tier ID"""
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(User.tier_id).where(User.firebase_uid == user_id))
+            result = await session.execute(
+                select(User.tier_id).where(User.firebase_uid == user_id)
+            )
             tier_id = result.scalars().first()
             return tier_id
 
@@ -273,18 +323,26 @@ class TierService:
         async with AsyncSessionLocal() as session:
             try:
                 # Check if user exists
-                user_result = await session.execute(select(User).where(User.firebase_uid == user_id))
+                user_result = await session.execute(
+                    select(User).where(User.firebase_uid == user_id)
+                )
                 user = user_result.scalars().first()
 
                 if not user:
-                    raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
+                    raise ResourceNotFoundException(
+                        detail=f"User with ID {user_id} not found"
+                    )
 
                 # Check if tier exists
-                tier_result = await session.execute(select(Tier).where(Tier.id == new_tier_id))
+                tier_result = await session.execute(
+                    select(Tier).where(Tier.id == new_tier_id)
+                )
                 tier = tier_result.scalars().first()
 
                 if not tier:
-                    raise ResourceNotFoundException(detail=f"Tier with ID {new_tier_id} not found")
+                    raise ResourceNotFoundException(
+                        detail=f"Tier with ID {new_tier_id} not found"
+                    )
 
                 user.tier_id = new_tier_id
                 await session.commit()
@@ -295,7 +353,9 @@ class TierService:
                 # This shouldn't happen now that we check existence first, but just in case
                 error_detail = str(e.orig)
                 if "tier_id" in error_detail and "is not present" in error_detail:
-                    raise ResourceNotFoundException(detail=f"Tier with ID {new_tier_id} not found")
+                    raise ResourceNotFoundException(
+                        detail=f"Tier with ID {new_tier_id} not found"
+                    )
                 else:
                     raise
 
@@ -319,21 +379,23 @@ class TierService:
 
     async def recalculate_user_statistics(self, user_id: str) -> Dict:
         """Recalculate user statistics from actual orders (for data repair)"""
-        from src.database.models.order import Order
         from src.config.constants import OrderStatus
+        from src.database.models.order import Order
 
         async with AsyncSessionLocal() as session:
             # Calculate statistics from confirmed orders only
-            from sqlalchemy import func, case
+            from sqlalchemy import func
+
             result = await session.execute(
                 select(
                     func.count(Order.id).label("total_orders"),
-                    func.coalesce(func.sum(Order.total_amount), 0).label("lifetime_value"),
-                    func.max(Order.created_at).label("last_order_at")
+                    func.coalesce(func.sum(Order.total_amount), 0).label(
+                        "lifetime_value"
+                    ),
+                    func.max(Order.created_at).label("last_order_at"),
                 ).where(
                     and_(
-                        Order.user_id == user_id,
-                        Order.status == OrderStatus.CONFIRMED
+                        Order.user_id == user_id, Order.status == OrderStatus.CONFIRMED
                     )
                 )
             )
@@ -342,10 +404,12 @@ class TierService:
             if stats:
                 # Update user record with calculated statistics
                 await session.execute(
-                    update(User).where(User.firebase_uid == user_id).values(
+                    update(User)
+                    .where(User.firebase_uid == user_id)
+                    .values(
                         total_orders=stats.total_orders,
                         lifetime_value=float(stats.lifetime_value),
-                        last_order_at=stats.last_order_at
+                        last_order_at=stats.last_order_at,
                     )
                 )
                 await session.commit()
@@ -379,7 +443,7 @@ class TierService:
         stats, current_tier_id, tiers = await asyncio.gather(
             self.get_user_statistics(user_id.strip()),
             self.get_user_tier_id(user_id.strip()),
-            self.get_all_tiers(active_only=True)
+            self.get_all_tiers(active_only=True),
         )
 
         if current_tier_id is None:
@@ -427,15 +491,22 @@ class TierService:
             tier_changed=(recommended_tier_id or 0) != (current_tier_id or 0),
         )
 
-    async def auto_evaluate_and_update_user_tier(self, user_id: str) -> TierEvaluationSchema:
+    async def auto_evaluate_and_update_user_tier(
+        self, user_id: str
+    ) -> TierEvaluationSchema:
         """Automatically evaluate and update a user's tier"""
         # Get current statistics
         stats = await self.get_user_statistics(user_id)
 
         # If user has zero orders/value but should have some, recalculate from actual orders
-        if stats.get("total_orders", 0) == 0 and stats.get("lifetime_value", 0.0) == 0.0:
-            self.logger.info(f"User {user_id} has zero statistics, recalculating from orders...")
-            recalculated_stats = await self.recalculate_user_statistics(user_id)
+        if (
+            stats.get("total_orders", 0) == 0
+            and stats.get("lifetime_value", 0.0) == 0.0
+        ):
+            self.logger.info(
+                f"User {user_id} has zero statistics, recalculating from orders..."
+            )
+            await self.recalculate_user_statistics(user_id)
 
             # Re-evaluate with recalculated statistics
             evaluation = await self.evaluate_user_tier(user_id)
@@ -448,7 +519,7 @@ class TierService:
             await self.update_user_tier(user_id, evaluation.recommended_tier_id)
             # Force tier_changed to True if we successfully updated
             evaluation.tier_changed = True
-        except Exception as e:
+        except Exception:
             # If update fails, keep tier_changed as False
             evaluation.tier_changed = False
 
@@ -458,11 +529,15 @@ class TierService:
         """Get complete tier information for a user"""
         current_tier_id = await self.get_user_tier_id(user_id)
         if current_tier_id is None:
-            raise ValidationException(detail=f"User {user_id} not found or has no tier assigned")
+            raise ValidationException(
+                detail=f"User {user_id} not found or has no tier assigned"
+            )
 
         tier_info = await self.get_tier_by_id(current_tier_id)
         if not tier_info:
-            raise ValidationException(detail=f"Tier with ID {current_tier_id} not found")
+            raise ValidationException(
+                detail=f"Tier with ID {current_tier_id} not found"
+            )
 
         progress = await self.get_user_tier_progress(user_id)
         stats = await self.get_user_statistics(user_id)
@@ -479,11 +554,15 @@ class TierService:
         """Get a user's current tier and progress towards next tier"""
         current_tier_id = await self.get_user_tier_id(user_id)
         if current_tier_id is None:
-            raise ValidationException(detail=f"User {user_id} not found or has no tier assigned")
+            raise ValidationException(
+                detail=f"User {user_id} not found or has no tier assigned"
+            )
 
         current_tier_info = await self.get_tier_by_id(current_tier_id)
         if not current_tier_info:
-            raise ValidationException(detail=f"Tier with ID {current_tier_id} not found")
+            raise ValidationException(
+                detail=f"Tier with ID {current_tier_id} not found"
+            )
 
         stats = await self.get_user_statistics(user_id)
         all_tiers = await self.get_all_tiers(active_only=True)
@@ -502,18 +581,34 @@ class TierService:
                     "current": stats.get("total_orders", 0),
                     "required": next_tier_info.min_orders_count,
                     "progress_percentage": (
-                        min(100, (stats.get("total_orders", 0) / next_tier_info.min_orders_count * 100))
-                        if next_tier_info.min_orders_count > 0 else 100
-                    )
+                        min(
+                            100,
+                            (
+                                stats.get("total_orders", 0)
+                                / next_tier_info.min_orders_count
+                                * 100
+                            ),
+                        )
+                        if next_tier_info.min_orders_count > 0
+                        else 100
+                    ),
                 },
                 "spending": {
                     "current": stats.get("lifetime_value", 0),
                     "required": next_tier_info.min_total_spent,
                     "progress_percentage": (
-                        min(100, (stats.get("lifetime_value", 0) / next_tier_info.min_total_spent * 100))
-                        if next_tier_info.min_total_spent > 0 else 100
-                    )
-                }
+                        min(
+                            100,
+                            (
+                                stats.get("lifetime_value", 0)
+                                / next_tier_info.min_total_spent
+                                * 100
+                            ),
+                        )
+                        if next_tier_info.min_total_spent > 0
+                        else 100
+                    ),
+                },
             }
 
         return UserTierProgressSchema(
@@ -531,8 +626,6 @@ class TierService:
         if existing_tiers:
             return existing_tiers
 
-        from src.api.tiers.models import CreateBenefitSchema, BenefitType, DiscountType
-
         default_tiers_data = [
             CreateTierSchema(
                 name="Bronze",
@@ -540,24 +633,24 @@ class TierService:
                 sort_order=1,
                 min_total_spent=0.0,
                 min_orders_count=0,
-                benefits=[]
+                benefits=[],
             ),
             CreateTierSchema(
-                name="Silver", 
+                name="Silver",
                 description="Premium tier for valued customers",
                 sort_order=2,
                 min_total_spent=500.0,
                 min_orders_count=5,
-                benefits=[]
+                benefits=[],
             ),
             CreateTierSchema(
                 name="Gold",
-                description="VIP tier for our best customers", 
+                description="VIP tier for our best customers",
                 sort_order=3,
                 min_total_spent=2000.0,
                 min_orders_count=20,
-                benefits=[]
-            )
+                benefits=[],
+            ),
         ]
 
         created_tiers = []
@@ -585,16 +678,20 @@ class TierService:
             await session.refresh(new_benefit)
 
             from src.shared.sqlalchemy_utils import sqlalchemy_to_dict
+
             benefit_dict = sqlalchemy_to_dict(new_benefit)
             return BenefitSchema.model_validate(benefit_dict)
 
     async def get_benefit_by_id(self, benefit_id: int) -> Optional[BenefitSchema]:
         """Get a benefit by ID"""
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Benefit).where(Benefit.id == benefit_id))
+            result = await session.execute(
+                select(Benefit).where(Benefit.id == benefit_id)
+            )
             benefit = result.scalars().first()
             if benefit:
                 from src.shared.sqlalchemy_utils import sqlalchemy_to_dict
+
                 benefit_dict = sqlalchemy_to_dict(benefit)
                 return BenefitSchema.model_validate(benefit_dict)
             return None
@@ -604,46 +701,59 @@ class TierService:
         async with AsyncSessionLocal() as session:
             query = select(Benefit).order_by(Benefit.id)
             if active_only:
-                query = query.where(Benefit.is_active == True)
-            
+                query = query.where(Benefit.is_active)
+
             result = await session.execute(query)
             benefits = result.scalars().all()
-            
-            from src.shared.sqlalchemy_utils import sqlalchemy_to_dict
-            return [BenefitSchema.model_validate(sqlalchemy_to_dict(benefit)) for benefit in benefits]
 
-    async def update_benefit(self, benefit_id: int, benefit_data: UpdateBenefitSchema) -> Optional[BenefitSchema]:
+            from src.shared.sqlalchemy_utils import sqlalchemy_to_dict
+
+            return [
+                BenefitSchema.model_validate(sqlalchemy_to_dict(benefit))
+                for benefit in benefits
+            ]
+
+    async def update_benefit(
+        self, benefit_id: int, benefit_data: UpdateBenefitSchema
+    ) -> Optional[BenefitSchema]:
         """Update a benefit"""
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Benefit).where(Benefit.id == benefit_id))
+            result = await session.execute(
+                select(Benefit).where(Benefit.id == benefit_id)
+            )
             benefit = result.scalars().first()
-            
+
             if not benefit:
                 return None
-            
+
             update_data = benefit_data.model_dump(exclude_unset=True)
             for key, value in update_data.items():
-                if key in ['benefit_type', 'discount_type'] and value is not None:
-                    setattr(benefit, key, value.value if hasattr(value, 'value') else value)
+                if key in ["benefit_type", "discount_type"] and value is not None:
+                    setattr(
+                        benefit, key, value.value if hasattr(value, "value") else value
+                    )
                 else:
                     setattr(benefit, key, value)
-            
+
             await session.commit()
             await session.refresh(benefit)
-            
+
             from src.shared.sqlalchemy_utils import sqlalchemy_to_dict
+
             benefit_dict = sqlalchemy_to_dict(benefit)
             return BenefitSchema.model_validate(benefit_dict)
 
     async def delete_benefit(self, benefit_id: int) -> bool:
         """Delete a benefit"""
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Benefit).where(Benefit.id == benefit_id))
+            result = await session.execute(
+                select(Benefit).where(Benefit.id == benefit_id)
+            )
             benefit = result.scalars().first()
-            
+
             if not benefit:
                 return False
-            
+
             await session.delete(benefit)
             await session.commit()
             return True
@@ -655,28 +765,37 @@ class TierService:
             tier_result = await session.execute(select(Tier).where(Tier.id == tier_id))
             tier = tier_result.scalars().first()
             if not tier:
-                raise ResourceNotFoundException(detail=f"Tier with ID {tier_id} not found")
+                raise ResourceNotFoundException(
+                    detail=f"Tier with ID {tier_id} not found"
+                )
 
             # Check if benefit exists
-            benefit_result = await session.execute(select(Benefit).where(Benefit.id == benefit_id))
+            benefit_result = await session.execute(
+                select(Benefit).where(Benefit.id == benefit_id)
+            )
             benefit = benefit_result.scalars().first()
             if not benefit:
-                raise ResourceNotFoundException(detail=f"Benefit with ID {benefit_id} not found")
+                raise ResourceNotFoundException(
+                    detail=f"Benefit with ID {benefit_id} not found"
+                )
 
             # Check if association already exists using a direct query
             from src.database.models.tier_benefit import tier_benefits
+
             association_result = await session.execute(
                 select(tier_benefits).where(
                     tier_benefits.c.tier_id == tier_id,
-                    tier_benefits.c.benefit_id == benefit_id
+                    tier_benefits.c.benefit_id == benefit_id,
                 )
             )
             association = association_result.first()
-            
+
             if not association:
                 # Create the association
                 await session.execute(
-                    tier_benefits.insert().values(tier_id=tier_id, benefit_id=benefit_id)
+                    tier_benefits.insert().values(
+                        tier_id=tier_id, benefit_id=benefit_id
+                    )
                 )
                 await session.commit()
                 return True  # Newly created
@@ -694,27 +813,30 @@ class TierService:
                 return False
 
             # Check if benefit exists
-            benefit_result = await session.execute(select(Benefit).where(Benefit.id == benefit_id))
+            benefit_result = await session.execute(
+                select(Benefit).where(Benefit.id == benefit_id)
+            )
             benefit = benefit_result.scalars().first()
             if not benefit:
                 return False
 
             # Check if association exists using a direct query
             from src.database.models.tier_benefit import tier_benefits
+
             association_result = await session.execute(
                 select(tier_benefits).where(
                     tier_benefits.c.tier_id == tier_id,
-                    tier_benefits.c.benefit_id == benefit_id
+                    tier_benefits.c.benefit_id == benefit_id,
                 )
             )
             association = association_result.first()
-            
+
             if association:
                 # Remove the association
                 await session.execute(
                     tier_benefits.delete().where(
                         tier_benefits.c.tier_id == tier_id,
-                        tier_benefits.c.benefit_id == benefit_id
+                        tier_benefits.c.benefit_id == benefit_id,
                     )
                 )
                 await session.commit()
@@ -726,11 +848,17 @@ class TierService:
         """Get all benefits for a specific tier"""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Tier).options(selectinload(Tier.benefits)).where(Tier.id == tier_id)
+                select(Tier)
+                .options(selectinload(Tier.benefits))
+                .where(Tier.id == tier_id)
             )
             tier = result.scalars().first()
             if not tier:
                 return []
 
             from src.shared.sqlalchemy_utils import sqlalchemy_to_dict
-            return [BenefitSchema.model_validate(sqlalchemy_to_dict(benefit)) for benefit in tier.benefits]
+
+            return [
+                BenefitSchema.model_validate(sqlalchemy_to_dict(benefit))
+                for benefit in tier.benefits
+            ]

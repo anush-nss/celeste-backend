@@ -1,25 +1,24 @@
-from fastapi import APIRouter, Depends, status, Query, HTTPException
 from typing import Annotated, List, Optional, Union
-from pydantic import BaseModel, Field, ConfigDict
-from datetime import datetime
-from src.database.connection import AsyncSessionLocal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+from src.api.auth.models import DecodedToken
+from src.api.pricing.service import PricingService
 from src.api.products.models import (
-    ProductSchema,
     CreateProductSchema,
-    UpdateProductSchema,
-    ProductQuerySchema,
     EnhancedProductSchema,
     PaginatedProductsResponse,
+    ProductQuerySchema,
+    ProductSchema,
     ProductTagSchema,
-    PricingInfoSchema,
+    UpdateProductSchema,
 )
-from src.api.tags.models import TagSchema, CreateTagSchema, UpdateTagSchema
-from src.api.auth.models import DecodedToken
 from src.api.products.service import ProductService
-from src.api.pricing.service import PricingService
-from src.dependencies.auth import RoleChecker, get_current_user, get_optional_user
-from src.dependencies.tiers import get_user_tier
+from src.api.tags.models import CreateTagSchema, TagSchema, UpdateTagSchema
 from src.config.constants import UserRole
+from src.database.connection import AsyncSessionLocal
+from src.dependencies.auth import RoleChecker, get_current_user
+from src.dependencies.tiers import get_user_tier
 from src.shared.exceptions import ResourceNotFoundException
 from src.shared.responses import success_response
 
@@ -34,19 +33,17 @@ pricing_service = PricingService()
     response_model=List[EnhancedProductSchema],
 )
 async def get_recent_products(
-    limit: Optional[int] = Query(
-        20, le=100, description="Number of recent products to return (default: 20, max: 100)"
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+    user_tier: Optional[int] = Depends(get_user_tier),
+    limit: int = Query(
+        20,
+        le=100,
+        description="Number of recent products to return (default: 20, max: 100)",
     ),
-    include_pricing: Optional[bool] = Query(
-        True, description="Include pricing calculations"
-    ),
-    include_categories: Optional[bool] = Query(
-        False, description="Include category information"
-    ),
-    include_tags: Optional[bool] = Query(
-        False, description="Include tag information"
-    ),
-    include_inventory: Optional[bool] = Query(
+    include_pricing: bool = Query(True, description="Include pricing calculations"),
+    include_categories: bool = Query(False, description="Include category information"),
+    include_tags: bool = Query(False, description="Include tag information"),
+    include_inventory: bool = Query(
         False, description="Include inventory information (requires location)"
     ),
     latitude: Optional[float] = Query(
@@ -55,8 +52,6 @@ async def get_recent_products(
     longitude: Optional[float] = Query(
         None, ge=-180, le=180, description="User longitude for location-based inventory"
     ),
-    current_user: Annotated[DecodedToken, Depends(get_current_user)] = None,
-    user_tier: Optional[int] = Depends(get_user_tier),
 ):
     """
     Get recently bought products for the authenticated user.
@@ -105,25 +100,37 @@ async def get_all_products(
     include_categories: Optional[bool] = Query(
         False, description="Include category information"
     ),
-    include_tags: Optional[bool] = Query(
-        False, description="Include tag information"
+    include_tags: Optional[bool] = Query(False, description="Include tag information"),
+    category_ids: Optional[List[int]] = Query(
+        None, description="Filter by category IDs"
     ),
-    category_ids: Optional[List[int]] = Query(None, description="Filter by category IDs"),
-    tags: Optional[List[str]] = Query(None, description="Filter by tags (flexible syntax: 'organic', 'id:5', 'type:dietary', 'value:gluten-free')"),
+    tags: Optional[List[str]] = Query(
+        None,
+        description="Filter by tags (flexible syntax: 'organic', 'id:5', 'type:dietary', 'value:gluten-free')",
+    ),
     min_price: Optional[float] = Query(None, description="Filter by minimum price"),
     max_price: Optional[float] = Query(None, description="Filter by maximum price"),
     only_discounted: Optional[bool] = Query(
         False, description="Return only products with discounts applied"
     ),
-    store_id: Optional[List[int]] = Query(None, description="Store IDs for multi-store inventory data"),
+    store_id: Optional[List[int]] = Query(
+        None, description="Store IDs for multi-store inventory data"
+    ),
     include_inventory: Optional[bool] = Query(
-        True, description="Include inventory information (requires store_id or location)"
+        True,
+        description="Include inventory information (requires store_id or location)",
     ),
     latitude: Optional[float] = Query(
-        None, ge=-90, le=90, description="User latitude for location-based store finding"
+        None,
+        ge=-90,
+        le=90,
+        description="User latitude for location-based store finding",
     ),
     longitude: Optional[float] = Query(
-        None, ge=-180, le=180, description="User longitude for location-based store finding"
+        None,
+        ge=-180,
+        le=180,
+        description="User longitude for location-based store finding",
     ),
     user_tier: Optional[int] = Depends(get_user_tier),
 ):
@@ -169,9 +176,6 @@ async def get_all_products(
 # ===== PRODUCT TAG CRUD ROUTES =====
 
 
-
-
-
 @products_router.get(
     "/tags/types",
     summary="Get all available product tag types",
@@ -180,14 +184,16 @@ async def get_all_products(
 async def get_tag_types():
     """Get all unique tag types for products only"""
     async with AsyncSessionLocal() as session:
-        from sqlalchemy.future import select
         from sqlalchemy import distinct
+        from sqlalchemy.future import select
+
         from src.database.models.product import Tag
 
-        query = select(distinct(Tag.tag_type)).filter(
-            Tag.is_active == True,
-            Tag.tag_type.like('product_%')
-        ).order_by(Tag.tag_type)
+        query = (
+            select(distinct(Tag.tag_type))
+            .filter(Tag.is_active, Tag.tag_type.like("product_%"))
+            .order_by(Tag.tag_type)
+        )
         result = await session.execute(query)
         tag_types = result.scalars().all()
 
@@ -203,14 +209,15 @@ async def get_tag_by_id(tag_id: int):
     """Get a specific tag by ID"""
     async with AsyncSessionLocal() as session:
         from sqlalchemy.future import select
+
         from src.database.models.product import Tag
-        
+
         result = await session.execute(select(Tag).filter(Tag.id == tag_id))
         tag = result.scalars().first()
-        
+
         if not tag:
             raise ResourceNotFoundException(detail=f"Tag with ID {tag_id} not found")
-        
+
         return success_response(TagSchema.model_validate(tag).model_dump(mode="json"))
 
 
@@ -224,22 +231,23 @@ async def update_tag(tag_id: int, tag_data: UpdateTagSchema):
     """Update an existing tag"""
     async with AsyncSessionLocal() as session:
         from sqlalchemy.future import select
+
         from src.database.models.product import Tag
-        
+
         result = await session.execute(select(Tag).filter(Tag.id == tag_id))
         tag = result.scalars().first()
-        
+
         if not tag:
             raise ResourceNotFoundException(detail=f"Tag with ID {tag_id} not found")
-        
+
         # Update fields
         update_dict = tag_data.model_dump(exclude_unset=True)
         for field, value in update_dict.items():
             setattr(tag, field, value)
-        
+
         await session.commit()
         await session.refresh(tag)
-        
+
         return success_response(TagSchema.model_validate(tag).model_dump(mode="json"))
 
 
@@ -252,22 +260,26 @@ async def delete_tag(tag_id: int):
     """Delete a tag (soft delete by setting is_active to False)"""
     async with AsyncSessionLocal() as session:
         from sqlalchemy.future import select
+
         from src.database.models.product import Tag
-        
+
         result = await session.execute(select(Tag).filter(Tag.id == tag_id))
         tag = result.scalars().first()
-        
+
         if not tag:
             raise ResourceNotFoundException(detail=f"Tag with ID {tag_id} not found")
-        
+
         # Soft delete by setting is_active to False
         tag.is_active = False
         await session.commit()
-        
-        return success_response({"id": tag_id, "message": "Tag deactivated successfully"})
+
+        return success_response(
+            {"id": tag_id, "message": "Tag deactivated successfully"}
+        )
 
 
 # ===== PRODUCT TAG CRUD ROUTES (must come before /{id} route) =====
+
 
 @products_router.post(
     "/tags",
@@ -282,7 +294,9 @@ async def create_product_tags(payload: Union[CreateTagSchema, List[CreateTagSche
     tags_to_create = payload if is_list else [payload]
 
     if not tags_to_create:
-        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+        raise HTTPException(
+            status_code=400, detail="Request body cannot be an empty list."
+        )
 
     created_tags = await product_service.create_product_tags(tags_to_create)
 
@@ -291,7 +305,8 @@ async def create_product_tags(payload: Union[CreateTagSchema, List[CreateTagSche
 
     if is_list:
         return success_response(
-            [t.model_dump(mode="json") for t in tag_schemas], status_code=status.HTTP_201_CREATED
+            [t.model_dump(mode="json") for t in tag_schemas],
+            status_code=status.HTTP_201_CREATED,
         )
     else:
         return success_response(
@@ -306,16 +321,22 @@ async def create_product_tags(payload: Union[CreateTagSchema, List[CreateTagSche
 )
 async def get_product_tags(
     is_active: Optional[bool] = Query(True, description="Filter by active status"),
-    tag_type_suffix: Optional[str] = Query(None, description="Filter by tag type suffix (e.g., 'color', 'size')"),
+    tag_type_suffix: Optional[str] = Query(
+        None, description="Filter by tag type suffix (e.g., 'color', 'size')"
+    ),
 ):
     """Get all product tags."""
-    tags = await product_service.get_product_tags(is_active=is_active if is_active is not None else True, tag_type_suffix=tag_type_suffix)
+    tags = await product_service.get_product_tags(
+        is_active=is_active if is_active is not None else True,
+        tag_type_suffix=tag_type_suffix,
+    )
     return success_response(
         [TagSchema.model_validate(tag).model_dump(mode="json") for tag in tags]
     )
 
 
 # ===== PRODUCT ROUTES =====
+
 
 @products_router.get(
     "/ref/{ref}",
@@ -330,19 +351,25 @@ async def get_product_by_ref(
     include_categories: Optional[bool] = Query(
         True, description="Include category information"
     ),
-    include_tags: Optional[bool] = Query(
-        True, description="Include tag information"
-    ),
+    include_tags: Optional[bool] = Query(True, description="Include tag information"),
     include_inventory: Optional[bool] = Query(
         True, description="Include inventory information"
     ),
     quantity: Optional[int] = Query(1, description="Quantity for bulk pricing"),
-    store_id: Optional[List[int]] = Query(None, description="Store IDs for inventory info"),
+    store_id: Optional[List[int]] = Query(
+        None, description="Store IDs for inventory info"
+    ),
     latitude: Optional[float] = Query(
-        None, ge=-90, le=90, description="User latitude for location-based store finding"
+        None,
+        ge=-90,
+        le=90,
+        description="User latitude for location-based store finding",
     ),
     longitude: Optional[float] = Query(
-        None, ge=-180, le=180, description="User longitude for location-based store finding"
+        None,
+        ge=-180,
+        le=180,
+        description="User longitude for location-based store finding",
     ),
     user_tier: Optional[int] = Depends(get_user_tier),
 ):
@@ -354,14 +381,16 @@ async def get_product_by_ref(
     product = await product_service.get_enhanced_product_by_ref(
         ref=ref,
         include_pricing=include_pricing if include_pricing is not None else False,
-        include_categories=include_categories if include_categories is not None else False,
+        include_categories=include_categories
+        if include_categories is not None
+        else False,
         include_tags=include_tags if include_tags is not None else False,
         include_inventory=include_inventory if include_inventory is not None else False,
         customer_tier=user_tier,
         store_ids=store_id,
         latitude=latitude,
         longitude=longitude,
-        quantity=quantity or 1
+        quantity=quantity or 1,
     )
 
     if not product:
@@ -383,19 +412,25 @@ async def get_product_by_id(
     include_categories: Optional[bool] = Query(
         True, description="Include category information"
     ),
-    include_tags: Optional[bool] = Query(
-        True, description="Include tag information"
-    ),
+    include_tags: Optional[bool] = Query(True, description="Include tag information"),
     include_inventory: Optional[bool] = Query(
         True, description="Include inventory information"
     ),
     quantity: Optional[int] = Query(1, description="Quantity for bulk pricing"),
-    store_id: Optional[List[int]] = Query(None, description="Store IDs for inventory data"),
+    store_id: Optional[List[int]] = Query(
+        None, description="Store IDs for inventory data"
+    ),
     latitude: Optional[float] = Query(
-        None, ge=-90, le=90, description="User latitude for location-based store finding"
+        None,
+        ge=-90,
+        le=90,
+        description="User latitude for location-based store finding",
     ),
     longitude: Optional[float] = Query(
-        None, ge=-180, le=180, description="User longitude for location-based store finding"
+        None,
+        ge=-180,
+        le=180,
+        description="User longitude for location-based store finding",
     ),
     user_tier: Optional[int] = Depends(get_user_tier),
 ):
@@ -407,21 +442,22 @@ async def get_product_by_id(
     product = await product_service.get_enhanced_product_by_id(
         product_id=id,
         include_pricing=include_pricing if include_pricing is not None else False,
-        include_categories=include_categories if include_categories is not None else False,
+        include_categories=include_categories
+        if include_categories is not None
+        else False,
         include_tags=include_tags if include_tags is not None else False,
         include_inventory=include_inventory if include_inventory is not None else False,
         customer_tier=user_tier,
         store_ids=store_id,
         latitude=latitude,
         longitude=longitude,
-        quantity=quantity or 1
+        quantity=quantity or 1,
     )
 
     if not product:
         raise ResourceNotFoundException(detail=f"Product with ID {id} not found")
 
     return success_response(product.model_dump(mode="json"))
-
 
 
 @products_router.post(
@@ -431,22 +467,28 @@ async def get_product_by_id(
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def create_products(payload: Union[CreateProductSchema, List[CreateProductSchema]]):
+async def create_products(
+    payload: Union[CreateProductSchema, List[CreateProductSchema]],
+):
     is_list = isinstance(payload, list)
     products_to_create = payload if is_list else [payload]
-    
+
     if not products_to_create:
-        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+        raise HTTPException(
+            status_code=400, detail="Request body cannot be an empty list."
+        )
 
     created_products = await product_service.create_products(products_to_create)
-    
+
     if is_list:
         return success_response(
-            [p.model_dump(mode="json") for p in created_products], status_code=status.HTTP_201_CREATED
+            [p.model_dump(mode="json") for p in created_products],
+            status_code=status.HTTP_201_CREATED,
         )
     else:
         return success_response(
-            created_products[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+            created_products[0].model_dump(mode="json"),
+            status_code=status.HTTP_201_CREATED,
         )
 
 
@@ -474,9 +516,8 @@ async def delete_product(id: int):
     return success_response({"id": id, "message": "Product deleted successfully"})
 
 
-
-
 # ===== PRODUCT-TAG ASSIGNMENT ROUTES =====
+
 
 @products_router.get(
     "/{product_id}/tags",
@@ -490,15 +531,21 @@ async def get_product_tags_by_id(product_id: int):
     )
 
     if not product:
-        raise ResourceNotFoundException(detail=f"Product with ID {product_id} not found")
+        raise ResourceNotFoundException(
+            detail=f"Product with ID {product_id} not found"
+        )
 
     product_tags = product.model_dump(mode="json").get("product_tags", [])
     if not product_tags:
         return success_response([])
 
     return success_response(
-        [ProductTagSchema.model_validate(tag).model_dump(mode="json") for tag in product_tags]
+        [
+            ProductTagSchema.model_validate(tag).model_dump(mode="json")
+            for tag in product_tags
+        ]
     )
+
 
 @products_router.post(
     "/{product_id}/tags/{tag_id}",
@@ -508,16 +555,18 @@ async def get_product_tags_by_id(product_id: int):
 async def assign_tag_to_product(
     product_id: int,
     tag_id: int,
-    value: Optional[str] = Query(None, description="Optional tag value")
+    value: Optional[str] = Query(None, description="Optional tag value"),
 ):
     """Assign a tag to a product with optional value"""
     await product_service.assign_tag_to_product(
-        product_id=product_id,
-        tag_id=tag_id,
-        value=value
+        product_id=product_id, tag_id=tag_id, value=value
     )
     return success_response(
-        {"product_id": product_id, "tag_id": tag_id, "message": "Tag assigned successfully"}
+        {
+            "product_id": product_id,
+            "tag_id": tag_id,
+            "message": "Tag assigned successfully",
+        }
     )
 
 
@@ -530,5 +579,9 @@ async def remove_tag_from_product(product_id: int, tag_id: int):
     """Remove a tag from a product"""
     await product_service.remove_tag_from_product(product_id, tag_id)
     return success_response(
-        {"product_id": product_id, "tag_id": tag_id, "message": "Tag removed successfully"}
+        {
+            "product_id": product_id,
+            "tag_id": tag_id,
+            "message": "Tag removed successfully",
+        }
     )

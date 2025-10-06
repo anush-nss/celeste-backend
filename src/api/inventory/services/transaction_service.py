@@ -1,13 +1,12 @@
-from typing import Optional
 from sqlalchemy.future import select
-from src.database.connection import AsyncSessionLocal
-from src.database.models.inventory import Inventory
+
 from src.api.inventory.models import (
-    InventorySchema,
     AdjustInventorySchema,
+    InventorySchema,
 )
-from src.shared.exceptions import ResourceNotFoundException, ValidationException
+from src.database.models.inventory import Inventory
 from src.shared.error_handler import ErrorHandler, handle_service_errors
+from src.shared.exceptions import ResourceNotFoundException, ValidationException
 
 
 class InventoryTransactionService:
@@ -23,10 +22,11 @@ class InventoryTransactionService:
         """Atomically adjust stock, hold, or reserved quantities."""
         # Lock the specific inventory row for the duration of the transaction
         result = await session.execute(
-            select(Inventory).filter_by(
-                product_id=adjustment_data.product_id,
-                store_id=adjustment_data.store_id
-            ).with_for_update()
+            select(Inventory)
+            .filter_by(
+                product_id=adjustment_data.product_id, store_id=adjustment_data.store_id
+            )
+            .with_for_update()
         )
         inventory = result.scalars().first()
 
@@ -57,7 +57,9 @@ class InventoryTransactionService:
         await session.refresh(inventory)
         return InventorySchema.model_validate(inventory)
 
-    async def place_hold(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
+    async def place_hold(
+        self, product_id: int, store_id: int, quantity: int, session
+    ) -> InventorySchema:
         """Place a hold on inventory for an order."""
         if quantity <= 0:
             raise ValidationException("Quantity must be positive.")
@@ -66,11 +68,13 @@ class InventoryTransactionService:
             product_id=product_id,
             store_id=store_id,
             available_change=-quantity,
-            on_hold_change=quantity
+            on_hold_change=quantity,
         )
         return await self.adjust_inventory_stock(adjustment, session)
 
-    async def release_hold(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
+    async def release_hold(
+        self, product_id: int, store_id: int, quantity: int, session
+    ) -> InventorySchema:
         """Release a hold on inventory (e.g., order cancelled)."""
         if quantity <= 0:
             raise ValidationException("Quantity must be positive.")
@@ -79,11 +83,13 @@ class InventoryTransactionService:
             product_id=product_id,
             store_id=store_id,
             available_change=quantity,
-            on_hold_change=-quantity
+            on_hold_change=-quantity,
         )
         return await self.adjust_inventory_stock(adjustment, session)
 
-    async def confirm_reservation(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
+    async def confirm_reservation(
+        self, product_id: int, store_id: int, quantity: int, session
+    ) -> InventorySchema:
         """Convert a hold to a reservation (e.g., payment confirmed)."""
         if quantity <= 0:
             raise ValidationException("Quantity must be positive.")
@@ -92,18 +98,18 @@ class InventoryTransactionService:
             product_id=product_id,
             store_id=store_id,
             on_hold_change=-quantity,
-            reserved_change=quantity
+            reserved_change=quantity,
         )
         return await self.adjust_inventory_stock(adjustment, session)
 
-    async def fulfill_order(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
+    async def fulfill_order(
+        self, product_id: int, store_id: int, quantity: int, session
+    ) -> InventorySchema:
         """Fulfill an order by removing reserved stock."""
         if quantity <= 0:
             raise ValidationException("Quantity must be positive.")
 
         adjustment = AdjustInventorySchema(
-            product_id=product_id,
-            store_id=store_id,
-            reserved_change=-quantity
+            product_id=product_id, store_id=store_id, reserved_change=-quantity
         )
         return await self.adjust_inventory_stock(adjustment, session)

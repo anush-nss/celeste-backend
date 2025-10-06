@@ -1,19 +1,23 @@
-from typing import Optional, List
+from typing import List, Optional
+
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload
-from sqlalchemy import and_, update
-from src.database.connection import AsyncSessionLocal
-from src.database.models.inventory import Inventory
+
 from src.api.inventory.models import (
-    InventorySchema,
-    CreateInventorySchema,
-    UpdateInventorySchema,
     AdjustInventorySchema,
+    CreateInventorySchema,
+    InventorySchema,
+    UpdateInventorySchema,
 )
 from src.api.inventory.services import InventoryTransactionService
-from src.shared.exceptions import ResourceNotFoundException, ValidationException, ConflictException
+from src.database.connection import AsyncSessionLocal
+from src.database.models.inventory import Inventory
 from src.shared.error_handler import ErrorHandler, handle_service_errors
-from sqlalchemy.exc import IntegrityError
+from src.shared.exceptions import (
+    ConflictException,
+    ResourceNotFoundException,
+    ValidationException,
+)
 
 
 class InventoryService:
@@ -57,9 +61,7 @@ class InventoryService:
     async def get_inventory_by_id(self, inventory_id: int) -> InventorySchema | None:
         """Get a single inventory item by its ID."""
         async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Inventory).filter_by(id=inventory_id)
-            )
+            result = await session.execute(select(Inventory).filter_by(id=inventory_id))
             inventory = result.scalars().first()
             return InventorySchema.model_validate(inventory) if inventory else None
 
@@ -103,11 +105,17 @@ class InventoryService:
                 for inventory in created_inventory_items:
                     await session.refresh(inventory)
 
-                return [InventorySchema.model_validate(inventory) for inventory in created_inventory_items]
+                return [
+                    InventorySchema.model_validate(inventory)
+                    for inventory in created_inventory_items
+                ]
 
         except IntegrityError as e:
             # Check if it's a unique constraint violation
-            if "unique constraint" in str(e).lower() or "duplicate key" in str(e).lower():
+            if (
+                "unique constraint" in str(e).lower()
+                or "duplicate key" in str(e).lower()
+            ):
                 raise ConflictException(
                     "One or more inventory entries for the specified product and store combinations already exist."
                 )
@@ -128,7 +136,9 @@ class InventoryService:
             inventory = result.scalars().first()
 
             if not inventory:
-                raise ResourceNotFoundException(f"Inventory item with ID {inventory_id} not found")
+                raise ResourceNotFoundException(
+                    f"Inventory item with ID {inventory_id} not found"
+                )
 
             update_data = inventory_data.model_dump(exclude_unset=True)
             for key, value in update_data.items():
@@ -142,9 +152,7 @@ class InventoryService:
     async def delete_inventory(self, inventory_id: int) -> bool:
         """Delete an inventory item."""
         async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Inventory).filter_by(id=inventory_id)
-            )
+            result = await session.execute(select(Inventory).filter_by(id=inventory_id))
             inventory = result.scalars().first()
             if not inventory:
                 return False
@@ -158,23 +166,41 @@ class InventoryService:
         self, adjustment_data: AdjustInventorySchema, session
     ) -> InventorySchema:
         """Atomically adjust stock, hold, or reserved quantities."""
-        return await self.transaction_service.adjust_inventory_stock(adjustment_data, session)
+        return await self.transaction_service.adjust_inventory_stock(
+            adjustment_data, session
+        )
 
-    async def place_hold(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
+    async def place_hold(
+        self, product_id: int, store_id: int, quantity: int, session
+    ) -> InventorySchema:
         """Place a hold on inventory for an order."""
-        return await self.transaction_service.place_hold(product_id, store_id, quantity, session)
+        return await self.transaction_service.place_hold(
+            product_id, store_id, quantity, session
+        )
 
-    async def release_hold(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
+    async def release_hold(
+        self, product_id: int, store_id: int, quantity: int, session
+    ) -> InventorySchema:
         """Release a hold on inventory (e.g., order cancelled)."""
-        return await self.transaction_service.release_hold(product_id, store_id, quantity, session)
+        return await self.transaction_service.release_hold(
+            product_id, store_id, quantity, session
+        )
 
-    async def confirm_reservation(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
+    async def confirm_reservation(
+        self, product_id: int, store_id: int, quantity: int, session
+    ) -> InventorySchema:
         """Convert a hold to a reservation (e.g., payment confirmed)."""
-        return await self.transaction_service.confirm_reservation(product_id, store_id, quantity, session)
+        return await self.transaction_service.confirm_reservation(
+            product_id, store_id, quantity, session
+        )
 
-    async def fulfill_order(self, product_id: int, store_id: int, quantity: int, session) -> InventorySchema:
+    async def fulfill_order(
+        self, product_id: int, store_id: int, quantity: int, session
+    ) -> InventorySchema:
         """Fulfill an order by removing reserved stock."""
-        return await self.transaction_service.fulfill_order(product_id, store_id, quantity, session)
+        return await self.transaction_service.fulfill_order(
+            product_id, store_id, quantity, session
+        )
 
     @handle_service_errors("retrieving inventory for products")
     async def get_inventory_for_products_in_store(
@@ -188,7 +214,7 @@ class InventoryService:
             result = await session.execute(
                 select(Inventory).filter(
                     Inventory.product_id.in_(product_ids),
-                    Inventory.store_id == store_id
+                    Inventory.store_id == store_id,
                 )
             )
             inventory_items = result.scalars().all()
@@ -206,7 +232,7 @@ class InventoryService:
             result = await session.execute(
                 select(Inventory).filter(
                     Inventory.product_id.in_(product_ids),
-                    Inventory.store_id.in_(store_ids)
+                    Inventory.store_id.in_(store_ids),
                 )
             )
             inventory_items = result.scalars().all()

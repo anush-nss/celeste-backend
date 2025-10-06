@@ -1,12 +1,12 @@
 """
 Payment service for bank payment gateway integration
 """
-from typing import Dict, Any, Optional, List
-from decimal import Decimal
+
 from datetime import datetime, timedelta
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
+
 from src.shared.error_handler import ErrorHandler
-import hashlib
-import hmac
 
 
 class PaymentService:
@@ -24,7 +24,7 @@ class PaymentService:
         order_id: int,
         total_amount: Decimal,
         user_id: str,
-        payment_method: str = "card"
+        payment_method: str = "card",
     ) -> Dict[str, Any]:
         """Initiate payment process with bank gateway"""
 
@@ -42,8 +42,8 @@ class PaymentService:
             "customer_id": user_id,
             "return_url": f"https://yourapp.com/payment/return/{order_id}",
             "cancel_url": f"https://yourapp.com/payment/cancel/{order_id}",
-            "notify_url": f"https://yourapp.com/api/orders/payment/callback",
-            "expires_at": datetime.now() + timedelta(minutes=30)
+            "notify_url": "https://yourapp.com/api/orders/payment/callback",
+            "expires_at": datetime.now() + timedelta(minutes=30),
         }
 
         # Generate payment URL (placeholder)
@@ -59,7 +59,7 @@ class PaymentService:
             "currency": "LKR",
             "payment_method": payment_method,
             "order_id": order_id,
-            "user_id": user_id
+            "user_id": user_id,
         }
 
         # Log payment initiation
@@ -74,8 +74,7 @@ class PaymentService:
         return payment_result
 
     async def process_payment_callback(
-        self,
-        callback_data: Dict[str, Any]
+        self, callback_data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Process payment gateway callback with signature verification"""
 
@@ -98,7 +97,9 @@ class PaymentService:
         )
 
         # Verify callback signature (placeholder verification)
-        is_valid_signature = self._verify_callback_signature(callback_data, str(signature) if signature is not None else "")
+        is_valid_signature = self._verify_callback_signature(
+            callback_data, str(signature) if signature is not None else ""
+        )
 
         if not is_valid_signature:
             self._error_handler.logger.error(
@@ -117,7 +118,7 @@ class PaymentService:
             "amount_charged": float(amount) if amount else 0.0,
             "processed_at": datetime.now(),
             "signature_valid": is_valid_signature,
-            "raw_callback_data": callback_data
+            "raw_callback_data": callback_data,
         }
 
         # Log callback processing result
@@ -130,7 +131,9 @@ class PaymentService:
 
         return callback_result
 
-    def _verify_callback_signature(self, callback_data: Dict[str, Any], received_signature: str) -> bool:
+    def _verify_callback_signature(
+        self, callback_data: Dict[str, Any], received_signature: str
+    ) -> bool:
         """Verify callback signature for security (placeholder)"""
 
         # In production, this would verify the actual bank signature
@@ -149,9 +152,7 @@ class PaymentService:
         return True
 
     async def verify_payment(
-        self,
-        payment_reference: str,
-        order_id: int
+        self, payment_reference: str, order_id: int
     ) -> Dict[str, Any]:
         """Verify payment status with bank gateway"""
 
@@ -175,8 +176,8 @@ class PaymentService:
             "transaction_details": {
                 "bank_transaction_id": f"BTX_{payment_reference}",
                 "payment_method": "card",
-                "bank_response_code": "00"  # Success code
-            }
+                "bank_response_code": "00",  # Success code
+            },
         }
 
         # Log verification result
@@ -193,7 +194,7 @@ class PaymentService:
         self,
         payment_reference: str,
         refund_amount: Optional[Decimal] = None,
-        reason: str = "Customer request"
+        reason: str = "Customer request",
     ) -> Dict[str, Any]:
         """Process payment refund through bank gateway"""
 
@@ -218,7 +219,7 @@ class PaymentService:
             "processed_at": datetime.now(),
             "estimated_completion": datetime.now() + timedelta(days=3),
             "bank_refund_id": f"BANK_REF_{refund_reference}",
-            "refund_method": "original_payment_method"
+            "refund_method": "original_payment_method",
         }
 
         # Log refund processing
@@ -239,26 +240,14 @@ class PaymentService:
                 "method": "card",
                 "name": "Credit/Debit Card",
                 "supported_cards": ["visa", "mastercard", "amex"],
-                "enabled": True
+                "enabled": True,
             },
-            {
-                "method": "paypal",
-                "name": "PayPal",
-                "enabled": True
-            },
-            {
-                "method": "apple_pay",
-                "name": "Apple Pay",
-                "enabled": True
-            },
-            {
-                "method": "google_pay",
-                "name": "Google Pay",
-                "enabled": True
-            },
+            {"method": "paypal", "name": "PayPal", "enabled": True},
+            {"method": "apple_pay", "name": "Apple Pay", "enabled": True},
+            {"method": "google_pay", "name": "Google Pay", "enabled": True},
             {
                 "method": "bank_transfer",
                 "name": "Bank Transfer",
-                "enabled": False  # Coming soon
-            }
+                "enabled": False,  # Coming soon
+            },
         ]

@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, status, HTTPException
 from typing import List, Optional, Union
+
+from fastapi import APIRouter, HTTPException, status
+
 from src.api.pricing.models import (
-    PriceListSchema,
-    CreatePriceListSchema,
-    UpdatePriceListSchema,
-    PriceListLineSchema,
     CreatePriceListLineSchema,
+    CreatePriceListSchema,
+    PriceListLineSchema,
+    PriceListSchema,
     UpdatePriceListLineSchema,
+    UpdatePriceListSchema,
 )
 from src.api.pricing.service import PricingService
 from src.shared.exceptions import ResourceNotFoundException
@@ -53,7 +55,9 @@ async def get_price_list_by_id(price_list_id: int):
     response_model=Union[PriceListSchema, List[PriceListSchema]],
     status_code=status.HTTP_201_CREATED,
 )
-async def create_price_lists(payload: Union[CreatePriceListSchema, List[CreatePriceListSchema]]):
+async def create_price_lists(
+    payload: Union[CreatePriceListSchema, List[CreatePriceListSchema]],
+):
     """
     Create one or more new price lists.
 
@@ -67,17 +71,23 @@ async def create_price_lists(payload: Union[CreatePriceListSchema, List[CreatePr
     price_lists_to_create = payload if is_list else [payload]
 
     if not price_lists_to_create:
-        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+        raise HTTPException(
+            status_code=400, detail="Request body cannot be an empty list."
+        )
 
-    created_price_lists = await pricing_service.create_price_lists(price_lists_to_create)
+    created_price_lists = await pricing_service.create_price_lists(
+        price_lists_to_create
+    )
 
     if is_list:
         return success_response(
-            [pl.model_dump(mode="json") for pl in created_price_lists], status_code=status.HTTP_201_CREATED
+            [pl.model_dump(mode="json") for pl in created_price_lists],
+            status_code=status.HTTP_201_CREATED,
         )
     else:
         return success_response(
-            created_price_lists[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+            created_price_lists[0].model_dump(mode="json"),
+            status_code=status.HTTP_201_CREATED,
         )
 
 
@@ -140,7 +150,8 @@ async def get_price_list_lines(price_list_id: int):
     status_code=status.HTTP_201_CREATED,
 )
 async def create_price_list_lines(
-    price_list_id: int, payload: Union[CreatePriceListLineSchema, List[CreatePriceListLineSchema]]
+    price_list_id: int,
+    payload: Union[CreatePriceListLineSchema, List[CreatePriceListLineSchema]],
 ):
     """
     Add one or more new lines to a price list.
@@ -163,7 +174,9 @@ async def create_price_list_lines(
     lines_to_create = payload if is_list else [payload]
 
     if not lines_to_create:
-        raise HTTPException(status_code=400, detail="Request body cannot be an empty list.")
+        raise HTTPException(
+            status_code=400, detail="Request body cannot be an empty list."
+        )
 
     try:
         new_lines = await pricing_service.add_price_list_lines(
@@ -171,11 +184,13 @@ async def create_price_list_lines(
         )
         if is_list:
             return success_response(
-                [line.model_dump(mode="json") for line in new_lines], status_code=status.HTTP_201_CREATED
+                [line.model_dump(mode="json") for line in new_lines],
+                status_code=status.HTTP_201_CREATED,
             )
         else:
             return success_response(
-                new_lines[0].model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+                new_lines[0].model_dump(mode="json"),
+                status_code=status.HTTP_201_CREATED,
             )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -222,11 +237,13 @@ async def assign_price_list_to_tier(tier_id: int, price_list_id: int):
     # The service now raises proper exceptions (ResourceNotFoundException, ConflictException)
     # These will be handled by the global exception handler to return proper HTTP status codes
     await pricing_service.assign_price_list_to_tier(tier_id, price_list_id)
-    return success_response({
-        "tier_id": tier_id,
-        "price_list_id": price_list_id,
-        "message": "Price list assigned to tier successfully"
-    })
+    return success_response(
+        {
+            "tier_id": tier_id,
+            "price_list_id": price_list_id,
+            "message": "Price list assigned to tier successfully",
+        }
+    )
 
 
 @pricing_router.delete(
@@ -237,14 +254,14 @@ async def remove_price_list_from_tier(tier_id: int, price_list_id: int):
     """Remove a price list from a tier"""
     success = await pricing_service.remove_price_list_from_tier(tier_id, price_list_id)
     if not success:
-        raise ResourceNotFoundException(
-            detail="Price list assignment not found"
-        )
-    return success_response({
-        "tier_id": tier_id,
-        "price_list_id": price_list_id,
-        "message": "Price list removed from tier successfully"
-    })
+        raise ResourceNotFoundException(detail="Price list assignment not found")
+    return success_response(
+        {
+            "tier_id": tier_id,
+            "price_list_id": price_list_id,
+            "message": "Price list removed from tier successfully",
+        }
+    )
 
 
 @pricing_router.get(
@@ -264,28 +281,41 @@ async def get_tier_price_lists(tier_id: int):
     summary="Calculate product price",
 )
 async def calculate_product_price(
-    product_id: int,
-    tier_id: Optional[int] = None,
-    quantity: int = 1
+    product_id: int, tier_id: Optional[int] = None, quantity: int = 1
 ):
     """Calculate the final price for a product based on tier and quantity"""
     try:
         from src.api.products.service import ProductService
+
         product_service = ProductService()
-        product = await product_service.get_product_by_id(product_id, include_categories=True)
+        product = await product_service.get_product_by_id(
+            product_id, include_categories=True
+        )
         if not product:
-            raise ResourceNotFoundException(detail=f"Product with ID {product_id} not found")
-        
-        product_category_ids = [cat_id for cat_id in [cat.get("id") for cat in product.categories] if cat_id is not None] if product.categories else []
-        
-        pricing = await pricing_service.calculate_product_price(tier_id, product_id, product_category_ids, quantity)
+            raise ResourceNotFoundException(
+                detail=f"Product with ID {product_id} not found"
+            )
+
+        product_category_ids = (
+            [
+                cat_id
+                for cat_id in [cat.get("id") for cat in product.categories]
+                if cat_id is not None
+            ]
+            if product.categories
+            else []
+        )
+
+        pricing = await pricing_service.calculate_product_price(
+            tier_id, product_id, product_category_ids, quantity
+        )
         return success_response(pricing.model_dump(mode="json"))
     except ResourceNotFoundException as e:
         raise e
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error calculating price: {str(e)}"
+            detail=f"Error calculating price: {str(e)}",
         )
 
 
@@ -296,20 +326,23 @@ async def calculate_product_price(
 async def calculate_bulk_pricing(
     product_ids: List[int],
     tier_id: Optional[int] = None,
-    quantities: Optional[List[int]] = None
+    quantities: Optional[List[int]] = None,
 ):
     """Calculate pricing for multiple products"""
     try:
         from src.api.products.service import ProductService
+
         product_service = ProductService()
 
         # Fetch products to get their categories
         products = []
         for p_id in product_ids:
-            product = await product_service.get_product_by_id(p_id, include_categories=True)
+            product = await product_service.get_product_by_id(
+                p_id, include_categories=True
+            )
             if product:
                 products.append(product)
-        
+
         # Construct product_data for bulk pricing calculation
         product_data = []
         for i, p in enumerate(products):
@@ -319,14 +352,16 @@ async def calculate_bulk_pricing(
                 product_category_ids = []
                 for cat in p.categories:
                     # Safely get category ID, ensuring it exists and is not None
-                    cat_id = cat.get("id") if isinstance(cat, dict) else getattr(cat, "id", None)
+                    cat_id = (
+                        cat.get("id")
+                        if isinstance(cat, dict)
+                        else getattr(cat, "id", None)
+                    )
                     if cat_id is not None:
                         product_category_ids.append(cat_id)
-            product_data.append({
-                "id": p.id,
-                "quantity": quantity,
-                "category_ids": product_category_ids
-            })
+            product_data.append(
+                {"id": p.id, "quantity": quantity, "category_ids": product_category_ids}
+            )
 
         pricing_list = await pricing_service.calculate_bulk_product_pricing(
             product_data, tier_id
@@ -335,5 +370,5 @@ async def calculate_bulk_pricing(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error calculating bulk pricing: {str(e)}"
+            detail=f"Error calculating bulk pricing: {str(e)}",
         )

@@ -1,14 +1,15 @@
 import asyncio
+import hashlib
 import json
 import time
-from typing import Any, Optional, Dict
 from dataclasses import dataclass
-import hashlib
+from typing import Any, Dict, Optional
 
 
 @dataclass
 class CacheItem:
     """Cache item with TTL and metadata"""
+
     data: Any
     created_at: float
     ttl: int
@@ -53,10 +54,7 @@ class CacheService:
                 await self._evict_lru()
 
             self._cache[key] = CacheItem(
-                data=data,
-                created_at=time.time(),
-                ttl=ttl,
-                hits=0
+                data=data, created_at=time.time(), ttl=ttl, hits=0
             )
             self._access_order[key] = time.time()
 
@@ -94,7 +92,8 @@ class CacheService:
         async with self._lock:
             total_hits = sum(item.hits for item in self._cache.values())
             expired_count = sum(
-                1 for item in self._cache.values()
+                1
+                for item in self._cache.values()
                 if time.time() - item.created_at > item.ttl
             )
 
@@ -103,15 +102,12 @@ class CacheService:
                 "max_size": self._max_size,
                 "total_hits": total_hits,
                 "expired_items": expired_count,
-                "hit_rate": total_hits / max(len(self._cache), 1)
+                "hit_rate": total_hits / max(len(self._cache), 1),
             }
 
     def generate_key(self, *args, **kwargs) -> str:
         """Generate cache key from arguments"""
-        key_data = {
-            "args": args,
-            "kwargs": kwargs
-        }
+        key_data = {"args": args, "kwargs": kwargs}
         key_str = json.dumps(key_data, sort_keys=True, default=str)
         return hashlib.md5(key_str.encode()).hexdigest()
 

@@ -2,11 +2,14 @@
 Stores caching module for improved performance
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
+
 from src.shared.core_cache import core_cache
-from src.config.constants import (
-    DEFAULT_STORES_LIMIT,
-)
+
+
+# Register with invalidation manager
+from src.config.constants import Collections
+from src.shared.cache_invalidation import cache_invalidation_manager
 
 
 class StoresCache:
@@ -77,7 +80,4 @@ class StoresCache:
 # Global cache instance
 stores_cache = StoresCache()
 
-# Register with invalidation manager
-from src.shared.cache_invalidation import cache_invalidation_manager
-from src.config.constants import Collections
 cache_invalidation_manager.register_domain_cache(Collections.STORES, stores_cache)

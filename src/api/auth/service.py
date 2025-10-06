@@ -1,14 +1,20 @@
 import os
 from typing import Optional
+
+import requests
+from dotenv import load_dotenv
 from firebase_admin import auth
-from src.api.auth.models import UserRegistration, DecodedToken
+
+from src.api.auth.models import DecodedToken, UserRegistration
 from src.api.users.models import CreateUserSchema, UserSchema
 from src.api.users.service import UserService
 from src.config.constants import UserRole
-from src.shared.exceptions import ResourceNotFoundException, ValidationException, ServiceUnavailableException
 from src.shared.error_handler import ErrorHandler, handle_service_errors
-import requests
-from dotenv import load_dotenv
+from src.shared.exceptions import (
+    ResourceNotFoundException,
+    ServiceUnavailableException,
+    ValidationException,
+)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -56,7 +62,7 @@ class AuthService:
             email=decoded_token.email,
             phone=phone_number,
             role=UserRole.CUSTOMER,
-            tier_id=None
+            tier_id=None,
         )
         new_user = await self.user_service.create_user(create_user_data, uid)
 
@@ -173,7 +179,7 @@ class AuthService:
             if not firebase_web_api_key:
                 raise ServiceUnavailableException(
                     detail="FIREBASE_WEB_API_KEY environment variable not set for local development. "
-                           "Add it to your .env file. Get this from Firebase Console → Project Settings → General → Web API Key"
+                    "Add it to your .env file. Get this from Firebase Console → Project Settings → General → Web API Key"
                 )
         else:
             # Cloud environment: this endpoint should not be used in production
@@ -181,7 +187,7 @@ class AuthService:
             if not firebase_web_api_key:
                 raise ServiceUnavailableException(
                     detail="FIREBASE_WEB_API_KEY environment variable not set for local development. "
-                           "Add it to your .env file. Get this from Firebase Console → Project Settings → General → Web API Key"
+                    "Add it to your .env file. Get this from Firebase Console → Project Settings → General → Web API Key"
                 )
             # raise ServiceUnavailableException(
             #     detail="Development token generation is not available in cloud environments"
@@ -194,7 +200,7 @@ class AuthService:
             response = requests.post(
                 auth_url,
                 json={"token": custom_token.decode("utf-8"), "returnSecureToken": True},
-                timeout=10  # Add timeout for better error handling
+                timeout=10,  # Add timeout for better error handling
             )
 
             if response.status_code != 200:
@@ -220,7 +226,9 @@ class AuthService:
             }
 
         except requests.RequestException as e:
-            self._error_handler.logger.error(f"Network error during token generation: {str(e)}")
+            self._error_handler.logger.error(
+                f"Network error during token generation: {str(e)}"
+            )
             raise ServiceUnavailableException(
                 detail="Token generation service temporarily unavailable"
             )

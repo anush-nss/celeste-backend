@@ -1,23 +1,29 @@
-from typing import Optional, List, cast
+from typing import List
+
 from sqlalchemy.future import select
-from sqlalchemy import CursorResult, update
 from sqlalchemy.orm import selectinload
+
+from src.api.tiers.service import TierService
+
+# Import all models to ensure relationships are properly registered
+from src.api.users.models import (
+    AddressSchema,
+    CreateUserSchema,
+    UpdateAddressSchema,
+    UserSchema,
+)
+from src.api.users.services import UserAddressService
+from src.config.constants import UserRole
 from src.database.connection import AsyncSessionLocal
 from src.database.models.user import User
-from src.database.models.address import Address
-# Import all models to ensure relationships are properly registered
-import src.database.models
-from src.api.users.models import CreateUserSchema, UserSchema, AddToCartSchema, UpdateCartItemSchema, AddressSchema, UpdateAddressSchema, CartItemSchema
-from src.api.users.services import UserAddressService
-from src.config.constants import UserRole, DEFAULT_FALLBACK_TIER
-from src.api.tiers.service import TierService
-from src.shared.exceptions import ResourceNotFoundException, ConflictException, ValidationException
-from src.shared.sqlalchemy_utils import safe_model_validate, safe_model_validate_list
 from src.shared.error_handler import ErrorHandler, handle_service_errors
-from sqlalchemy.exc import IntegrityError
+from src.shared.exceptions import ConflictException, ValidationException
+from src.shared.sqlalchemy_utils import safe_model_validate
 
 
-def _user_to_dict(user: User, include_addresses: bool = False, include_cart: bool = False) -> dict:
+def _user_to_dict(
+    user: User, include_addresses: bool = False, include_cart: bool = False
+) -> dict:
     """Convert SQLAlchemy User to dictionary, handling relationships properly"""
     user_dict = {
         "firebase_uid": user.firebase_uid,
@@ -26,28 +32,32 @@ def _user_to_dict(user: User, include_addresses: bool = False, include_cart: boo
         "phone": user.phone,
         "role": user.role,
         "tier_id": user.tier_id,
-        "total_orders": getattr(user, 'total_orders', 0),
-        "lifetime_value": getattr(user, 'lifetime_value', 0.0),
-        "created_at": getattr(user, 'created_at', None),
-        "last_order_at": getattr(user, 'last_order_at', None),
-        "is_delivery": getattr(user, 'is_delivery', None),
+        "total_orders": getattr(user, "total_orders", 0),
+        "lifetime_value": getattr(user, "lifetime_value", 0.0),
+        "created_at": getattr(user, "created_at", None),
+        "last_order_at": getattr(user, "last_order_at", None),
+        "is_delivery": getattr(user, "is_delivery", None),
         "addresses": None,
-        "cart": None
+        "cart": None,
     }
-    
+
     # Only add addresses if they are loaded and requested
     if include_addresses:
         try:
-            if hasattr(user, '__dict__') and 'addresses' in user.__dict__ and user.addresses is not None:
-                user_dict["addresses"] = [AddressSchema.model_validate(addr) for addr in user.addresses]
+            if (
+                hasattr(user, "__dict__")
+                and "addresses" in user.__dict__
+                and user.addresses is not None
+            ):
+                user_dict["addresses"] = [
+                    AddressSchema.model_validate(addr) for addr in user.addresses
+                ]
             else:
                 user_dict["addresses"] = []
         except Exception:
             user_dict["addresses"] = []
-    
+
     return user_dict
-
-
 
 
 class UserService:
@@ -87,7 +97,7 @@ class UserService:
                 phone=user_data.phone,
                 role=user_data.role.value,
                 tier_id=default_tier,
-                is_delivery=None
+                is_delivery=None,
             )
             session.add(new_user)
             await session.commit()
@@ -98,7 +108,9 @@ class UserService:
             return UserSchema.model_validate(user_dict)
 
     @handle_service_errors("retrieving user by ID")
-    async def get_user_by_id(self, user_id: str, include_addresses: bool = False) -> UserSchema | None:
+    async def get_user_by_id(
+        self, user_id: str, include_addresses: bool = False
+    ) -> UserSchema | None:
         if not user_id or not user_id.strip():
             raise ValidationException(detail="Valid user ID is required")
 
@@ -113,25 +125,24 @@ class UserService:
 
             if user:
                 # Convert SQLAlchemy model to Pydantic schema using safe converter
-                include_rels = {'addresses'} if include_addresses else set()
+                include_rels = {"addresses"} if include_addresses else set()
                 user_schema_data = safe_model_validate(
-                    UserSchema,
-                    user,
-                    include_relationships=include_rels
+                    UserSchema, user, include_relationships=include_rels
                 )
-
 
                 return user_schema_data
             return None
 
     async def update_user(self, user_id: str, user_data: dict) -> UserSchema | None:
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(User).filter(User.firebase_uid == user_id))
+            result = await session.execute(
+                select(User).filter(User.firebase_uid == user_id)
+            )
             user = result.scalars().first()
             if user:
                 for key, value in user_data.items():
                     if key == "role" and isinstance(value, UserRole):
-                        setattr(user, key, value.value) # Store enum value as string
+                        setattr(user, key, value.value)  # Store enum value as string
                     else:
                         setattr(user, key, value)
                 await session.commit()
@@ -141,7 +152,9 @@ class UserService:
             return None
 
     # Address management - delegated to UserAddressService
-    async def add_address(self, user_id: str, address_data: AddressSchema) -> AddressSchema:
+    async def add_address(
+        self, user_id: str, address_data: AddressSchema
+    ) -> AddressSchema:
         """Add a new address for a user"""
         return await self.address_service.add_address(user_id, address_data)
 
@@ -149,18 +162,26 @@ class UserService:
         """Get all addresses for a user"""
         return await self.address_service.get_addresses(user_id)
 
-    async def get_address_by_id(self, user_id: str, address_id: int) -> AddressSchema | None:
+    async def get_address_by_id(
+        self, user_id: str, address_id: int
+    ) -> AddressSchema | None:
         """Get a specific address by ID for a user"""
         return await self.address_service.get_address_by_id(user_id, address_id)
 
-    async def update_address(self, user_id: str, address_id: int, address_data: UpdateAddressSchema) -> AddressSchema | None:
+    async def update_address(
+        self, user_id: str, address_id: int, address_data: UpdateAddressSchema
+    ) -> AddressSchema | None:
         """Update an existing address"""
-        return await self.address_service.update_address(user_id, address_id, address_data)
+        return await self.address_service.update_address(
+            user_id, address_id, address_data
+        )
 
     async def delete_address(self, user_id: str, address_id: int) -> bool:
         """Delete an address"""
         return await self.address_service.delete_address(user_id, address_id)
 
-    async def set_default_address(self, user_id: str, address_id: int) -> AddressSchema | None:
+    async def set_default_address(
+        self, user_id: str, address_id: int
+    ) -> AddressSchema | None:
         """Set an address as the default for a user"""
         return await self.address_service.set_default_address(user_id, address_id)

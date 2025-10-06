@@ -1,26 +1,23 @@
+import os
+from fastapi import FastAPI
 from src.database.connection import initialize_firebase
-
-initialize_firebase()
-
-from fastapi import FastAPI, HTTPException, Request, Depends
-from fastapi.responses import JSONResponse
-from fastapi.security import HTTPBearer
 from src.api.auth.routes import auth_router
-from src.api.users.routes import users_router
 from src.api.categories.routes import categories_router
 from src.api.ecommerce_categories.routes import ecommerce_categories_router
-from src.api.products.routes import products_router
-from src.api.orders.routes import orders_router
 from src.api.inventory.routes import inventory_router
-from src.api.stores.routes import stores_router
+from src.api.orders.routes import orders_router
 from src.api.pricing.routes import pricing_router
-from src.api.tiers.routes import router as tiers_router
+from src.api.products.routes import products_router
+from src.api.stores.routes import stores_router
 from src.api.tags.routes import tags_router
+from src.api.tiers.routes import router as tiers_router
+from src.api.users.routes import users_router
 from src.middleware.error import http_exception_handler
-from src.shared.utils import get_logger
 from src.middleware.timing import add_process_time_header
-import time
-import os
+from src.shared.utils import get_logger
+from fastapi.openapi.utils import get_openapi
+
+initialize_firebase()
 
 logger = get_logger(__name__)
 
@@ -49,8 +46,6 @@ if os.getenv("ENVIRONMENT") == "development":
     app.include_router(dev_router)
 
 app.add_exception_handler(Exception, http_exception_handler)
-
-from fastapi.openapi.utils import get_openapi
 
 
 def custom_openapi():

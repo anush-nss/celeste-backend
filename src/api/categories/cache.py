@@ -1,9 +1,12 @@
-from typing import Optional, List
-from src.shared.core_cache import core_cache
+from typing import List, Optional
+
 from src.config.cache_config import cache_config
-from src.shared.utils import get_logger
 from src.shared.cache_invalidation import cache_invalidation_manager
-from src.api.categories.models import CategorySchema # Import CategorySchema
+from src.shared.core_cache import core_cache
+from src.shared.utils import get_logger
+
+# Register with invalidation manager
+from src.config.constants import Collections
 
 logger = get_logger(__name__)
 
@@ -16,56 +19,69 @@ class CategoriesCache:
         self.prefix = cache_config.PREFIXES.get("categories", "categories")
 
     # Cache key generators
-    def get_category_key(self, category_id: int) -> str: # Changed type to int
+    def get_category_key(self, category_id: int) -> str:  # Changed type to int
         """Generate cache key for category data"""
-        return self.cache.generate_key(self.prefix, str(category_id)) # Convert to str
+        return self.cache.generate_key(self.prefix, str(category_id))  # Convert to str
 
     def get_all_categories_key(self) -> str:
         """Generate cache key for all categories"""
         return self.cache.generate_key(self.prefix, "all")
 
-    def get_filtered_categories_key(self, filter_type: str, filter_value: str = None) -> str:
+    def get_filtered_categories_key(
+        self, filter_type: str, filter_value: Optional[str] = None
+    ) -> str:
         """Generate cache key for filtered categories"""
         if filter_value:
             return self.cache.generate_key(self.prefix, f"{filter_type}_{filter_value}")
         return self.cache.generate_key(self.prefix, filter_type)
 
     # Cache operations with domain-specific TTL
-    def get_category(self, category_id: int) -> Optional[dict]: # Changed type to int
+    def get_category(self, category_id: int) -> Optional[dict]:  # Changed type to int
         """Get cached category data"""
         key = self.get_category_key(category_id)
         return self.cache.get(key)
 
-    def set_category(self, category_id: int, category_data: dict) -> bool: # Changed type to int
+    def set_category(
+        self, category_id: int, category_data: dict
+    ) -> bool:  # Changed type to int
         """Cache category data with configured TTL"""
         key = self.get_category_key(category_id)
         ttl = cache_config.get_ttl("categories")
         return self.cache.set(key, category_data, ttl_seconds=ttl)
 
-    def get_all_categories(self) -> Optional[List[dict]]: # Changed return type hint
+    def get_all_categories(self) -> Optional[List[dict]]:  # Changed return type hint
         """Get cached all categories"""
         key = self.get_all_categories_key()
         return self.cache.get(key)
 
-    def set_all_categories(self, categories: List[dict]) -> bool: # Changed type hint
+    def set_all_categories(self, categories: List[dict]) -> bool:  # Changed type hint
         """Cache all categories with configured TTL"""
         key = self.get_all_categories_key()
         ttl = cache_config.get_ttl("categories")
         return self.cache.set(key, categories, ttl_seconds=ttl)
 
-    def get_filtered_categories(self, filter_type: str, filter_value: str = None) -> Optional[List[dict]]:
+    def get_filtered_categories(
+        self, filter_type: str, filter_value: Optional[str] = None
+    ) -> Optional[List[dict]]:
         """Get cached filtered categories"""
         key = self.get_filtered_categories_key(filter_type, filter_value)
         return self.cache.get(key)
 
-    def set_filtered_categories(self, categories: List[dict], filter_type: str, filter_value: str = None) -> bool:
+    def set_filtered_categories(
+        self,
+        categories: List[dict],
+        filter_type: str,
+        filter_value: Optional[str] = None,
+    ) -> bool:
         """Cache filtered categories with configured TTL"""
         key = self.get_filtered_categories_key(filter_type, filter_value)
         ttl = cache_config.get_ttl("categories")
         return self.cache.set(key, categories, ttl_seconds=ttl)
 
     # Cache invalidation methods
-    def invalidate_category_cache(self, category_id: Optional[int] = None) -> int: # Changed type to int
+    def invalidate_category_cache(
+        self, category_id: Optional[int] = None
+    ) -> int:  # Changed type to int
         """Invalidate cache for specific category or all categories"""
         deleted = 0
 
@@ -78,7 +94,6 @@ class CategoriesCache:
             # Invalidate all categories
             deleted += self.cache.delete_pattern(f"{self.prefix}:*")
 
-
         if deleted > 0:
             logger.info(
                 f"Invalidated {deleted} categories cache keys for category: {category_id or 'all'}"
@@ -90,6 +105,6 @@ class CategoriesCache:
 # Global categories cache instance
 categories_cache = CategoriesCache()
 
-# Register with invalidation manager
-from src.config.constants import Collections
-cache_invalidation_manager.register_domain_cache(Collections.CATEGORIES, categories_cache)
+cache_invalidation_manager.register_domain_cache(
+    Collections.CATEGORIES, categories_cache
+)

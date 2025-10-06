@@ -1,9 +1,10 @@
 import hashlib
 import threading
 from datetime import datetime, timedelta
-from typing import Any, Optional, Dict, List
-from src.shared.utils import get_logger
+from typing import Any, Dict, Optional
+
 from src.config.cache_config import cache_config
+from src.shared.utils import get_logger
 
 logger = get_logger(__name__)
 

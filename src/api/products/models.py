@@ -1,40 +1,45 @@
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, HttpUrl, ConfigDict
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # New PostgreSQL schemas
 class ProductTagSchema(BaseModel):
     id: int
-    tag_type: str                     # 'dietary', 'analytics', etc.
+    tag_type: str  # 'dietary', 'analytics', etc.
     name: str
     slug: str
     description: Optional[str] = None
-    value: Optional[str] = None       # from product_tags table
+    value: Optional[str] = None  # from product_tags table
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class ProductSchema(BaseModel):
     id: Optional[int] = None
-    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
+    ref: Optional[str] = Field(
+        None, min_length=1, max_length=100, description="External reference/SKU"
+    )
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     brand: Optional[str] = Field(None, min_length=1)
     base_price: float = Field(..., ge=0)
     unit_measure: str
-    image_urls: List[str] = []        # First image is primary
+    image_urls: List[str] = []  # First image is primary
     ecommerce_category_id: Optional[int] = None
     ecommerce_subcategory_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     # Relationships (loaded when needed)
-    categories: Optional[List[Dict[str, Any]]] = None  # Will be CategorySchema when imported
+    categories: Optional[List[Dict[str, Any]]] = (
+        None  # Will be CategorySchema when imported
+    )
     product_tags: Optional[List[Dict[str, Any]]] = None  # Raw product_tags data
-    
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     @property
     def primary_image_url(self) -> Optional[str]:
         """Get the primary (first) image URL"""
@@ -43,7 +48,9 @@ class ProductSchema(BaseModel):
 
 class CreateProductSchema(BaseModel):
     id: Optional[int] = Field(None, description="Optional manual ID specification")
-    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
+    ref: Optional[str] = Field(
+        None, min_length=1, max_length=100, description="External reference/SKU"
+    )
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     brand: Optional[str] = Field(None, min_length=1)
@@ -52,12 +59,14 @@ class CreateProductSchema(BaseModel):
     image_urls: List[str] = []
     ecommerce_category_id: Optional[int] = None
     ecommerce_subcategory_id: Optional[int] = None
-    category_ids: List[int] = []      # IDs of categories to assign
-    tag_ids: List[int] = []           # IDs of tags to assign
+    category_ids: List[int] = []  # IDs of categories to assign
+    tag_ids: List[int] = []  # IDs of tags to assign
 
 
 class UpdateProductSchema(BaseModel):
-    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
+    ref: Optional[str] = Field(
+        None, min_length=1, max_length=100, description="External reference/SKU"
+    )
     name: Optional[str] = Field(None, min_length=1)
     description: Optional[str] = None
     brand: Optional[str] = Field(None, min_length=1)
@@ -98,13 +107,15 @@ class EnhancedProductSchema(BaseModel):
     """Enhanced product schema with pricing and inventory information"""
 
     id: Optional[int] = None
-    ref: Optional[str] = Field(None, min_length=1, max_length=100, description="External reference/SKU")
+    ref: Optional[str] = Field(
+        None, min_length=1, max_length=100, description="External reference/SKU"
+    )
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     brand: Optional[str] = Field(None, min_length=1)
     base_price: float = Field(..., ge=0, description="Base price of the product")
     unit_measure: str
-    image_urls: List[str] = []        # First image is primary
+    image_urls: List[str] = []  # First image is primary
     ecommerce_category_id: Optional[int] = None
     ecommerce_subcategory_id: Optional[int] = None
     created_at: Optional[datetime] = None
@@ -121,7 +132,7 @@ class EnhancedProductSchema(BaseModel):
     inventory: Optional[List[InventoryInfoSchema]] = Field(
         None, description="Inventory information for multiple stores"
     )
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -139,7 +150,8 @@ class ProductQuerySchema(BaseModel):
         default=True, description="Whether to include pricing calculations"
     )
     include_inventory: Optional[bool] = Field(
-        default=True, description="Whether to include inventory information (requires store_id)"
+        default=True,
+        description="Whether to include inventory information (requires store_id)",
     )
     include_categories: Optional[bool] = Field(
         default=False, description="Whether to include category information"
@@ -148,7 +160,7 @@ class ProductQuerySchema(BaseModel):
         default=False, description="Whether to include tag information"
     )
     category_ids: Optional[List[int]] = None
-    tags: Optional[List[str]] = None           # Filter by tags with flexible syntax
+    tags: Optional[List[str]] = None  # Filter by tags with flexible syntax
     min_price: Optional[float] = None
     max_price: Optional[float] = None
     only_discounted: Optional[bool] = Field(
@@ -156,10 +168,16 @@ class ProductQuerySchema(BaseModel):
     )
     # Location-based store finding parameters
     latitude: Optional[float] = Field(
-        None, ge=-90, le=90, description="User latitude for location-based store finding"
+        None,
+        ge=-90,
+        le=90,
+        description="User latitude for location-based store finding",
     )
     longitude: Optional[float] = Field(
-        None, ge=-180, le=180, description="User longitude for location-based store finding"
+        None,
+        ge=-180,
+        le=180,
+        description="User longitude for location-based store finding",
     )
 
 

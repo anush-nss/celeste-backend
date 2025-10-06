@@ -11,11 +11,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Python Version**: 3.12+
 
 ### Development Setup
-1. Create virtual environment: `python -m venv venv`
-2. Activate: `venv\Scripts\activate` (Windows) or `source venv/bin/activate` (Linux/Mac)
-3. Install dependencies: `pip install -r requirements.txt`
-4. Set up Firebase service account as `service-account.json` (gitignored)
-5. Configure environment variables (see README.md for details)
+1. Install uv: `pip install uv`
+2. Create virtual environment: `uv venv`
+3. Activate: `.venv\Scripts\activate` (Windows) or `source .venv/bin/activate` (Linux/Mac)
+4. Install dependencies: `uv pip sync uv.lock`
+5. Set up Firebase service account as `service-account.json` (gitignored)
+6. Configure environment variables (see README.md for details)
+7. Before cloud deployment: `uv export --format requirements-txt > requirements.txt`
 
 ## 🏗️ Architecture Overview
 

@@ -128,7 +128,7 @@ When adding new dependencies or changing core technologies:
 - ✅ Update technology badges at the top
 - ✅ Update Key Technologies section
 - ✅ Update Installation section if new setup steps required
-- ✅ Update requirements.txt
+- ✅ Update pyproject.toml and uv.lock
 
 #### Update `docs/PROJECT_STRUCTURE.md`:
 - ✅ Update Technology Stack section
@@ -528,7 +528,8 @@ Before committing any changes, ensure:
 ### Deployment Readiness
 - [ ] ✅ No hardcoded values or secrets in code
 - [ ] ✅ Environment variables properly configured
-- [ ] ✅ Requirements.txt updated if dependencies changed
+- [ ] ✅ pyproject.toml and uv.lock updated if dependencies changed
+- [ ] ✅ requirements.txt synced before cloud deployment: `uv export --format requirements-txt > requirements.txt`
 - [ ] ✅ Firebase configuration still valid
 
 ## 📝 Documentation Templates
