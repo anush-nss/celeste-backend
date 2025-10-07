@@ -88,10 +88,12 @@ class OrderService:
 
     async def _determine_store_assignments(
         self, session, cart_groups: List[CartGroupSchema], location, location_obj
-    ) -> List[Dict]:
+    ) -> Dict[str, Any]:
         """
         Determine optimal store assignments using StoreSelectionService
-        Returns list of store assignment dicts with cart_ids, store info, and totals
+        Returns dict with:
+            - store_assignments: list of store assignment dicts with cart_ids, store info, and totals
+            - is_nearby_store: bool indicating if stores are nearby or default fallback stores
         """
         # Convert cart groups to cart items format for store selection service
         cart_items = []
@@ -124,19 +126,22 @@ class OrderService:
                 item.product_id for group in cart_groups for item in group.items
             ]
 
-            return [
-                {
-                    "store_id": location_obj.id,
-                    "store_name": location_obj.name,
-                    "store_lat": float(location_obj.latitude),
-                    "store_lng": float(location_obj.longitude),
-                    "delivery_lat": None,
-                    "delivery_lng": None,
-                    "cart_ids": [group.cart_id for group in cart_groups],
-                    "store_total": sum(group.cart_total for group in cart_groups),
-                    "product_ids": all_product_ids,
-                }
-            ]
+            return {
+                "store_assignments": [
+                    {
+                        "store_id": location_obj.id,
+                        "store_name": location_obj.name,
+                        "store_lat": float(location_obj.latitude),
+                        "store_lng": float(location_obj.longitude),
+                        "delivery_lat": None,
+                        "delivery_lng": None,
+                        "cart_ids": [group.cart_id for group in cart_groups],
+                        "store_total": sum(group.cart_total for group in cart_groups),
+                        "product_ids": all_product_ids,
+                    }
+                ],
+                "is_nearby_store": True,  # Pickup is always from a chosen nearby store
+            }
 
         else:
             # Delivery mode: use smart store selection
@@ -227,7 +232,10 @@ class OrderService:
                     }
                 )
 
-            return store_assignments
+            return {
+                "store_assignments": store_assignments,
+                "is_nearby_store": delivery_result.get("is_nearby_store", True),
+            }
 
     @handle_service_errors("updating user statistics")
     async def update_user_statistics(self, user_id: str, order_total: Decimal) -> None:
@@ -445,9 +453,12 @@ class OrderService:
             async with session.begin():
                 # STEP 6: Determine store assignments for order fulfillment
                 location_obj = validation_data["location_obj"]
-                store_assignments = await self._determine_store_assignments(
+                store_result = await self._determine_store_assignments(
                     session, cart_groups, checkout_data.location, location_obj
                 )
+
+                store_assignments = store_result["store_assignments"]
+                is_nearby_store = store_result["is_nearby_store"]
 
                 if not store_assignments:
                     raise ValidationException(
@@ -562,6 +573,7 @@ class OrderService:
                 payment_url=payment_result["payment_url"],
                 payment_reference=payment_result["payment_reference"],
                 payment_expires_at=payment_result["expires_at"],
+                is_nearby_store=is_nearby_store,
             )
 
     @handle_service_errors("processing payment callback")

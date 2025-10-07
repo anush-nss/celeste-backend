@@ -68,6 +68,13 @@ MAX_SEARCH_RADIUS_KM = 50.0
 DEFAULT_STORES_LIMIT = 20
 MAX_STORES_LIMIT = 100
 
+# Default fallback stores for distant users (when no stores found in radius)
+DEFAULT_STORE_IDS = [1]
+
+# Products with this tag ID will NOT show inventory from default stores
+# These are typically next-day delivery products that can't serve distant users
+NEXT_DAY_DELIVERY_ONLY_TAG_ID = 1
+
 # Geospatial constants (removed geohash functionality)
 
 # Coordinate validation

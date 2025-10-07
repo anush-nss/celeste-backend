@@ -101,6 +101,10 @@ class InventoryInfoSchema(BaseModel):
     quantity_available: int = Field(..., description="Available quantity")
     quantity_on_hold: int = Field(..., description="Quantity on hold")
     quantity_reserved: int = Field(..., description="Reserved quantity")
+    is_nearby_store: bool = Field(
+        True,
+        description="False if inventory is from a distant default store, True if from nearby store",
+    )
 
 
 class EnhancedProductSchema(BaseModel):

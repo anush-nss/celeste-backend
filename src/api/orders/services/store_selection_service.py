@@ -7,9 +7,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import and_, text
 from sqlalchemy.future import select
 
-from src.config.constants import DEFAULT_SEARCH_RADIUS_KM
+from src.config.constants import (
+    DEFAULT_SEARCH_RADIUS_KM,
+    DEFAULT_STORE_IDS,
+    NEXT_DAY_DELIVERY_ONLY_TAG_ID,
+)
 from src.database.models.address import Address
 from src.database.models.inventory import Inventory
+from src.database.models.product import Product
 from src.database.models.store import Store
 from src.shared.error_handler import ErrorHandler
 from src.shared.exceptions import ValidationException
@@ -32,6 +37,7 @@ class StoreSelectionService:
             "requires_splitting": False,
             "unavailable_items": [],
             "delivery_distance": 0.0,
+            "is_nearby_store": True,  # Track if stores are nearby or default
         }
 
         try:
@@ -41,10 +47,40 @@ class StoreSelectionService:
                 raise ValidationException(f"Address with ID {address_id} not found")
 
             # Get all active stores with distances
-            nearby_stores = await self._get_stores_by_distance(address_coords, session)
+            nearby_stores, is_nearby = await self._get_stores_by_distance(
+                address_coords, session
+            )
 
             if not nearby_stores:
                 raise ValidationException("No active stores found for delivery")
+
+            # Update tracking flag
+            selection_result["is_nearby_store"] = is_nearby
+
+            # If using default stores (not nearby), check for excluded products
+            if not is_nearby:
+                product_ids = [item["product_id"] for item in cart_items]
+                excluded_map = await self._check_products_have_excluded_tag(
+                    product_ids, session
+                )
+
+                # Filter out items with excluded tag
+                available_items = [
+                    item for item in cart_items if not excluded_map.get(item["product_id"], False)
+                ]
+                excluded_items = [
+                    item for item in cart_items if excluded_map.get(item["product_id"], False)
+                ]
+
+                # If all items are excluded, no fulfillment possible
+                if not available_items:
+                    raise ValidationException(
+                        "No items available for delivery from default stores (all items are next-day delivery only)"
+                    )
+
+                # Update cart_items to only include available items
+                cart_items = available_items
+                selection_result["unavailable_items"] = excluded_items
 
             # Try to fulfill from nearest store first
             nearest_store = nearby_stores[0]
@@ -67,12 +103,16 @@ class StoreSelectionService:
                 split_result = await self._split_items_across_stores(
                     cart_items, nearby_stores, session
                 )
+
+                # Merge unavailable items from excluded products and stock unavailability
+                all_unavailable = selection_result["unavailable_items"] + split_result["unavailable_items"]
+
                 selection_result.update(
                     {
                         "primary_store": nearest_store,
                         "store_assignments": split_result["assignments"],
                         "requires_splitting": True,
-                        "unavailable_items": split_result["unavailable_items"],
+                        "unavailable_items": all_unavailable,
                         "delivery_distance": nearest_store["distance_km"],
                     }
                 )
@@ -150,9 +190,15 @@ class StoreSelectionService:
         return None
 
     async def _get_stores_by_distance(
-        self, address_coords: Tuple[float, float], session
-    ) -> List[Dict[str, Any]]:
-        """Get active stores ordered by distance from address (within delivery radius)"""
+        self, address_coords: Tuple[float, float], session, use_fallback: bool = True
+    ) -> Tuple[List[Dict[str, Any]], bool]:
+        """
+        Get active stores ordered by distance from address (within delivery radius)
+
+        Returns: (stores_list, is_nearby_stores)
+            - stores_list: List of store dicts
+            - is_nearby_stores: True if stores are within radius, False if using fallback defaults
+        """
 
         lat, lon = address_coords
 
@@ -201,7 +247,61 @@ class StoreSelectionService:
                 }
             )
 
-        return stores
+        # If no nearby stores found and fallback enabled, return default stores
+        if not stores and use_fallback and DEFAULT_STORE_IDS:
+            fallback_stores = await self._get_default_stores(session)
+            return fallback_stores, False  # Not nearby stores
+
+        return stores, True  # Nearby stores
+
+    async def _get_default_stores(self, session) -> List[Dict[str, Any]]:
+        """Get default fallback stores for distant users"""
+        if not DEFAULT_STORE_IDS:
+            return []
+
+        store_query = select(Store).where(
+            and_(Store.id.in_(DEFAULT_STORE_IDS), Store.is_active)
+        )
+        result = await session.execute(store_query)
+        stores = result.scalars().all()
+
+        return [
+            {
+                "store_id": store.id,
+                "name": store.name,
+                "address": store.address,
+                "latitude": float(store.latitude),
+                "longitude": float(store.longitude),
+                "distance_km": None,  # No distance calculation for default stores
+            }
+            for store in stores
+        ]
+
+    async def _check_products_have_excluded_tag(
+        self, product_ids: List[int], session
+    ) -> Dict[int, bool]:
+        """
+        Check which products have the NEXT_DAY_DELIVERY_ONLY_TAG_ID
+
+        Returns: Dict mapping product_id -> has_excluded_tag
+        """
+        if not product_ids:
+            return {}
+
+        # Query products with their tags
+        products_query = select(Product).where(Product.id.in_(product_ids))
+        result = await session.execute(products_query)
+        products = result.scalars().all()
+
+        excluded_map = {}
+        for product in products:
+            # Check if product has the excluded tag
+            has_excluded_tag = any(
+                pt.tag_id == NEXT_DAY_DELIVERY_ONLY_TAG_ID for pt in product.product_tags
+            )
+            excluded_map[product.id] = has_excluded_tag
+
+        return excluded_map
 
     async def _check_store_availability(
         self, store_id: int, cart_items: List[Dict[str, Any]], session

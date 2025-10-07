@@ -4,7 +4,11 @@ from typing import Dict, List
 from sqlalchemy import text
 
 from src.api.products.models import EnhancedProductSchema, InventoryInfoSchema
-from src.config.constants import DEFAULT_SEARCH_RADIUS_KM
+from src.config.constants import (
+    DEFAULT_SEARCH_RADIUS_KM,
+    DEFAULT_STORE_IDS,
+    NEXT_DAY_DELIVERY_ONLY_TAG_ID,
+)
 from src.database.connection import AsyncSessionLocal
 from src.shared.cache_service import cache_service
 from src.shared.error_handler import ErrorHandler
@@ -18,7 +22,10 @@ class ProductInventoryService:
         self.cache = cache_service
 
     async def add_inventory_to_products_bulk(
-        self, products: List[EnhancedProductSchema], store_ids: List[int]
+        self,
+        products: List[EnhancedProductSchema],
+        store_ids: List[int],
+        is_nearby_store: bool = True,
     ) -> List[EnhancedProductSchema]:
         """Add inventory to multiple products using single comprehensive query"""
         if not store_ids or not products:
@@ -28,12 +35,17 @@ class ProductInventoryService:
         product_ids = [p.id for p in products]
         filtered_product_ids = [pid for pid in product_ids if pid is not None]
         filtered_store_ids = [sid for sid in store_ids if sid is not None]
-        cache_key = f"inventory:bulk:{','.join(map(str, sorted(filtered_product_ids)))}:{','.join(map(str, sorted(filtered_store_ids)))}"
+        cache_key = f"inventory:bulk:{','.join(map(str, sorted(filtered_product_ids)))}:{','.join(map(str, sorted(filtered_store_ids)))}:{is_nearby_store}"
 
         # Try cache first
         cached_inventory = await self.cache.get(cache_key)
         if cached_inventory:
-            return self._apply_cached_inventory(products, cached_inventory)
+            return self._apply_cached_inventory(products, cached_inventory, is_nearby_store)
+
+        # If using default stores (not nearby), check for excluded products
+        excluded_product_ids = set()
+        if not is_nearby_store:
+            excluded_product_ids = await self._get_excluded_products(filtered_product_ids)
 
         # Single comprehensive query for all inventory data
         inventory_dict = await self._get_bulk_inventory(
@@ -44,7 +56,9 @@ class ProductInventoryService:
         await self.cache.set(cache_key, inventory_dict, ttl=120)
 
         # Apply inventory to products
-        return self._apply_inventory_to_products(products, inventory_dict)
+        return self._apply_inventory_to_products(
+            products, inventory_dict, is_nearby_store, excluded_product_ids
+        )
 
     async def _get_bulk_inventory(
         self, product_ids: List[int], store_ids: List[int]
@@ -90,13 +104,46 @@ class ProductInventoryService:
 
             return inventory_dict
 
+    async def _get_excluded_products(self, product_ids: List[int]) -> set:
+        """Get products that have the NEXT_DAY_DELIVERY_ONLY_TAG_ID"""
+        if not product_ids:
+            return set()
+
+        async with AsyncSessionLocal() as session:
+            query = """
+            SELECT DISTINCT product_id
+            FROM product_tags
+            WHERE product_id = ANY(:product_ids)
+              AND tag_id = :excluded_tag_id
+            """
+
+            result = await session.execute(
+                text(query),
+                {
+                    "product_ids": product_ids,
+                    "excluded_tag_id": NEXT_DAY_DELIVERY_ONLY_TAG_ID,
+                },
+            )
+
+            return {row.product_id for row in result.fetchall()}
+
     def _apply_inventory_to_products(
         self,
         products: List[EnhancedProductSchema],
         inventory_dict: Dict[int, List[Dict]],
+        is_nearby_store: bool = True,
+        excluded_product_ids: set = None,
     ) -> List[EnhancedProductSchema]:
         """Apply inventory data to products efficiently"""
+        if excluded_product_ids is None:
+            excluded_product_ids = set()
+
         for product in products:
+            # If product is excluded and using default stores, set inventory to null
+            if not is_nearby_store and product.id in excluded_product_ids:
+                product.inventory = None
+                continue
+
             if product.id in inventory_dict:
                 inventory_list = []
                 for inv_data in inventory_dict[product.id]:
@@ -107,6 +154,7 @@ class ProductInventoryService:
                             quantity_available=inv_data["quantity_available"],
                             quantity_on_hold=inv_data["quantity_on_hold"],
                             quantity_reserved=inv_data["quantity_reserved"],
+                            is_nearby_store=is_nearby_store,
                         )
                     )
                 product.inventory = inventory_list
@@ -117,20 +165,46 @@ class ProductInventoryService:
         self,
         products: List[EnhancedProductSchema],
         cached_inventory: Dict[int, List[Dict]],
+        is_nearby_store: bool = True,
     ) -> List[EnhancedProductSchema]:
         """Apply cached inventory data to products"""
-        return self._apply_inventory_to_products(products, cached_inventory)
+        # Note: excluded_product_ids are not cached, so we need to recalculate
+        excluded_product_ids = set()
+        if not is_nearby_store:
+            # This will be recalculated, but for cached data we accept this tradeoff
+            product_ids = [p.id for p in products if p.id is not None]
+            import asyncio
+
+            excluded_product_ids = asyncio.create_task(
+                self._get_excluded_products(product_ids)
+            )
+            try:
+                excluded_product_ids = asyncio.get_event_loop().run_until_complete(
+                    excluded_product_ids
+                )
+            except:
+                excluded_product_ids = set()
+
+        return self._apply_inventory_to_products(
+            products, cached_inventory, is_nearby_store, excluded_product_ids
+        )
 
     async def get_stores_by_location(
         self, latitude: float, longitude: float, radius_km: float = DEFAULT_SEARCH_RADIUS_KM
-    ) -> List[int]:
-        """Get stores near location using spatial query with caching"""
+    ) -> tuple[List[int], bool]:
+        """
+        Get stores near location using spatial query with caching
+
+        Returns: (store_ids, is_nearby_store)
+            - store_ids: List of store IDs
+            - is_nearby_store: True if stores are within radius, False if using fallback defaults
+        """
         cache_key = f"stores:location:{latitude:.6f}:{longitude:.6f}:{radius_km}"
 
         # Try cache first (cache for 10 minutes)
-        cached_stores = await self.cache.get(cache_key)
-        if cached_stores:
-            return cached_stores
+        cached_result = await self.cache.get(cache_key)
+        if cached_result:
+            return cached_result
 
         async with AsyncSessionLocal() as session:
             # Advanced spatial query using PostGIS functions
@@ -161,10 +235,18 @@ class ProductInventoryService:
 
             store_ids = [row.id for row in result.fetchall()]
 
-            # Cache result for 10 minutes
-            await self.cache.set(cache_key, store_ids, ttl=600)
+            # If no stores found, use default stores as fallback
+            is_nearby_store = True
+            if not store_ids and DEFAULT_STORE_IDS:
+                store_ids = DEFAULT_STORE_IDS
+                is_nearby_store = False
 
-            return store_ids
+            result_tuple = (store_ids, is_nearby_store)
+
+            # Cache result for 10 minutes
+            await self.cache.set(cache_key, result_tuple, ttl=600)
+
+            return result_tuple
 
     async def add_inventory_to_single_product(
         self, product: EnhancedProductSchema, store_id: int

@@ -100,8 +100,9 @@ class ProductService:
 
         # Determine store_ids if inventory requested with location
         effective_store_ids = store_ids
+        is_nearby_store = True
         if include_inventory and not store_ids and latitude and longitude:
-            effective_store_ids = await self.inventory_service.get_stores_by_location(
+            effective_store_ids, is_nearby_store = await self.inventory_service.get_stores_by_location(
                 latitude, longitude
             )
 
@@ -143,8 +144,9 @@ class ProductService:
 
         # Determine store_ids if inventory requested with location
         effective_store_ids = store_ids
+        is_nearby_store = True
         if include_inventory and not store_ids and latitude and longitude:
-            effective_store_ids = await self.inventory_service.get_stores_by_location(
+            effective_store_ids, is_nearby_store = await self.inventory_service.get_stores_by_location(
                 latitude, longitude
             )
 
@@ -189,19 +191,20 @@ class ProductService:
 
         # Determine store_ids if inventory requested with location
         effective_store_ids = store_ids
+        is_nearby_store = True
         if (
             query_params.include_inventory
             and not store_ids
             and query_params.latitude
             and query_params.longitude
         ):
-            effective_store_ids = await self.inventory_service.get_stores_by_location(
+            effective_store_ids, is_nearby_store = await self.inventory_service.get_stores_by_location(
                 query_params.latitude, query_params.longitude
             )
 
         # Single comprehensive query with all data
         return await self.query_service.get_products_with_criteria(
-            query_params, customer_tier, effective_store_ids
+            query_params, customer_tier, effective_store_ids, is_nearby_store
         )
 
     # Tag management methods - delegated to ProductTagService
@@ -253,8 +256,9 @@ class ProductService:
 
         # Determine store_ids if inventory requested with location
         store_ids = None
+        is_nearby_store = True
         if include_inventory and latitude and longitude:
-            store_ids = await self.inventory_service.get_stores_by_location(
+            store_ids, is_nearby_store = await self.inventory_service.get_stores_by_location(
                 latitude, longitude
             )
 

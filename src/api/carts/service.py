@@ -85,10 +85,10 @@ class CartService:
     @staticmethod
     async def _check_inventory_with_location(
         session, cart_groups: List, location_obj, location
-    ):
+    ) -> tuple:
         """
         Check inventory using SAME logic as actual checkout for consistency.
-        Returns InventoryValidationSummary with availability details.
+        Returns: (InventoryValidationSummary, is_nearby_store)
         """
         from src.api.orders.services.store_selection_service import (
             StoreSelectionService,
@@ -99,11 +99,14 @@ class CartService:
         )
 
         if not location_obj:
-            return InventoryValidationSummary(
-                can_fulfill_all=False,
-                items_checked=0,
-                items_available=0,
-                items_out_of_stock=0,
+            return (
+                InventoryValidationSummary(
+                    can_fulfill_all=False,
+                    items_checked=0,
+                    items_available=0,
+                    items_out_of_stock=0,
+                ),
+                True,  # Default to nearby store
             )
 
         # Prepare cart items for inventory check
@@ -116,6 +119,7 @@ class CartService:
 
         # Use EXACT SAME logic as checkout to ensure consistency
         store_selection_service = StoreSelectionService()
+        is_nearby_store = True  # Default for pickup
 
         if location.mode == "pickup":
             # Pickup mode: validate pickup store
@@ -126,6 +130,7 @@ class CartService:
             )
             can_fulfill = fulfillment_result["all_items_available"]
             unavailable_items = fulfillment_result["unavailable_items"]
+            is_nearby_store = True  # Pickup is always from chosen nearby store
 
         else:
             # Delivery mode: use same store selection as actual checkout
@@ -136,6 +141,7 @@ class CartService:
             )
             can_fulfill = len(fulfillment_result["unavailable_items"]) == 0
             unavailable_items = fulfillment_result["unavailable_items"]
+            is_nearby_store = fulfillment_result.get("is_nearby_store", True)
 
         # Map store assignments to product fulfillment info
         fulfillment_by_product = {}
@@ -202,11 +208,14 @@ class CartService:
                     )
                     items_out_of_stock += 1
 
-        return InventoryValidationSummary(
-            can_fulfill_all=can_fulfill,
-            items_checked=len(cart_items),
-            items_available=items_available,
-            items_out_of_stock=items_out_of_stock,
+        return (
+            InventoryValidationSummary(
+                can_fulfill_all=can_fulfill,
+                items_checked=len(cart_items),
+                items_available=items_available,
+                items_out_of_stock=items_out_of_stock,
+            ),
+            is_nearby_store,
         )
 
     @staticmethod
@@ -1119,7 +1128,7 @@ class CartService:
 
             # STEP 4: Check inventory (optimized - no store assignment needed for preview)
             location_obj = validation_data["location_obj"]
-            inventory_validation = await CartService._check_inventory_with_location(
+            inventory_validation, is_nearby_store = await CartService._check_inventory_with_location(
                 session, cart_groups, location_obj, checkout_data.location
             )
 
@@ -1167,4 +1176,5 @@ class CartService:
                 total_amount=float(final_total),
                 pricing_summary=pricing_summary,
                 inventory_validation=inventory_validation,
+                is_nearby_store=is_nearby_store,
             )
