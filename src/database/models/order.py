@@ -10,12 +10,13 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     text,
 )
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.config.constants import OrderStatus
+from src.config.constants import OdooSyncStatus, OrderStatus
 from src.database.base import Base
 
 if TYPE_CHECKING:
@@ -70,6 +71,9 @@ class Order(Base):
         ),
         # Recent orders optimization
         Index("idx_orders_recent", "created_at", "status"),
+        # Odoo sync status tracking
+        Index("idx_orders_odoo_sync_status", "odoo_sync_status"),
+        Index("idx_orders_odoo_failed_syncs", "odoo_sync_status", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -83,6 +87,21 @@ class Order(Base):
     status: Mapped[OrderStatus] = mapped_column(
         Enum(OrderStatus), default=OrderStatus.PENDING, nullable=False
     )
+
+    # Odoo ERP sync fields
+    odoo_sync_status: Mapped[OdooSyncStatus] = mapped_column(
+        Enum(OdooSyncStatus), default=OdooSyncStatus.PENDING, nullable=False
+    )
+    odoo_order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    odoo_customer_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    odoo_sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    odoo_synced_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    odoo_last_retry_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("NOW()"), nullable=False
     )

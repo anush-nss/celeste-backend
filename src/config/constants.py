@@ -20,6 +20,12 @@ class OrderStatus(str, Enum):
     CONFIRMED = "confirmed"
 
 
+class OdooSyncStatus(str, Enum):
+    PENDING = "pending"
+    SYNCED = "synced"
+    FAILED = "failed"
+
+
 # Default fallback tier when no default tier is found in database
 DEFAULT_FALLBACK_TIER = "BRONZE"
 

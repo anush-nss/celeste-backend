@@ -1,14 +1,23 @@
+from datetime import datetime
 from typing import Any, Dict, List, Union
 
 from fastapi import APIRouter, HTTPException, status
 from google.cloud.firestore import SERVER_TIMESTAMP
 
 from src.api.auth.service import AuthService
+from src.config.constants import OdooSyncStatus
+from src.database.connection import AsyncSessionLocal
+from src.database.models.order import Order
+from src.integrations.odoo import OdooService, OdooTestRequest, OdooTestResponse, OdooConnectionResponse, OdooProductResponse
+from src.integrations.odoo.models import OdooCustomerResponse
+from src.integrations.odoo.order_sync import OdooOrderSync
 from src.shared.database import get_async_db
 from src.shared.responses import success_response
+from sqlalchemy import select
 
 dev_router = APIRouter(prefix="/dev", tags=["Development"])
 auth_service = AuthService()
+odoo_service = OdooService()
 
 
 @dev_router.post("/auth/token", summary="Generate dev ID token for existing user")
@@ -196,4 +205,292 @@ async def clear_collection(collection: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to clear collection: {str(e)}",
+        )
+
+
+@dev_router.post("/odoo/test", summary="Test Odoo ERP connection and read product")
+async def test_odoo_connection(request: OdooTestRequest):
+    """
+    Test connection to Odoo ERP and optionally read product data.
+
+    Test Types:
+    - **connection**: Test connection and authentication only
+    - **product**: Test connection and read product(s)
+
+    Example request bodies:
+
+    Connection test:
+    ```json
+    {
+        "test_type": "connection"
+    }
+    ```
+
+    Product test (first product):
+    ```json
+    {
+        "test_type": "product",
+        "limit": 1
+    }
+    ```
+
+    Product test (specific product):
+    ```json
+    {
+        "test_type": "product",
+        "product_id": 123
+    }
+    ```
+
+    Customer creation test:
+    ```json
+    {
+        "test_type": "customer",
+        "customer_data": {
+            "name": "John Doe",
+            "email": "john.doe@example.com",
+            "phone": "+94771234567",
+            "mobile": "+94771234567",
+            "street": "123 Main Street",
+            "city": "Colombo",
+            "zip": "00100"
+        }
+    }
+    ```
+    """
+    try:
+        timestamp = datetime.utcnow().isoformat()
+
+        if request.test_type == "connection":
+            # Test connection only
+            connection_result = odoo_service.test_connection()
+
+            response = OdooTestResponse(
+                test_type="connection",
+                connection=OdooConnectionResponse(**connection_result),
+                products=None,
+                customer=None,
+                timestamp=timestamp,
+                success=connection_result["status"] == "success",
+            )
+
+            return success_response(response.model_dump())
+
+        elif request.test_type == "product":
+            # Test connection and read product
+            connection_result = odoo_service.test_connection()
+
+            if connection_result["status"] != "success":
+                # Connection failed, return connection error
+                response = OdooTestResponse(
+                    test_type="product",
+                    connection=OdooConnectionResponse(**connection_result),
+                    products=None,
+                    customer=None,
+                    timestamp=timestamp,
+                    success=False,
+                )
+                return success_response(response.model_dump())
+
+            # Connection successful, read product
+            product_result = odoo_service.read_product(
+                product_id=request.product_id, limit=request.limit
+            )
+
+            response = OdooTestResponse(
+                test_type="product",
+                connection=OdooConnectionResponse(**connection_result),
+                products=OdooProductResponse(**product_result) if product_result else None,
+                customer=None,
+                timestamp=timestamp,
+                success=(
+                    connection_result["status"] == "success"
+                    and product_result["status"] == "success"
+                ),
+            )
+
+            return success_response(response.model_dump())
+
+        elif request.test_type == "customer":
+            # Test connection and create customer
+            connection_result = odoo_service.test_connection()
+
+            if connection_result["status"] != "success":
+                # Connection failed, return connection error
+                response = OdooTestResponse(
+                    test_type="customer",
+                    connection=OdooConnectionResponse(**connection_result),
+                    products=None,
+                    customer=None,
+                    timestamp=timestamp,
+                    success=False,
+                )
+                return success_response(response.model_dump())
+
+            # Connection successful, validate customer_data
+            if not request.customer_data:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="customer_data is required for customer test type",
+                )
+
+            # Create customer
+            customer_result = odoo_service.create_customer(
+                request.customer_data.model_dump()
+            )
+
+            response = OdooTestResponse(
+                test_type="customer",
+                connection=OdooConnectionResponse(**connection_result),
+                products=None,
+                customer=OdooCustomerResponse(**customer_result) if customer_result else None,
+                timestamp=timestamp,
+                success=(
+                    connection_result["status"] == "success"
+                    and customer_result["status"] == "success"
+                ),
+            )
+
+            return success_response(response.model_dump())
+
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid test_type: {request.test_type}. Use 'connection', 'product', or 'customer'",
+            )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Odoo test failed: {str(e)}",
+        )
+
+
+@dev_router.get(
+    "/orders/failed-odoo-syncs",
+    summary="List orders with failed Odoo sync",
+)
+async def get_failed_odoo_syncs(limit: int = 50):
+    """
+    Get list of orders where Odoo sync failed.
+
+    Returns orders with sync status FAILED, ordered by most recent retry attempt.
+    Useful for monitoring and debugging Odoo sync issues.
+
+    - **limit**: Maximum number of failed orders to return (default: 50)
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            # Query orders with failed Odoo sync
+            query = (
+                select(Order)
+                .where(Order.odoo_sync_status == OdooSyncStatus.FAILED)
+                .order_by(Order.odoo_last_retry_at.desc())
+                .limit(limit)
+            )
+
+            result = await session.execute(query)
+            orders = result.scalars().all()
+
+            # Format response
+            failed_syncs = []
+            for order in orders:
+                failed_syncs.append(
+                    {
+                        "order_id": order.id,
+                        "user_id": order.user_id,
+                        "total_amount": float(order.total_amount),
+                        "status": order.status,
+                        "created_at": order.created_at.isoformat(),
+                        "odoo_sync_status": order.odoo_sync_status,
+                        "odoo_sync_error": order.odoo_sync_error,
+                        "odoo_last_retry_at": (
+                            order.odoo_last_retry_at.isoformat()
+                            if order.odoo_last_retry_at
+                            else None
+                        ),
+                    }
+                )
+
+            return success_response(
+                {
+                    "count": len(failed_syncs),
+                    "failed_syncs": failed_syncs,
+                }
+            )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve failed Odoo syncs: {str(e)}",
+        )
+
+
+@dev_router.post(
+    "/orders/{order_id}/retry-odoo-sync",
+    summary="Manually retry Odoo sync for a specific order",
+)
+async def retry_odoo_sync(order_id: int):
+    """
+    Manually retry Odoo sync for an order that previously failed.
+
+    This endpoint will:
+    1. Verify the order exists and is confirmed
+    2. Attempt to sync the order to Odoo again
+    3. Update the order's sync status based on the result
+
+    Useful for recovering from transient errors or after fixing Odoo configuration issues.
+
+    - **order_id**: ID of the order to retry sync for
+    """
+    try:
+        # Verify order exists and is confirmed
+        async with AsyncSessionLocal() as session:
+            query = select(Order).where(Order.id == order_id)
+            result = await session.execute(query)
+            order = result.scalar_one_or_none()
+
+            if not order:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Order {order_id} not found",
+                )
+
+            if order.status != "confirmed":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Order {order_id} is not confirmed. Only confirmed orders can be synced to Odoo.",
+                )
+
+        # Attempt sync
+        odoo_sync = OdooOrderSync()
+        sync_result = await odoo_sync.sync_order_to_odoo(order_id)
+
+        if sync_result["success"]:
+            return success_response(
+                {
+                    "message": f"Order {order_id} successfully synced to Odoo",
+                    "order_id": order_id,
+                    "odoo_order_id": sync_result["odoo_order_id"],
+                    "odoo_customer_id": sync_result["odoo_customer_id"],
+                    "sync_status": "synced",
+                }
+            )
+        else:
+            return success_response(
+                {
+                    "message": f"Odoo sync failed for order {order_id}",
+                    "order_id": order_id,
+                    "sync_status": "failed",
+                    "error": sync_result["error"],
+                },
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retry Odoo sync: {str(e)}",
         )

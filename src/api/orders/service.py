@@ -13,6 +13,7 @@ from src.api.orders.models import CreateOrderSchema, OrderSchema, UpdateOrderSch
 from src.api.orders.services.payment_service import PaymentService
 from src.api.orders.services.store_selection_service import StoreSelectionService
 from src.api.pricing.service import PricingService
+from src.integrations.odoo.order_sync import OdooOrderSync
 from src.api.users.models import (
     CartGroupSchema,
     CheckoutResponseSchema,
@@ -609,6 +610,25 @@ class OrderService:
                 # Log but don't fail the payment processing
                 self._error_handler.logger.error(
                     f"Failed to update user statistics for order {order_id}: {str(e)}"
+                )
+
+            # Sync order to Odoo ERP (non-blocking, errors are logged)
+            try:
+                odoo_sync = OdooOrderSync()
+                sync_result = await odoo_sync.sync_order_to_odoo(order_id)
+                if sync_result["success"]:
+                    self._error_handler.logger.info(
+                        f"Order {order_id} successfully synced to Odoo | "
+                        f"Odoo Order ID: {sync_result['odoo_order_id']}"
+                    )
+                else:
+                    self._error_handler.logger.warning(
+                        f"Odoo sync failed for order {order_id}: {sync_result['error']}"
+                    )
+            except Exception as e:
+                # Log but don't fail the payment processing
+                self._error_handler.logger.error(
+                    f"Failed to sync order {order_id} to Odoo: {str(e)}", exc_info=True
                 )
 
             return {
