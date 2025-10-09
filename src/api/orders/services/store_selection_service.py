@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, text
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
 from src.config.constants import (
     DEFAULT_SEARCH_RADIUS_KM,
@@ -296,8 +297,12 @@ class StoreSelectionService:
         if not product_ids:
             return {}
 
-        # Query products with their tags
-        products_query = select(Product).where(Product.id.in_(product_ids))
+        # Query products with their tags 
+        products_query = (
+            select(Product)
+            .where(Product.id.in_(product_ids))
+            .options(selectinload(Product.product_tags))
+        )
         result = await session.execute(products_query)
         products = result.scalars().all()
 
