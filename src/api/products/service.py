@@ -102,9 +102,10 @@ class ProductService:
         effective_store_ids = store_ids
         is_nearby_store = True
         if include_inventory and not store_ids and latitude and longitude:
-            effective_store_ids, is_nearby_store = await self.inventory_service.get_stores_by_location(
-                latitude, longitude
-            )
+            (
+                effective_store_ids,
+                is_nearby_store,
+            ) = await self.inventory_service.get_stores_by_location(latitude, longitude)
 
         # Use query service to get product with comprehensive SQL
         # We'll create a custom method for single product retrieval
@@ -146,9 +147,10 @@ class ProductService:
         effective_store_ids = store_ids
         is_nearby_store = True
         if include_inventory and not store_ids and latitude and longitude:
-            effective_store_ids, is_nearby_store = await self.inventory_service.get_stores_by_location(
-                latitude, longitude
-            )
+            (
+                effective_store_ids,
+                is_nearby_store,
+            ) = await self.inventory_service.get_stores_by_location(latitude, longitude)
 
         # Use query service to get product with comprehensive SQL
         # We'll create a custom method for single product retrieval by ref
@@ -198,7 +200,10 @@ class ProductService:
             and query_params.latitude
             and query_params.longitude
         ):
-            effective_store_ids, is_nearby_store = await self.inventory_service.get_stores_by_location(
+            (
+                effective_store_ids,
+                is_nearby_store,
+            ) = await self.inventory_service.get_stores_by_location(
                 query_params.latitude, query_params.longitude
             )
 
@@ -258,9 +263,10 @@ class ProductService:
         store_ids = None
         is_nearby_store = True
         if include_inventory and latitude and longitude:
-            store_ids, is_nearby_store = await self.inventory_service.get_stores_by_location(
-                latitude, longitude
-            )
+            (
+                store_ids,
+                is_nearby_store,
+            ) = await self.inventory_service.get_stores_by_location(latitude, longitude)
 
         # Get recent products using query service
         return await self.query_service.get_recent_products_for_user(

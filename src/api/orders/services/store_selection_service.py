@@ -66,10 +66,14 @@ class StoreSelectionService:
 
                 # Filter out items with excluded tag
                 available_items = [
-                    item for item in cart_items if not excluded_map.get(item["product_id"], False)
+                    item
+                    for item in cart_items
+                    if not excluded_map.get(item["product_id"], False)
                 ]
                 excluded_items = [
-                    item for item in cart_items if excluded_map.get(item["product_id"], False)
+                    item
+                    for item in cart_items
+                    if excluded_map.get(item["product_id"], False)
                 ]
 
                 # If all items are excluded, no fulfillment possible
@@ -105,7 +109,10 @@ class StoreSelectionService:
                 )
 
                 # Merge unavailable items from excluded products and stock unavailability
-                all_unavailable = selection_result["unavailable_items"] + split_result["unavailable_items"]
+                all_unavailable = (
+                    selection_result["unavailable_items"]
+                    + split_result["unavailable_items"]
+                )
 
                 selection_result.update(
                     {
@@ -230,7 +237,8 @@ class StoreSelectionService:
             {
                 "lat": lat,
                 "lon": lon,
-                "radius_meters": DEFAULT_SEARCH_RADIUS_KM * 1000,  # Convert km to meters
+                "radius_meters": DEFAULT_SEARCH_RADIUS_KM
+                * 1000,  # Convert km to meters
             },
         )
         stores = []
@@ -297,7 +305,8 @@ class StoreSelectionService:
         for product in products:
             # Check if product has the excluded tag
             has_excluded_tag = any(
-                pt.tag_id == NEXT_DAY_DELIVERY_ONLY_TAG_ID for pt in product.product_tags
+                pt.tag_id == NEXT_DAY_DELIVERY_ONLY_TAG_ID
+                for pt in product.product_tags
             )
             excluded_map[product.id] = has_excluded_tag
 
@@ -306,7 +315,7 @@ class StoreSelectionService:
     async def _check_store_availability(
         self, store_id: int, cart_items: List[Dict[str, Any]], session
     ) -> Dict[str, Any]:
-        """Check if all items are available at specific store"""
+        """Check if all items are available at specific store (bulk optimized)"""
 
         availability_result = {
             "all_available": True,
@@ -314,20 +323,29 @@ class StoreSelectionService:
             "unavailable_items": [],
         }
 
-        for item in cart_items:
-            # Check inventory for each product
-            inventory_query = select(Inventory).where(
-                and_(
-                    Inventory.product_id == item["product_id"],
-                    Inventory.store_id == store_id,
-                    Inventory.quantity_available >= item["quantity"],
-                )
+        if not cart_items:
+            return availability_result
+
+        # Bulk fetch inventory for all products at this store
+        product_ids = [item["product_id"] for item in cart_items]
+        inventory_query = select(Inventory).where(
+            and_(
+                Inventory.product_id.in_(product_ids),
+                Inventory.store_id == store_id,
             )
+        )
 
-            result = await session.execute(inventory_query)
-            inventory = result.scalar_one_or_none()
+        result = await session.execute(inventory_query)
+        inventories = result.scalars().all()
 
-            if inventory:
+        # Build inventory map: product_id -> available quantity
+        inventory_map = {inv.product_id: inv.quantity_available for inv in inventories}
+
+        # Check availability for each item
+        for item in cart_items:
+            available_qty = inventory_map.get(item["product_id"], 0)
+
+            if available_qty >= item["quantity"]:
                 availability_result["available_items"].append(item)
             else:
                 availability_result["unavailable_items"].append(item)

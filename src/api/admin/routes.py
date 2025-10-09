@@ -5,7 +5,13 @@ from fastapi import APIRouter, HTTPException, status
 from google.cloud.firestore import SERVER_TIMESTAMP
 
 from src.api.auth.service import AuthService
-from src.integrations.odoo import OdooService, OdooTestRequest, OdooTestResponse, OdooConnectionResponse, OdooProductResponse
+from src.integrations.odoo import (
+    OdooService,
+    OdooTestRequest,
+    OdooTestResponse,
+    OdooConnectionResponse,
+    OdooProductResponse,
+)
 from src.integrations.odoo.models import OdooCustomerResponse
 from src.shared.database import get_async_db
 from src.shared.responses import success_response
@@ -295,7 +301,9 @@ async def test_odoo_connection(request: OdooTestRequest):
             response = OdooTestResponse(
                 test_type="product",
                 connection=OdooConnectionResponse(**connection_result),
-                products=OdooProductResponse(**product_result) if product_result else None,
+                products=OdooProductResponse(**product_result)
+                if product_result
+                else None,
                 customer=None,
                 timestamp=timestamp,
                 success=(
@@ -338,7 +346,9 @@ async def test_odoo_connection(request: OdooTestRequest):
                 test_type="customer",
                 connection=OdooConnectionResponse(**connection_result),
                 products=None,
-                customer=OdooCustomerResponse(**customer_result) if customer_result else None,
+                customer=OdooCustomerResponse(**customer_result)
+                if customer_result
+                else None,
                 timestamp=timestamp,
                 success=(
                     connection_result["status"] == "success"

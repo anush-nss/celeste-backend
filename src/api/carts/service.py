@@ -22,7 +22,7 @@ from src.api.users.models import (
     UpdateCartItemQuantitySchema,
     UpdateCartSchema,
 )
-from src.config.constants import CartStatus, CartUserRole, DEFAULT_SEARCH_RADIUS_KM
+from src.config.constants import CartStatus, CartUserRole
 from src.database.connection import AsyncSessionLocal
 from src.database.models.address import Address
 from src.database.models.cart import Cart, CartItem, CartUser
@@ -134,10 +134,12 @@ class CartService:
 
         else:
             # Delivery mode: use same store selection as actual checkout
-            fulfillment_result = await store_selection_service.select_stores_for_delivery(
-                address_id=location_obj.id,
-                cart_items=cart_items,
-                session=session,
+            fulfillment_result = (
+                await store_selection_service.select_stores_for_delivery(
+                    address_id=location_obj.id,
+                    cart_items=cart_items,
+                    session=session,
+                )
             )
             can_fulfill = len(fulfillment_result["unavailable_items"]) == 0
             unavailable_items = fulfillment_result["unavailable_items"]
@@ -169,7 +171,9 @@ class CartService:
                 store_id_int = int(store_id)
                 store_name = stores_dict.get(
                     store_id_int,
-                    fulfillment_result.get("primary_store", {}).get("name", f"Store {store_id}")
+                    fulfillment_result.get("primary_store", {}).get(
+                        "name", f"Store {store_id}"
+                    ),
                 )
 
                 for assigned_item in assigned_items:
@@ -804,7 +808,8 @@ class CartService:
 
             location_query = select(Address).where(
                 and_(
-                    Address.id == checkout_data.location.address_id, Address.user_id == user_id
+                    Address.id == checkout_data.location.address_id,
+                    Address.user_id == user_id,
                 )
             )
             location_result = await session.execute(location_query)
@@ -1128,7 +1133,10 @@ class CartService:
 
             # STEP 4: Check inventory (optimized - no store assignment needed for preview)
             location_obj = validation_data["location_obj"]
-            inventory_validation, is_nearby_store = await CartService._check_inventory_with_location(
+            (
+                inventory_validation,
+                is_nearby_store,
+            ) = await CartService._check_inventory_with_location(
                 session, cart_groups, location_obj, checkout_data.location
             )
 

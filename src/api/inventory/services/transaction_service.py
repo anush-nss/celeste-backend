@@ -113,3 +113,161 @@ class InventoryTransactionService:
             product_id=product_id, store_id=store_id, reserved_change=-quantity
         )
         return await self.adjust_inventory_stock(adjustment, session)
+
+    async def place_holds_bulk(
+        self, holds: list[dict], session
+    ) -> list[InventorySchema]:
+        """
+        Place multiple inventory holds in a single optimized operation.
+
+        Args:
+            holds: List of dicts with keys: product_id, store_id, quantity
+            session: Database session
+
+        Returns:
+            List of updated inventory records
+
+        This method locks all required inventory rows in deterministic order
+        to prevent deadlocks, validates all holds, then applies all updates.
+        """
+        if not holds:
+            return []
+
+        # Validate all quantities first
+        for hold in holds:
+            if hold["quantity"] <= 0:
+                raise ValidationException(
+                    f"Quantity must be positive for product {hold['product_id']}"
+                )
+
+        # Sort holds by (product_id, store_id) for deterministic locking order
+        # This prevents deadlocks when multiple transactions place holds
+        sorted_holds = sorted(holds, key=lambda h: (h["product_id"], h["store_id"]))
+
+        # Build unique (product_id, store_id) pairs
+        inventory_keys = [(h["product_id"], h["store_id"]) for h in sorted_holds]
+
+        # Lock all required inventory rows at once (in sorted order)
+        inventory_records = {}
+        for product_id, store_id in inventory_keys:
+            result = await session.execute(
+                select(Inventory)
+                .filter_by(product_id=product_id, store_id=store_id)
+                .with_for_update()
+            )
+            inventory = result.scalars().first()
+
+            if not inventory:
+                raise ResourceNotFoundException(
+                    f"Inventory for product {product_id} at store {store_id} not found."
+                )
+
+            inventory_records[(product_id, store_id)] = inventory
+
+        # Validate all holds before applying any changes
+        for hold in holds:
+            key = (hold["product_id"], hold["store_id"])
+            inventory = inventory_records[key]
+
+            new_available = inventory.quantity_available - hold["quantity"]
+
+            if new_available < 0:
+                raise ValidationException(
+                    f"Insufficient stock for product {hold['product_id']} at store {hold['store_id']}. "
+                    f"Available: {inventory.quantity_available}, Requested: {hold['quantity']}"
+                )
+
+        # Apply all changes
+        results = []
+        for hold in holds:
+            key = (hold["product_id"], hold["store_id"])
+            inventory = inventory_records[key]
+
+            inventory.quantity_available -= hold["quantity"]
+            inventory.quantity_on_hold += hold["quantity"]
+
+            results.append(InventorySchema.model_validate(inventory))
+
+        return results
+
+    async def release_holds_bulk(
+        self, holds: list[dict], session
+    ) -> list[InventorySchema]:
+        """
+        Release multiple inventory holds in a single optimized operation.
+
+        Args:
+            holds: List of dicts with keys: product_id, store_id, quantity
+            session: Database session
+
+        Returns:
+            List of updated inventory records
+
+        Used for rollback scenarios when order creation fails.
+        """
+        if not holds:
+            return []
+
+        # Validate all quantities first
+        for hold in holds:
+            if hold["quantity"] <= 0:
+                raise ValidationException(
+                    f"Quantity must be positive for product {hold['product_id']}"
+                )
+
+        # Sort holds by (product_id, store_id) for deterministic locking order
+        sorted_holds = sorted(holds, key=lambda h: (h["product_id"], h["store_id"]))
+
+        # Build unique (product_id, store_id) pairs
+        inventory_keys = [(h["product_id"], h["store_id"]) for h in sorted_holds]
+
+        # Lock all required inventory rows at once (in sorted order)
+        inventory_records = {}
+        for product_id, store_id in inventory_keys:
+            result = await session.execute(
+                select(Inventory)
+                .filter_by(product_id=product_id, store_id=store_id)
+                .with_for_update()
+            )
+            inventory = result.scalars().first()
+
+            if not inventory:
+                # Skip missing inventory during rollback
+                continue
+
+            inventory_records[(product_id, store_id)] = inventory
+
+        # Validate all releases before applying any changes
+        for hold in holds:
+            key = (hold["product_id"], hold["store_id"])
+            if key not in inventory_records:
+                continue
+
+            inventory = inventory_records[key]
+            new_on_hold = inventory.quantity_on_hold - hold["quantity"]
+
+            if new_on_hold < 0:
+                # During rollback, just log warning and skip
+                self._error_handler.logger.warning(
+                    f"Cannot release {hold['quantity']} items on hold for product {hold['product_id']} "
+                    f"at store {hold['store_id']}. Current on_hold: {inventory.quantity_on_hold}"
+                )
+                continue
+
+        # Apply all changes
+        results = []
+        for hold in holds:
+            key = (hold["product_id"], hold["store_id"])
+            if key not in inventory_records:
+                continue
+
+            inventory = inventory_records[key]
+
+            # Only release what's actually on hold
+            release_qty = min(hold["quantity"], inventory.quantity_on_hold)
+            inventory.quantity_available += release_qty
+            inventory.quantity_on_hold -= release_qty
+
+            results.append(InventorySchema.model_validate(inventory))
+
+        return results

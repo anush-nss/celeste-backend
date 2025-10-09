@@ -29,7 +29,7 @@ class Cart(Base):
             "created_by",
             "name",
             unique=True,
-            postgresql_where=text("status = 'active'")
+            postgresql_where=text("status = 'active'"),
         ),
         # Core cart lookup indexes
         Index("idx_carts_created_by", "created_by"),

@@ -40,12 +40,16 @@ class ProductInventoryService:
         # Try cache first
         cached_inventory = await self.cache.get(cache_key)
         if cached_inventory:
-            return self._apply_cached_inventory(products, cached_inventory, is_nearby_store)
+            return self._apply_cached_inventory(
+                products, cached_inventory, is_nearby_store
+            )
 
         # If using default stores (not nearby), check for excluded products
         excluded_product_ids = set()
         if not is_nearby_store:
-            excluded_product_ids = await self._get_excluded_products(filtered_product_ids)
+            excluded_product_ids = await self._get_excluded_products(
+                filtered_product_ids
+            )
 
         # Single comprehensive query for all inventory data
         inventory_dict = await self._get_bulk_inventory(
@@ -132,7 +136,7 @@ class ProductInventoryService:
         products: List[EnhancedProductSchema],
         inventory_dict: Dict[int, List[Dict]],
         is_nearby_store: bool = True,
-        excluded_product_ids: set = None,
+        excluded_product_ids: set = set(),
     ) -> List[EnhancedProductSchema]:
         """Apply inventory data to products efficiently"""
         if excluded_product_ids is None:
@@ -182,7 +186,7 @@ class ProductInventoryService:
                 excluded_product_ids = asyncio.get_event_loop().run_until_complete(
                     excluded_product_ids
                 )
-            except:
+            except Exception:
                 excluded_product_ids = set()
 
         return self._apply_inventory_to_products(
@@ -190,7 +194,10 @@ class ProductInventoryService:
         )
 
     async def get_stores_by_location(
-        self, latitude: float, longitude: float, radius_km: float = DEFAULT_SEARCH_RADIUS_KM
+        self,
+        latitude: float,
+        longitude: float,
+        radius_km: float = DEFAULT_SEARCH_RADIUS_KM,
     ) -> tuple[List[int], bool]:
         """
         Get stores near location using spatial query with caching

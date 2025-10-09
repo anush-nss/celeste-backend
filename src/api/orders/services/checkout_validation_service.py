@@ -24,7 +24,9 @@ class CheckoutValidationService:
             "errors": [],
             "warnings": [],
             "location_type": checkout_data.location.mode,
-            "target_id": checkout_data.location.store_id if checkout_data.location.mode == "pickup" else checkout_data.location.address_id,
+            "target_id": checkout_data.location.store_id
+            if checkout_data.location.mode == "pickup"
+            else checkout_data.location.address_id,
             "requires_splitting": False,
             "store_assignments": {},
             "distance_restrictions": [],
@@ -38,12 +40,16 @@ class CheckoutValidationService:
             validation_result["is_valid"] = False
 
         # Validate mode-specific fields
-        if checkout_data.location.mode == "pickup" and not checkout_data.location.store_id:
-            validation_result["errors"].append(
-                "store_id is required for pickup mode"
-            )
+        if (
+            checkout_data.location.mode == "pickup"
+            and not checkout_data.location.store_id
+        ):
+            validation_result["errors"].append("store_id is required for pickup mode")
             validation_result["is_valid"] = False
-        elif checkout_data.location.mode == "delivery" and not checkout_data.location.address_id:
+        elif (
+            checkout_data.location.mode == "delivery"
+            and not checkout_data.location.address_id
+        ):
             validation_result["errors"].append(
                 "address_id is required for delivery mode"
             )

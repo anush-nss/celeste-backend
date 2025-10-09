@@ -32,7 +32,9 @@ class ProductQueryService:
         """Execute comprehensive product query with integrated pricing and inventory data"""
 
         # Generate cache key
-        cache_key = self._generate_cache_key(query_params, customer_tier, store_ids, is_nearby_store)
+        cache_key = self._generate_cache_key(
+            query_params, customer_tier, store_ids, is_nearby_store
+        )
 
         # Try cache first
         cached_result = await self.cache.get(cache_key)
@@ -50,7 +52,9 @@ class ProductQueryService:
             rows = result.fetchall()
 
             # Process results efficiently
-            products, pagination = await self._process_results_fast(rows, query_params, is_nearby_store)
+            products, pagination = await self._process_results_fast(
+                rows, query_params, is_nearby_store
+            )
 
             response = PaginatedProductsResponse(
                 products=products, pagination=pagination
@@ -264,7 +268,10 @@ class ProductQueryService:
         return sql_query, params
 
     async def _process_results_fast(
-        self, rows: Sequence[Any], query_params: ProductQuerySchema, is_nearby_store: bool = True
+        self,
+        rows: Sequence[Any],
+        query_params: ProductQuerySchema,
+        is_nearby_store: bool = True,
     ) -> tuple[List[EnhancedProductSchema], Dict]:
         """Fast result processing without ORM overhead"""
 
@@ -310,15 +317,17 @@ class ProductQueryService:
         return products, pagination
 
     async def _process_row_batch(
-        self, rows: Sequence[Any], query_params: ProductQuerySchema, is_nearby_store: bool = True
+        self,
+        rows: Sequence[Any],
+        query_params: ProductQuerySchema,
+        is_nearby_store: bool = True,
     ) -> List[EnhancedProductSchema]:
         """Process a batch of rows efficiently"""
-        from src.config.constants import NEXT_DAY_DELIVERY_ONLY_TAG_ID
 
         # If using default stores (not nearby), check for excluded products
         excluded_product_ids = set()
         if not is_nearby_store and query_params.include_inventory:
-            product_ids = [row.id for row in rows if hasattr(row, 'id')]
+            product_ids = [row.id for row in rows if hasattr(row, "id")]
             if product_ids:
                 excluded_product_ids = await self._get_excluded_products(product_ids)
 
@@ -417,7 +426,9 @@ class ProductQueryService:
                             parts = inv_data.split("|")
                             if len(parts) >= 4:
                                 try:
-                                    store_id = int(parts[0]) if parts[0].strip() else None
+                                    store_id = (
+                                        int(parts[0]) if parts[0].strip() else None
+                                    )
                                     quantity_available = (
                                         int(parts[1]) if parts[1].strip() else 0
                                     )

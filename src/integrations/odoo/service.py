@@ -97,7 +97,11 @@ class OdooService:
 
             # Get Odoo version info
             version_info = common.version()
-            server_version = version_info["server_version"] if isinstance(version_info, dict) and "server_version" in version_info else str(version_info)
+            server_version = (
+                version_info["server_version"]
+                if isinstance(version_info, dict) and "server_version" in version_info
+                else str(version_info)
+            )
             self._error_handler.logger.info(
                 f"Connected to Odoo | Version: {server_version}"
             )
@@ -147,7 +151,9 @@ class OdooService:
             OdooConnectionError: If execution fails
         """
         if self._uid is None:
-            raise OdooAuthenticationError("Not authenticated - call authenticate() first")
+            raise OdooAuthenticationError(
+                "Not authenticated - call authenticate() first"
+            )
 
         try:
             models = self._get_models_proxy()
@@ -161,7 +167,9 @@ class OdooService:
                 self.db, self._uid, self.password, model, method, args, kwargs
             )
 
-            self._error_handler.logger.debug(f"Execution successful | Result type: {type(result)}")
+            self._error_handler.logger.debug(
+                f"Execution successful | Result type: {type(result)}"
+            )
 
             return result
 
@@ -193,8 +201,16 @@ class OdooService:
                 [[uid]],
                 {"fields": ["name", "login", "company_id"]},
             )
-            server_version = version_info["server_version"] if isinstance(version_info, dict) and "server_version" in version_info else str(version_info)
-            protocol_version = version_info["protocol_version"] if isinstance(version_info, dict) and "protocol_version" in version_info else None
+            server_version = (
+                version_info["server_version"]
+                if isinstance(version_info, dict) and "server_version" in version_info
+                else str(version_info)
+            )
+            protocol_version = (
+                version_info["protocol_version"]
+                if isinstance(version_info, dict) and "protocol_version" in version_info
+                else None
+            )
             result = {
                 "status": "success",
                 "connected": True,
@@ -223,7 +239,9 @@ class OdooService:
             self._error_handler.logger.error(f"Connection test failed: {e}")
             return error_result
 
-    def read_product(self, product_id: Optional[int] = None, limit: int = 1) -> Dict[str, Any]:
+    def read_product(
+        self, product_id: Optional[int] = None, limit: int = 1
+    ) -> Dict[str, Any]:
         """
         Read product(s) from Odoo for testing
 
@@ -245,7 +263,16 @@ class OdooService:
                     "product.product",
                     "read",
                     [[product_id]],
-                    {"fields": ["id", "name", "default_code", "list_price", "standard_price", "qty_available"]},
+                    {
+                        "fields": [
+                            "id",
+                            "name",
+                            "default_code",
+                            "list_price",
+                            "standard_price",
+                            "qty_available",
+                        ]
+                    },
                 )
             else:
                 # Search and read first product(s)
@@ -254,7 +281,14 @@ class OdooService:
                     "search_read",
                     [[]],
                     {
-                        "fields": ["id", "name", "default_code", "list_price", "standard_price", "qty_available"],
+                        "fields": [
+                            "id",
+                            "name",
+                            "default_code",
+                            "list_price",
+                            "standard_price",
+                            "qty_available",
+                        ],
                         "limit": limit,
                     },
                 )
@@ -265,7 +299,9 @@ class OdooService:
                 "products": products,
             }
 
-            self._error_handler.logger.info(f"Product read successful | Count: {len(products)}")
+            self._error_handler.logger.info(
+                f"Product read successful | Count: {len(products)}"
+            )
             return result
 
         except Exception as e:

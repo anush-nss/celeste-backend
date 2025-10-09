@@ -484,8 +484,9 @@ class OrderService:
                 session.add(new_order)
                 await session.flush()
 
-                # STEP 9: Create order items and place inventory holds
-                placed_holds = []  # Track holds for error rollback
+                # STEP 9: Create order items and collect inventory holds
+                holds_to_place = []  # Collect all holds for bulk placement
+                placed_holds = []  # Track successfully placed holds for rollback
 
                 # Build product-to-store mapping from store assignments
                 product_store_map = {}
@@ -495,6 +496,7 @@ class OrderService:
                         product_store_map[product_id] = store_assignment
 
                 try:
+                    # First pass: Create all order items and collect holds
                     for cart_group in cart_groups:
                         for item in cart_group.items:
                             # Get the correct assigned store for this specific product
@@ -514,16 +516,8 @@ class OrderService:
                             )
                             session.add(order_item)
 
-                            # Place inventory hold at the assigned store
-                            await self.inventory_service.place_hold(
-                                product_id=item.product_id,
-                                store_id=assigned_store["store_id"],
-                                quantity=item.quantity,
-                                session=session,
-                            )
-
-                            # Track successful hold for potential rollback
-                            placed_holds.append(
+                            # Collect hold for bulk placement
+                            holds_to_place.append(
                                 {
                                     "product_id": item.product_id,
                                     "store_id": assigned_store["store_id"],
@@ -531,30 +525,37 @@ class OrderService:
                                 }
                             )
 
-                    # STEP 10: Update cart statuses to ordered
-                    for cart_id in checkout_data.cart_ids:
-                        await session.execute(
-                            update(Cart)
-                            .where(Cart.id == cart_id)
-                            .values(
-                                status=CartStatus.ORDERED, ordered_at=datetime.now(timezone.utc)
-                            )
+                    # Place all inventory holds in bulk (optimized single operation)
+                    await self.inventory_service.place_holds_bulk(
+                        holds_to_place, session
+                    )
+
+                    # Track successful holds for potential rollback
+                    placed_holds = holds_to_place
+
+                    # STEP 10: Update cart statuses to ordered (bulk update)
+                    await session.execute(
+                        update(Cart)
+                        .where(Cart.id.in_(checkout_data.cart_ids))
+                        .values(
+                            status=CartStatus.ORDERED,
+                            ordered_at=datetime.now(timezone.utc),
                         )
+                    )
 
                     await session.refresh(new_order)
                 except Exception as e:
-                    # If anything fails, release all placed holds
-                    for hold in placed_holds:
-                        try:
-                            await self.inventory_service.release_hold(
-                                product_id=hold["product_id"],
-                                store_id=hold["store_id"],
-                                quantity=hold["quantity"],
-                                session=session,
-                            )
-                        except Exception:
-                            # Log but don't fail the rollback
-                            pass
+                    # If anything fails, release all placed holds in bulk
+                    try:
+                        await self.inventory_service.release_holds_bulk(
+                            placed_holds, session
+                        )
+                    except Exception as rollback_error:
+                        # Log but don't fail the rollback
+                        self._error_handler.logger.error(
+                            f"Failed to release holds during rollback: {rollback_error}",
+                            exc_info=True,
+                        )
                     raise e
 
             # STEP 10: Initiate payment process outside transaction
@@ -577,9 +578,36 @@ class OrderService:
                 is_nearby_store=is_nearby_store,
             )
 
+    async def _background_odoo_sync(self, order_id: int) -> None:
+        """Background task to sync order to Odoo (runs after response is sent)"""
+        try:
+            odoo_sync = OdooOrderSync()
+            sync_result = await odoo_sync.sync_order_to_odoo(order_id)
+            if sync_result["success"]:
+                self._error_handler.logger.info(
+                    f"Background sync: Order {order_id} successfully synced to Odoo | "
+                    f"Odoo Order ID: {sync_result['odoo_order_id']}"
+                )
+            else:
+                self._error_handler.logger.warning(
+                    f"Background sync: Odoo sync failed for order {order_id}: {sync_result['error']}"
+                )
+        except Exception as e:
+            self._error_handler.logger.error(
+                f"Background sync: Failed to sync order {order_id} to Odoo: {str(e)}",
+                exc_info=True,
+            )
+
     @handle_service_errors("processing payment callback")
-    async def process_payment_callback(self, callback_data: Dict) -> Dict[str, Any]:
-        """Process payment gateway callback and update order status"""
+    async def process_payment_callback(
+        self, callback_data: Dict, background_tasks=None
+    ) -> Dict[str, Any]:
+        """Process payment gateway callback and update order status
+
+        Args:
+            callback_data: Payment gateway callback data
+            background_tasks: FastAPI BackgroundTasks for async processing
+        """
 
         # Process callback through payment service
         callback_result = await self.payment_service.process_payment_callback(
@@ -612,23 +640,17 @@ class OrderService:
                     f"Failed to update user statistics for order {order_id}: {str(e)}"
                 )
 
-            # Sync order to Odoo ERP (non-blocking, errors are logged)
-            try:
-                odoo_sync = OdooOrderSync()
-                sync_result = await odoo_sync.sync_order_to_odoo(order_id)
-                if sync_result["success"]:
-                    self._error_handler.logger.info(
-                        f"Order {order_id} successfully synced to Odoo | "
-                        f"Odoo Order ID: {sync_result['odoo_order_id']}"
-                    )
-                else:
-                    self._error_handler.logger.warning(
-                        f"Odoo sync failed for order {order_id}: {sync_result['error']}"
-                    )
-            except Exception as e:
-                # Log but don't fail the payment processing
-                self._error_handler.logger.error(
-                    f"Failed to sync order {order_id} to Odoo: {str(e)}", exc_info=True
+            # Queue Odoo sync as background task (non-blocking)
+            if background_tasks:
+                background_tasks.add_task(self._background_odoo_sync, order_id)
+                self._error_handler.logger.info(
+                    f"Odoo sync queued as background task for order {order_id}"
+                )
+            else:
+                # Fallback: log warning if BackgroundTasks not provided
+                self._error_handler.logger.warning(
+                    f"BackgroundTasks not provided - Odoo sync skipped for order {order_id}. "
+                    "Use retry endpoint to sync manually."
                 )
 
             return {

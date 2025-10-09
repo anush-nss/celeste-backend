@@ -1,6 +1,6 @@
 from typing import Annotated, List
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import select
 
 from src.api.auth.models import DecodedToken
@@ -76,14 +76,16 @@ async def update_order_status(order_id: int, order_data: UpdateOrderSchema):
     summary="Handle payment gateway callback",
     status_code=status.HTTP_200_OK,
 )
-async def payment_callback(request: Request):
+async def payment_callback(request: Request, background_tasks: BackgroundTasks):
     """Handle payment gateway callback (webhook)"""
 
     # Get callback data from request body
     callback_data = await request.json()
 
-    # Process callback through order service
-    result = await order_service.process_payment_callback(callback_data)
+    # Process callback through order service (with background tasks for Odoo sync)
+    result = await order_service.process_payment_callback(
+        callback_data, background_tasks
+    )
 
     if result["status"] == "success":
         return success_response(result)

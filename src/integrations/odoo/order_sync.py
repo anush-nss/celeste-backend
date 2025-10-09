@@ -6,7 +6,6 @@ Handles customer creation, order creation, and error recovery.
 """
 
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
@@ -55,9 +54,7 @@ class OdooOrderSync:
                 - error: str | None
         """
         try:
-            self._error_handler.logger.info(
-                f"Starting Odoo sync for order {order_id}"
-            )
+            self._error_handler.logger.info(f"Starting Odoo sync for order {order_id}")
 
             # Fetch order data with relationships
             async with AsyncSessionLocal() as session:
@@ -70,16 +67,24 @@ class OdooOrderSync:
             # Step 1: Sync customer to Odoo (find or create)
             odoo_customer_id = await self._sync_customer(order_data["user"])
 
-            # Step 2: Create sales order in Odoo
-            odoo_order_id = await self._create_sales_order(
+            # Step 2: Create sales order in Odoo (or find existing)
+            odoo_order_result = await self._create_sales_order(
                 order_data, odoo_customer_id
             )
+            odoo_order_id = odoo_order_result["order_id"]
+            order_exists = odoo_order_result["already_exists"]
+            order_state = odoo_order_result.get("state", "draft")
 
-            # Step 3: Create order lines
-            await self._create_order_lines(odoo_order_id, order_data["items"])
+            # Step 3: Create order lines (skip if order is already confirmed)
+            if order_state != "sale":
+                await self._create_order_lines(odoo_order_id, order_data["items"])
 
-            # Step 4: Confirm order in Odoo
-            await self._confirm_order(odoo_order_id)
+                # Step 4: Confirm order in Odoo (skip if already confirmed)
+                await self._confirm_order(odoo_order_id)
+            else:
+                self._error_handler.logger.info(
+                    f"Order {odoo_order_id} already confirmed in Odoo, skipping line creation and confirmation"
+                )
 
             # Step 5: Update our order record
             await self._update_order_sync_status(
@@ -93,7 +98,8 @@ class OdooOrderSync:
             self._error_handler.logger.info(
                 f"Successfully synced order {order_id} to Odoo | "
                 f"Odoo Order ID: {odoo_order_id} | "
-                f"Odoo Customer ID: {odoo_customer_id}"
+                f"Odoo Customer ID: {odoo_customer_id} | "
+                f"{'Re-synced existing order' if order_exists else 'Created new order'}"
             )
 
             return {
@@ -142,10 +148,7 @@ class OdooOrderSync:
     async def _fetch_order_data(self, session, order_id: int) -> Dict[str, Any]:
         """Fetch order data with all relationships"""
         # Fetch order with items
-        order_query = (
-            select(Order)
-            .where(Order.id == order_id)
-        )
+        order_query = select(Order).where(Order.id == order_id)
         result = await session.execute(order_query)
         order = result.scalar_one_or_none()
 
@@ -244,27 +247,61 @@ class OdooOrderSync:
 
     async def _create_sales_order(
         self, order_data: Dict[str, Any], odoo_customer_id: int
-    ) -> int:
+    ) -> Dict[str, Any]:
         """
-        Create sales order in Odoo
+        Create sales order in Odoo (with duplicate check)
 
         Args:
             order_data: Dict with order, items, user
             odoo_customer_id: Odoo partner ID
 
         Returns:
-            Odoo sales order ID
+            Dict with:
+                - order_id: Odoo sales order ID
+                - already_exists: bool
+                - state: Order state in Odoo
         """
         try:
             order = order_data["order"]
+            client_ref = f"CELESTE-{order.id}"
 
+            # Check for existing order with this client reference
+            existing_orders = self.odoo.search_read(
+                "sale.order",
+                [("client_order_ref", "=", client_ref)],
+                fields=["id", "name", "state"],
+                limit=1,
+            )
+
+            if existing_orders:
+                # Order already exists in Odoo
+                existing_order = existing_orders[0]
+                order_id = existing_order["id"]
+                order_state = existing_order["state"]
+
+                self._error_handler.logger.warning(
+                    f"Order already exists in Odoo | "
+                    f"Celeste Order ID: {order.id} | "
+                    f"Odoo Order ID: {order_id} | "
+                    f"Odoo Order Name: {existing_order['name']} | "
+                    f"State: {order_state} | "
+                    f"Skipping duplicate creation"
+                )
+
+                return {
+                    "order_id": order_id,
+                    "already_exists": True,
+                    "state": order_state,
+                }
+
+            # No duplicate found - create new order
             # Format datetime for Odoo (expects 'YYYY-MM-DD HH:MM:SS')
             date_order_str = order.created_at.strftime("%Y-%m-%d %H:%M:%S")
 
             order_values = {
                 "partner_id": odoo_customer_id,
                 "date_order": date_order_str,
-                "client_order_ref": f"CELESTE-{order.id}",  # Store our order ID in standard field
+                "client_order_ref": client_ref,
                 "state": "draft",  # Will confirm later
             }
 
@@ -274,7 +311,11 @@ class OdooOrderSync:
                 f"Created Odoo sales order {order_id} for order {order.id}"
             )
 
-            return order_id
+            return {
+                "order_id": order_id,
+                "already_exists": False,
+                "state": "draft",
+            }
 
         except Exception as e:
             self._error_handler.logger.error(f"Failed to create sales order: {e}")
@@ -284,13 +325,27 @@ class OdooOrderSync:
         self, odoo_order_id: int, order_items: List[OrderItem]
     ) -> None:
         """
-        Create order lines in Odoo
+        Create order lines in Odoo (skip if lines already exist)
 
         Args:
             odoo_order_id: Odoo sales order ID
             order_items: List of OrderItem instances
         """
         try:
+            # Check if order already has lines (to avoid duplicates on retry)
+            existing_lines = self.odoo.search_read(
+                "sale.order.line",
+                [("order_id", "=", odoo_order_id)],
+                fields=["id", "product_id"],
+                limit=1,
+            )
+
+            if existing_lines:
+                self._error_handler.logger.info(
+                    f"Odoo order {odoo_order_id} already has order lines, skipping line creation"
+                )
+                return
+
             self._error_handler.logger.info(
                 f"Creating {len(order_items)} order lines for Odoo order {odoo_order_id}"
             )
@@ -350,8 +405,12 @@ class OdooOrderSync:
 
                     discount_percent = 0.0
                     if base_price > 0:
-                        discount_percent = ((base_price - final_price) / base_price) * 100
-                        discount_percent = max(0.0, min(100.0, discount_percent))  # Clamp 0-100
+                        discount_percent = (
+                            (base_price - final_price) / base_price
+                        ) * 100
+                        discount_percent = max(
+                            0.0, min(100.0, discount_percent)
+                        )  # Clamp 0-100
 
                     # Create order line
                     line_values = {
@@ -400,6 +459,20 @@ class OdooOrderSync:
             odoo_order_id: Odoo sales order ID
         """
         try:
+            # Check current state first to avoid re-confirming
+            order_info = self.odoo.search_read(
+                "sale.order",
+                [("id", "=", odoo_order_id)],
+                fields=["state"],
+                limit=1,
+            )
+
+            if order_info and order_info[0]["state"] == "sale":
+                self._error_handler.logger.info(
+                    f"Odoo sales order {odoo_order_id} is already confirmed, skipping confirmation"
+                )
+                return
+
             # Confirm the order by calling action_confirm method
             self.odoo.execute_kw(
                 "sale.order",
@@ -442,6 +515,8 @@ class OdooOrderSync:
                         order.odoo_synced_at = datetime.now(timezone.utc)
                         order.odoo_sync_error = None
                     elif status == OdooSyncStatus.FAILED:
-                        order.odoo_sync_error = error[:1000] if error else None  # Limit error length
+                        order.odoo_sync_error = (
+                            error[:1000] if error else None
+                        )  # Limit error length
 
                     await session.flush()

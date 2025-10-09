@@ -56,7 +56,9 @@ class OdooConnectionResponse(BaseModel):
     connected: bool = Field(..., description="Whether connection was established")
     authenticated: bool = Field(..., description="Whether authentication succeeded")
     server_version: Optional[str] = Field(None, description="Odoo server version")
-    protocol_version: Optional[int] = Field(None, description="XML-RPC protocol version")
+    protocol_version: Optional[int] = Field(
+        None, description="XML-RPC protocol version"
+    )
     uid: Optional[int] = Field(None, description="Authenticated user ID")
     user_info: Optional[Dict[str, Any]] = Field(None, description="User information")
     database: str = Field(..., description="Database name")
@@ -78,7 +80,9 @@ class OdooCustomerResponse(BaseModel):
 
     status: str = Field(..., description="Status: 'success' or 'error'")
     customer_id: Optional[int] = Field(None, description="Created customer ID in Odoo")
-    customer_data: Optional[Dict[str, Any]] = Field(None, description="Customer data returned from Odoo")
+    customer_data: Optional[Dict[str, Any]] = Field(
+        None, description="Customer data returned from Odoo"
+    )
     error: Optional[str] = Field(None, description="Error message if failed")
 
 
