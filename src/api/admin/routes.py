@@ -5,15 +5,10 @@ from fastapi import APIRouter, HTTPException, status
 from google.cloud.firestore import SERVER_TIMESTAMP
 
 from src.api.auth.service import AuthService
-from src.config.constants import OdooSyncStatus
-from src.database.connection import AsyncSessionLocal
-from src.database.models.order import Order
 from src.integrations.odoo import OdooService, OdooTestRequest, OdooTestResponse, OdooConnectionResponse, OdooProductResponse
 from src.integrations.odoo.models import OdooCustomerResponse
-from src.integrations.odoo.order_sync import OdooOrderSync
 from src.shared.database import get_async_db
 from src.shared.responses import success_response
-from sqlalchemy import select
 
 dev_router = APIRouter(prefix="/dev", tags=["Development"])
 auth_service = AuthService()
@@ -363,134 +358,4 @@ async def test_odoo_connection(request: OdooTestRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Odoo test failed: {str(e)}",
-        )
-
-
-@dev_router.get(
-    "/orders/failed-odoo-syncs",
-    summary="List orders with failed Odoo sync",
-)
-async def get_failed_odoo_syncs(limit: int = 50):
-    """
-    Get list of orders where Odoo sync failed.
-
-    Returns orders with sync status FAILED, ordered by most recent retry attempt.
-    Useful for monitoring and debugging Odoo sync issues.
-
-    - **limit**: Maximum number of failed orders to return (default: 50)
-    """
-    try:
-        async with AsyncSessionLocal() as session:
-            # Query orders with failed Odoo sync
-            query = (
-                select(Order)
-                .where(Order.odoo_sync_status == OdooSyncStatus.FAILED)
-                .order_by(Order.odoo_last_retry_at.desc())
-                .limit(limit)
-            )
-
-            result = await session.execute(query)
-            orders = result.scalars().all()
-
-            # Format response
-            failed_syncs = []
-            for order in orders:
-                failed_syncs.append(
-                    {
-                        "order_id": order.id,
-                        "user_id": order.user_id,
-                        "total_amount": float(order.total_amount),
-                        "status": order.status,
-                        "created_at": order.created_at.isoformat(),
-                        "odoo_sync_status": order.odoo_sync_status,
-                        "odoo_sync_error": order.odoo_sync_error,
-                        "odoo_last_retry_at": (
-                            order.odoo_last_retry_at.isoformat()
-                            if order.odoo_last_retry_at
-                            else None
-                        ),
-                    }
-                )
-
-            return success_response(
-                {
-                    "count": len(failed_syncs),
-                    "failed_syncs": failed_syncs,
-                }
-            )
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve failed Odoo syncs: {str(e)}",
-        )
-
-
-@dev_router.post(
-    "/orders/{order_id}/retry-odoo-sync",
-    summary="Manually retry Odoo sync for a specific order",
-)
-async def retry_odoo_sync(order_id: int):
-    """
-    Manually retry Odoo sync for an order that previously failed.
-
-    This endpoint will:
-    1. Verify the order exists and is confirmed
-    2. Attempt to sync the order to Odoo again
-    3. Update the order's sync status based on the result
-
-    Useful for recovering from transient errors or after fixing Odoo configuration issues.
-
-    - **order_id**: ID of the order to retry sync for
-    """
-    try:
-        # Verify order exists and is confirmed
-        async with AsyncSessionLocal() as session:
-            query = select(Order).where(Order.id == order_id)
-            result = await session.execute(query)
-            order = result.scalar_one_or_none()
-
-            if not order:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Order {order_id} not found",
-                )
-
-            if order.status != "confirmed":
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Order {order_id} is not confirmed. Only confirmed orders can be synced to Odoo.",
-                )
-
-        # Attempt sync
-        odoo_sync = OdooOrderSync()
-        sync_result = await odoo_sync.sync_order_to_odoo(order_id)
-
-        if sync_result["success"]:
-            return success_response(
-                {
-                    "message": f"Order {order_id} successfully synced to Odoo",
-                    "order_id": order_id,
-                    "odoo_order_id": sync_result["odoo_order_id"],
-                    "odoo_customer_id": sync_result["odoo_customer_id"],
-                    "sync_status": "synced",
-                }
-            )
-        else:
-            return success_response(
-                {
-                    "message": f"Odoo sync failed for order {order_id}",
-                    "order_id": order_id,
-                    "sync_status": "failed",
-                    "error": sync_result["error"],
-                },
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retry Odoo sync: {str(e)}",
         )

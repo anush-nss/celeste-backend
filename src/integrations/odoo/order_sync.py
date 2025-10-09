@@ -16,18 +16,13 @@ from src.config.constants import OdooSyncStatus
 from src.database.connection import AsyncSessionLocal
 from src.database.models.order import Order, OrderItem
 from src.database.models.user import User
-from src.integrations.odoo.service import (
+from src.integrations.odoo.exceptions import (
     OdooAuthenticationError,
     OdooConnectionError,
-    OdooService,
+    OdooSyncError,
 )
+from src.integrations.odoo.service import OdooService
 from src.shared.error_handler import ErrorHandler
-
-
-class OdooSyncError(Exception):
-    """Base exception for Odoo sync errors"""
-
-    pass
 
 
 class OdooOrderSync:

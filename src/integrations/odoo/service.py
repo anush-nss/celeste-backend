@@ -8,19 +8,12 @@ Handles authentication, CRUD operations, and error handling.
 import xmlrpc.client
 from typing import Any, Dict, List, Optional
 
+from src.config.settings import settings
+from src.integrations.odoo.exceptions import (
+    OdooAuthenticationError,
+    OdooConnectionError,
+)
 from src.shared.error_handler import ErrorHandler
-
-
-class OdooConnectionError(Exception):
-    """Raised when connection to Odoo fails"""
-
-    pass
-
-
-class OdooAuthenticationError(Exception):
-    """Raised when authentication with Odoo fails"""
-
-    pass
 
 
 class OdooService:
@@ -37,11 +30,21 @@ class OdooService:
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
 
-        # Hardcoded credentials - TODO: Move to environment variables
-        self.url = "https://skmjcdev-celestedaily-uat-24366065.dev.odoo.com"
-        self.db = "skmjcdev-celestedaily-uat-24366065"
-        self.username = "admin"
-        self.password = "admin"
+        # Load configuration from environment variables
+        self.url = settings.ODOO_URL
+        self.db = settings.ODOO_DB
+        self.username = settings.ODOO_USERNAME
+        self.password = settings.ODOO_PASSWORD
+
+        # Validate required configuration
+        if not self.url:
+            raise ValueError("ODOO_URL environment variable is required")
+        if not self.db:
+            raise ValueError("ODOO_DB environment variable is required")
+        if not self.username:
+            raise ValueError("ODOO_USERNAME environment variable is required")
+        if not self.password:
+            raise ValueError("ODOO_PASSWORD environment variable is required")
 
         # API endpoints
         self.common_endpoint = f"{self.url}/xmlrpc/2/common"
@@ -64,7 +67,7 @@ class OdooService:
                 self._error_handler.logger.debug("Common proxy created")
             except Exception as e:
                 self._error_handler.logger.error(f"Failed to create common proxy: {e}")
-                raise OdooConnectionError(f"Failed to connect to Odoo: {e}")
+                raise OdooConnectionError("Failed to connect to Odoo", e)
         return self._common
 
     def _get_models_proxy(self) -> xmlrpc.client.ServerProxy:

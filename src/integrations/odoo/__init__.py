@@ -5,6 +5,11 @@ Provides integration with Odoo ERP system for order management,
 inventory synchronization, and product data.
 """
 
+from src.integrations.odoo.exceptions import (
+    OdooAuthenticationError,
+    OdooConnectionError,
+    OdooSyncError,
+)
 from src.integrations.odoo.models import (
     OdooConnectionResponse,
     OdooCreateRequest,
@@ -17,17 +22,15 @@ from src.integrations.odoo.models import (
     OdooTestResponse,
     OdooUpdateRequest,
 )
-from src.integrations.odoo.service import (
-    OdooAuthenticationError,
-    OdooConnectionError,
-    OdooService,
-)
+from src.integrations.odoo.service import OdooService
 
 __all__ = [
     # Service
     "OdooService",
+    # Exceptions
     "OdooAuthenticationError",
     "OdooConnectionError",
+    "OdooSyncError",
     # Models
     "OdooTestRequest",
     "OdooTestResponse",

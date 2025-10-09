@@ -30,5 +30,11 @@ class Settings:
     # API
     API_V1_STR = "/api/v1"
 
+    # Odoo ERP Integration
+    ODOO_URL = os.getenv("ODOO_URL", None)
+    ODOO_DB = os.getenv("ODOO_DB", None)
+    ODOO_USERNAME = os.getenv("ODOO_USERNAME", None)
+    ODOO_PASSWORD = os.getenv("ODOO_PASSWORD", None)
+
 
 settings = Settings()
