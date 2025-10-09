@@ -6,7 +6,7 @@ Handles customer creation, order creation, and error recovery.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -81,27 +81,30 @@ class OdooOrderSync:
                 f"[{order_id}] Customer synced successfully. Odoo Customer ID: {odoo_customer_id}"
             )
 
-            # Step 2: Create sales order in Odoo (or find existing)
-            self._error_handler.logger.info(f"[{order_id}] Creating sales order...")
+            # Step 2: Create sales order with all lines in Odoo (or find existing)
+            self._error_handler.logger.info(
+                f"[{order_id}] Creating sales order with all lines in one call..."
+            )
             odoo_order_result = await self._create_sales_order(
                 order_data, odoo_customer_id
             )
             odoo_order_id = odoo_order_result["order_id"]
             order_exists = odoo_order_result["already_exists"]
             order_state = odoo_order_result.get("state", "draft")
-            self._error_handler.logger.info(
-                f"[{order_id}] Sales order created/found successfully. Odoo Order ID: {odoo_order_id}"
-            )
+            lines_created = odoo_order_result.get("lines_created", 0)
+            lines_skipped = odoo_order_result.get("lines_skipped", 0)
 
-            # Step 3: Create order lines (skip if order is already confirmed)
-            if order_state != "sale":
-                self._error_handler.logger.info(f"[{order_id}] Creating order lines...")
-                await self._create_order_lines(odoo_order_id, order_data["items"])
+            if order_exists:
                 self._error_handler.logger.info(
-                    f"[{order_id}] Order lines created successfully."
+                    f"[{order_id}] Sales order found in Odoo. Odoo Order ID: {odoo_order_id}"
+                )
+            else:
+                self._error_handler.logger.info(
+                    f"[{order_id}] Sales order created with {lines_created} lines ({lines_skipped} skipped). Odoo Order ID: {odoo_order_id}"
                 )
 
-                # Step 4: Confirm order in Odoo (skip if already confirmed)
+            # Step 3: Confirm order in Odoo (skip if already confirmed)
+            if order_state != "sale":
                 self._error_handler.logger.info(f"[{order_id}] Confirming order...")
                 await self._confirm_order(odoo_order_id)
                 self._error_handler.logger.info(
@@ -109,7 +112,7 @@ class OdooOrderSync:
                 )
             else:
                 self._error_handler.logger.info(
-                    f"Order {odoo_order_id} already confirmed in Odoo, skipping line creation and confirmation"
+                    f"Order {odoo_order_id} already confirmed in Odoo, skipping confirmation"
                 )
 
             # Step 5: Update our order record
@@ -283,7 +286,7 @@ class OdooOrderSync:
         self, order_data: Dict[str, Any], odoo_customer_id: int
     ) -> Dict[str, Any]:
         """
-        Create sales order in Odoo (with duplicate check)
+        Create sales order in Odoo with all order lines in a single call (with duplicate check)
 
         Args:
             order_data: Dict with order, items, user
@@ -294,9 +297,12 @@ class OdooOrderSync:
                 - order_id: Odoo sales order ID
                 - already_exists: bool
                 - state: Order state in Odoo
+                - lines_created: Number of lines created
+                - lines_skipped: Number of lines skipped
         """
         try:
             order = order_data["order"]
+            order_items = order_data["items"]
             client_ref = f"CELESTE-{order.id}"
 
             # Check for existing order with this client reference
@@ -326,10 +332,132 @@ class OdooOrderSync:
                     "order_id": order_id,
                     "already_exists": True,
                     "state": order_state,
+                    "lines_created": 0,
+                    "lines_skipped": 0,
                 }
 
-            # No duplicate found - create new order
-            # Format datetime for Odoo (expects 'YYYY-MM-DD HH:MM:SS')
+            # No duplicate found - prepare order lines first
+            self._error_handler.logger.info(
+                f"Preparing {len(order_items)} order lines for order {order.id}"
+            )
+
+            # Step 1: Fetch all products in a single query
+            product_ids = [item.product_id for item in order_items]
+            async with AsyncSessionLocal() as session:
+                from src.database.models.product import Product
+
+                products_query = select(Product).where(Product.id.in_(product_ids))
+                products_result = await session.execute(products_query)
+                products = {p.id: p for p in products_result.scalars().all()}
+
+            self._error_handler.logger.info(
+                f"Fetched {len(products)} products from database"
+            )
+
+            # Step 2: Batch fetch Odoo products by refs
+            padded_refs = []
+            product_ref_map = {}  # Map padded_ref -> our product
+
+            for item in order_items:
+                product = products.get(item.product_id)
+                if product:
+                    padded_ref = str(product.ref).zfill(6)
+                    padded_refs.append(padded_ref)
+                    product_ref_map[padded_ref] = product
+
+            # Batch search Odoo products
+            odoo_products_list = []
+            if padded_refs:
+                self._error_handler.logger.info(
+                    f"Searching for {len(padded_refs)} products in Odoo"
+                )
+                odoo_products_list = self.odoo.search_read(
+                    "product.product",
+                    [("default_code", "in", padded_refs)],
+                    fields=["id", "name", "default_code"],
+                )
+
+            # Create a map: padded_ref -> odoo_product_id
+            odoo_product_map = {p["default_code"]: p["id"] for p in odoo_products_list}
+
+            self._error_handler.logger.info(
+                f"Found {len(odoo_product_map)} products in Odoo"
+            )
+
+            # Step 3: Build order lines
+            order_lines = []
+            lines_skipped = 0
+
+            for item in order_items:
+                product = products.get(item.product_id)
+
+                if not product:
+                    self._error_handler.logger.warning(
+                        f"Product {item.product_id} not found in database, skipping order line"
+                    )
+                    lines_skipped += 1
+                    continue
+
+                padded_ref = str(product.ref).zfill(6)
+                odoo_product_id = odoo_product_map.get(padded_ref)
+
+                if not odoo_product_id:
+                    self._error_handler.logger.warning(
+                        f"Product ref '{product.ref}' (padded: '{padded_ref}') not found in Odoo, skipping order line"
+                    )
+                    lines_skipped += 1
+                    continue
+
+                # For the delivery product, the price is dynamic.
+                # Set the price_unit directly to the delivery charge and discount to 0.
+                if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
+                    base_price = float(item.unit_price)
+                    final_price = base_price
+                    discount_percent = 0.0
+                else:
+                    # For regular products, calculate discount based on base vs final price.
+                    base_price = float(product.base_price)
+                    final_price = float(item.unit_price)
+
+                    if base_price > 0:
+                        discount_percent = (
+                            (base_price - final_price) / base_price
+                        ) * 100
+                        discount_percent = max(
+                            0.0, min(100.0, discount_percent)
+                        )  # Clamp 0-100
+                    else:
+                        discount_percent = 0.0
+
+                # Prepare order line using Odoo's command syntax: (0, 0, {...})
+                line_values = {
+                    "product_id": odoo_product_id,
+                    "product_uom_qty": item.quantity,
+                    "price_unit": base_price,  # Use base_price or dynamic price
+                    "discount": discount_percent,  # Apply calculated discount
+                }
+
+                self._error_handler.logger.info(
+                    f"Prepared order line | Product: {product.ref} | "
+                    f"Qty: {item.quantity} | Price: {base_price} | "
+                    f"Final Price: {final_price} | Discount: {discount_percent:.2f}%"
+                )
+
+                # Add to order_lines list using (0, 0, values) command
+                order_lines.append((0, 0, line_values))
+
+            lines_created = len(order_lines)
+
+            if lines_created == 0:
+                raise OdooSyncError(
+                    "No order lines were created. All products were skipped."
+                )
+
+            self._error_handler.logger.info(
+                f"Order lines summary | Prepared: {lines_created} | Skipped: {lines_skipped}"
+            )
+
+            # Create order with all lines in a single call
             date_order_str = order.created_at.strftime("%Y-%m-%d %H:%M:%S")
 
             order_values = {
@@ -337,160 +465,30 @@ class OdooOrderSync:
                 "date_order": date_order_str,
                 "client_order_ref": client_ref,
                 "state": "draft",  # Will confirm later
+                "order_line": order_lines,  # Include all lines in one call
             }
 
             order_id = self.odoo.create("sale.order", order_values)
 
             self._error_handler.logger.info(
-                f"Created Odoo sales order {order_id} for order {order.id}"
+                f"Created Odoo sales order {order_id} with {lines_created} lines for order {order.id}"
             )
 
             return {
                 "order_id": order_id,
                 "already_exists": False,
                 "state": "draft",
+                "lines_created": lines_created,
+                "lines_skipped": lines_skipped,
             }
-
-        except Exception as e:
-            self._error_handler.logger.error(f"Failed to create sales order: {e}")
-            raise OdooSyncError(f"Sales order creation failed: {e}")
-
-    async def _create_order_lines(
-        self, odoo_order_id: int, order_items: List[OrderItem]
-    ) -> None:
-        """
-        Create order lines in Odoo (skip if lines already exist)
-
-        Args:
-            odoo_order_id: Odoo sales order ID
-            order_items: List of OrderItem instances
-        """
-        try:
-            # Check if order already has lines (to avoid duplicates on retry)
-            existing_lines = self.odoo.search_read(
-                "sale.order.line",
-                [("order_id", "=", odoo_order_id)],
-                fields=["id", "product_id"],
-                limit=1,
-            )
-
-            if existing_lines:
-                self._error_handler.logger.info(
-                    f"Odoo order {odoo_order_id} already has order lines, skipping line creation"
-                )
-                return
-
-            self._error_handler.logger.info(
-                f"Creating {len(order_items)} order lines for Odoo order {odoo_order_id}"
-            )
-
-            lines_created = 0
-            lines_skipped = 0
-
-            # We need to get product information to calculate discounts
-            async with AsyncSessionLocal() as session:
-                from src.database.models.product import Product
-
-                for item in order_items:
-                    # Fetch product to get ref and base_price
-                    product_query = select(Product).where(Product.id == item.product_id)
-                    product_result = await session.execute(product_query)
-                    product = product_result.scalar_one_or_none()
-
-                    if not product:
-                        self._error_handler.logger.warning(
-                            f"Product {item.product_id} not found in database, skipping order line"
-                        )
-                        lines_skipped += 1
-                        continue
-
-                    # Pad ref to 6 digits with leading zeros to match Odoo format
-                    # Database: "1646" -> Odoo: "001646"
-                    padded_ref = str(product.ref).zfill(6)
-
-                    self._error_handler.logger.info(
-                        f"Looking for product in Odoo | Ref: {product.ref} | Padded: {padded_ref} | Name: {product.name}"
-                    )
-
-                    # Find product in Odoo by ref (with padding)
-                    odoo_products = self.odoo.search_read(
-                        "product.product",
-                        [("default_code", "=", padded_ref)],
-                        fields=["id", "name"],
-                        limit=1,
-                    )
-
-                    if not odoo_products:
-                        self._error_handler.logger.warning(
-                            f"Product ref '{product.ref}' (padded: '{padded_ref}') not found in Odoo, skipping order line"
-                        )
-                        lines_skipped += 1
-                        continue
-
-                    odoo_product_id = odoo_products[0]["id"]
-                    self._error_handler.logger.info(
-                        f"Found Odoo product | ID: {odoo_product_id} | Name: {odoo_products[0]['name']}"
-                    )
-
-                    # For the delivery product, the price is dynamic.
-                    # Set the price_unit directly to the delivery charge and discount to 0.
-                    if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
-                        base_price = float(item.unit_price)
-                        final_price = base_price
-                        discount_percent = 0.0
-                    else:
-                        # For regular products, calculate discount based on base vs final price.
-                        base_price = float(product.base_price)
-                        final_price = float(item.unit_price)
-
-                        if base_price > 0:
-                            discount_percent = (
-                                (base_price - final_price) / base_price
-                            ) * 100
-                            discount_percent = max(
-                                0.0, min(100.0, discount_percent)
-                            )  # Clamp 0-100
-                        else:
-                            discount_percent = 0.0
-
-                    # Create order line
-                    line_values = {
-                        "order_id": odoo_order_id,
-                        "product_id": odoo_product_id,
-                        "product_uom_qty": item.quantity,
-                        "price_unit": base_price,  # Use base_price or dynamic price
-                        "discount": discount_percent,  # Apply calculated discount
-                    }
-
-                    self._error_handler.logger.info(
-                        f"Creating order line | Product: {product.ref} | "
-                        f"Qty: {item.quantity} | Price: {base_price} | "
-                        f"Final Price: {final_price} | Discount: {discount_percent:.2f}%"
-                    )
-
-                    line_id = self.odoo.create("sale.order.line", line_values)
-                    lines_created += 1
-
-                    self._error_handler.logger.info(
-                        f"Created order line {line_id} successfully"
-                    )
-
-            self._error_handler.logger.info(
-                f"Order lines summary | Created: {lines_created} | Skipped: {lines_skipped}"
-            )
-
-            if lines_created == 0:
-                raise OdooSyncError(
-                    "No order lines were created. All products were skipped."
-                )
 
         except OdooSyncError:
             raise
         except Exception as e:
             self._error_handler.logger.error(
-                f"Failed to create order lines: {e}", exc_info=True
+                f"Failed to create sales order: {e}", exc_info=True
             )
-            raise OdooSyncError(f"Order lines creation failed: {e}")
+            raise OdooSyncError(f"Sales order creation failed: {e}")
 
     async def _confirm_order(self, odoo_order_id: int) -> None:
         """
