@@ -84,6 +84,9 @@ class Order(Base):
         Integer, ForeignKey("stores.id"), nullable=False
     )
     total_amount: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
+    delivery_charge: Mapped[Decimal] = mapped_column(
+        DECIMAL(10, 2), nullable=False, server_default=text("'0.00'")
+    )
     status: Mapped[OrderStatus] = mapped_column(
         Enum(OrderStatus), default=OrderStatus.PENDING, nullable=False
     )

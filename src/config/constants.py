@@ -108,6 +108,10 @@ class CartUserRole(str, Enum):
     VIEWER = "viewer"
 
 
+# Odoo-related constants
+DELIVERY_PRODUCT_ODOO_ID = 20906
+
+
 # Cache invalidation scope constants
 class CacheScopes(str, Enum):
     SPECIFIC = "specific"

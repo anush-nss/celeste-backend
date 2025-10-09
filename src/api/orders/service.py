@@ -13,13 +13,18 @@ from src.api.orders.models import CreateOrderSchema, OrderSchema, UpdateOrderSch
 from src.api.orders.services.payment_service import PaymentService
 from src.api.orders.services.store_selection_service import StoreSelectionService
 from src.api.pricing.service import PricingService
+from src.api.products.cache import products_cache
 from src.integrations.odoo.order_sync import OdooOrderSync
 from src.api.users.models import (
     CartGroupSchema,
     CheckoutResponseSchema,
     MultiCartCheckoutSchema,
 )
-from src.config.constants import CartStatus, OrderStatus
+from src.config.constants import (
+    CartStatus,
+    OrderStatus,
+    DELIVERY_PRODUCT_ODOO_ID,
+)
 from src.database.connection import AsyncSessionLocal
 from src.database.models.cart import Cart
 from src.database.models.order import Order, OrderItem
@@ -28,6 +33,7 @@ from src.database.models.store import Store
 from src.database.models.user import User
 from src.shared.error_handler import ErrorHandler, handle_service_errors
 from src.shared.exceptions import ResourceNotFoundException, ValidationException
+from src.shared.sqlalchemy_utils import sqlalchemy_to_dict
 
 
 class OrderService:
@@ -37,15 +43,68 @@ class OrderService:
         self.pricing_service = PricingService()
         self.payment_service = PaymentService()
         self.store_selection_service = StoreSelectionService()
+        self.products_cache = products_cache
 
-    def calculate_delivery_charge(self, store_deliveries: List[Dict]) -> Decimal:
+    def calculate_flat_delivery_charge(
+        self,
+        store_deliveries: List[Dict],
+        delivery_address: Optional[Dict] = None,
+        order_details: Optional[Dict] = None,
+    ) -> Decimal:
+        """
+        Calculate flat delivery charge for non-nearby stores (default fallback stores).
+
+        For now, this is a fixed rate. In the future, this can be calculated based on:
+        - Delivery address location
+        - Order total amount
+        - Store locations
+        - Number of items
+        - etc.
+
+        Args:
+            store_deliveries: List of dict with store assignment details
+            delivery_address: Dict with delivery location details:
+                - latitude: float
+                - longitude: float
+                - address: str
+                - city: str
+                - etc.
+            order_details: Dict with order information:
+                - total_amount: Decimal
+                - items_count: int
+                - total_weight: float (if available)
+                - etc.
+
+        Returns:
+            Decimal: Flat delivery charge
+        """
+        # TODO: Implement dynamic calculation based on:
+        # - delivery_address['latitude'], delivery_address['longitude']
+        # - order_details['total_amount']
+        # - store_deliveries (number of stores, locations)
+        # - Distance to nearest distribution center
+        # - Urban vs rural area
+        # - Order value-based free shipping thresholds
+
+        # For now, return fixed rate
+        return Decimal("300.00")
+
+    def calculate_delivery_charge(
+        self,
+        store_deliveries: List[Dict],
+        is_nearby_store: bool = True,
+        total_amount: Optional[Decimal] = None,
+        items_count: Optional[int] = None,
+    ) -> Decimal:
         """
         Calculate delivery charge based on stores and their distances.
-        For prototyping: use max distance store and calculate base on that.
 
         Args:
             store_deliveries: List of dict with keys: 'store_id', 'store_name', 'store_lat', 'store_lng',
                              'delivery_lat', 'delivery_lng', 'items', 'store_total'
+            is_nearby_store: Whether delivery is from nearby stores or default fallback stores
+            total_amount: Total order amount (for future flat rate calculations)
+            items_count: Number of items in order (for future flat rate calculations)
 
         Returns:
             Decimal: Total delivery charge
@@ -53,6 +112,28 @@ class OrderService:
         if not store_deliveries:
             return Decimal("0.00")
 
+        # Use flat rate for non-nearby stores
+        if not is_nearby_store:
+            # Extract delivery address from store_deliveries
+            delivery_address = None
+            if store_deliveries and "delivery_lat" in store_deliveries[0]:
+                delivery_address = {
+                    "latitude": store_deliveries[0].get("delivery_lat"),
+                    "longitude": store_deliveries[0].get("delivery_lng"),
+                }
+
+            # Build order details
+            order_details = {}
+            if total_amount is not None:
+                order_details["total_amount"] = total_amount
+            if items_count is not None:
+                order_details["items_count"] = items_count
+
+            return self.calculate_flat_delivery_charge(
+                store_deliveries, delivery_address, order_details
+            )
+
+        # For nearby stores: calculate based on distance using Haversine formula
         # Base delivery charge
         base_charge = Decimal("50.00")  # Rs. 50 base charge
         rate_per_km = Decimal("15.00")  # Rs. 15 per km
@@ -382,6 +463,8 @@ class OrderService:
                             "Order must be PENDING to be CONFIRMED."
                         )
                     for item in order.items:
+                        if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
+                            continue
                         await self.inventory_service.confirm_reservation(
                             product_id=item.product_id,
                             store_id=item.store_id,
@@ -392,6 +475,8 @@ class OrderService:
                     if order.status == OrderStatus.PENDING:
                         # Release the hold
                         for item in order.items:
+                            if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
+                                continue
                             await self.inventory_service.release_hold(
                                 product_id=item.product_id,
                                 store_id=item.store_id,
@@ -411,6 +496,8 @@ class OrderService:
                             "Order must be CONFIRMED to be SHIPPED."
                         )
                     for item in order.items:
+                        if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
+                            continue
                         await self.inventory_service.fulfill_order(
                             product_id=item.product_id,
                             store_id=item.store_id,
@@ -444,10 +531,12 @@ class OrderService:
         # STEP 3: Build cart groups with pricing (no DB needed)
         cart_groups = CartService.build_cart_groups(validation_data, pricing_data)
 
-        # STEP 4: Calculate totals
+        # STEP 4: Calculate totals and count items
         total_amount = Decimal("0.00")
+        items_count = 0
         for group in cart_groups:
             total_amount += Decimal(str(group.cart_total))
+            items_count += len(group.items)
 
         # STEP 5: Now proceed with order creation in a separate transaction
         async with AsyncSessionLocal() as session:
@@ -469,7 +558,9 @@ class OrderService:
                 # STEP 7: Calculate delivery charges (only for delivery mode)
                 delivery_charge = Decimal("0.00")
                 if checkout_data.location.mode == "delivery":
-                    delivery_charge = self.calculate_delivery_charge(store_assignments)
+                    delivery_charge = self.calculate_delivery_charge(
+                        store_assignments, is_nearby_store, total_amount, items_count
+                    )
                 final_total = total_amount + delivery_charge
 
                 # STEP 8: Create main order record
@@ -479,10 +570,62 @@ class OrderService:
                     user_id=user_id,
                     store_id=main_store_id,
                     total_amount=final_total,
+                    delivery_charge=delivery_charge,  # Populate the new field
                     status=OrderStatus.PENDING,
                 )
                 session.add(new_order)
                 await session.flush()
+
+                # Add delivery charge as a separate order item if applicable
+                if delivery_charge > 0:
+                    # Try to get the delivery product from cache first
+                    delivery_product_dict = self.products_cache.get_delivery_product()
+                    delivery_product = (
+                        Product(**delivery_product_dict)
+                        if delivery_product_dict
+                        else None
+                    )
+
+                    if not delivery_product:
+                        # Fetch from the database if not in cache
+                        delivery_product_result = await session.execute(
+                            select(Product).filter(
+                                Product.id == DELIVERY_PRODUCT_ODOO_ID
+                            )
+                        )
+                        delivery_product = delivery_product_result.scalar_one_or_none()
+
+                        if delivery_product:
+                            # Cache the product for future requests
+                            self.products_cache.set_delivery_product(
+                                sqlalchemy_to_dict(
+                                    delivery_product,
+                                    exclude_relationships={
+                                        "categories",
+                                        "product_tags",
+                                        "inventory_levels",
+                                    },
+                                )
+                            )
+
+                    if delivery_product:
+                        delivery_item = OrderItem(
+                            order_id=new_order.id,
+                            product_id=delivery_product.id,
+                            store_id=main_store_id,  # Assign to the main store
+                            quantity=1,
+                            unit_price=delivery_charge,
+                            total_price=delivery_charge,
+                            # Associate with the first cart in the checkout
+                            source_cart_id=checkout_data.cart_ids[0],
+                        )
+                        session.add(delivery_item)
+                    else:
+                        # Log a warning if the delivery product is not found
+                        self._error_handler.logger.warning(
+                            f"Delivery product with Odoo ID {DELIVERY_PRODUCT_ODOO_ID} not found. "
+                            "Delivery charge will not be added as a line item."
+                        )
 
                 # STEP 9: Create order items and collect inventory holds
                 holds_to_place = []  # Collect all holds for bulk placement

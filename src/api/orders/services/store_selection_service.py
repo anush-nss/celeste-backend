@@ -297,7 +297,7 @@ class StoreSelectionService:
         if not product_ids:
             return {}
 
-        # Query products with their tags 
+        # Query products with their tags
         products_query = (
             select(Product)
             .where(Product.id.in_(product_ids))

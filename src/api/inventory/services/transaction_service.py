@@ -1,9 +1,11 @@
+from sqlalchemy import tuple_
 from sqlalchemy.future import select
 
 from src.api.inventory.models import (
     AdjustInventorySchema,
     InventorySchema,
 )
+from src.config.constants import DELIVERY_PRODUCT_ODOO_ID
 from src.database.models.inventory import Inventory
 from src.shared.error_handler import ErrorHandler, handle_service_errors
 from src.shared.exceptions import ResourceNotFoundException, ValidationException
@@ -133,6 +135,14 @@ class InventoryTransactionService:
         if not holds:
             return []
 
+        # Filter out the delivery product from inventory operations
+        holds = [
+            hold for hold in holds if hold["product_id"] != DELIVERY_PRODUCT_ODOO_ID
+        ]
+
+        if not holds:
+            return []
+
         # Validate all quantities first
         for hold in holds:
             if hold["quantity"] <= 0:
@@ -140,29 +150,27 @@ class InventoryTransactionService:
                     f"Quantity must be positive for product {hold['product_id']}"
                 )
 
-        # Sort holds by (product_id, store_id) for deterministic locking order
-        # This prevents deadlocks when multiple transactions place holds
-        sorted_holds = sorted(holds, key=lambda h: (h["product_id"], h["store_id"]))
+        # Build unique (product_id, store_id) pairs for the query
+        inventory_keys = list(set((h["product_id"], h["store_id"]) for h in holds))
 
-        # Build unique (product_id, store_id) pairs
-        inventory_keys = [(h["product_id"], h["store_id"]) for h in sorted_holds]
-
-        # Lock all required inventory rows at once (in sorted order)
-        inventory_records = {}
-        for product_id, store_id in inventory_keys:
-            result = await session.execute(
-                select(Inventory)
-                .filter_by(product_id=product_id, store_id=store_id)
-                .with_for_update()
+        # Lock and fetch all required inventory rows at once
+        result = await session.execute(
+            select(Inventory)
+            .filter(
+                tuple_(Inventory.product_id, Inventory.store_id).in_(inventory_keys)
             )
-            inventory = result.scalars().first()
+            .with_for_update()
+        )
+        inventory_items = result.scalars().all()
+        inventory_records = {(i.product_id, i.store_id): i for i in inventory_items}
 
-            if not inventory:
-                raise ResourceNotFoundException(
-                    f"Inventory for product {product_id} at store {store_id} not found."
-                )
-
-            inventory_records[(product_id, store_id)] = inventory
+        # Check if all inventory records were found
+        if len(inventory_records) != len(inventory_keys):
+            found_keys = set(inventory_records.keys())
+            missing_keys = [key for key in inventory_keys if key not in found_keys]
+            raise ResourceNotFoundException(
+                f"Inventory not found for the following (product, store) pairs: {missing_keys}"
+            )
 
         # Validate all holds before applying any changes
         for hold in holds:
@@ -208,6 +216,14 @@ class InventoryTransactionService:
         if not holds:
             return []
 
+        # Filter out the delivery product from inventory operations
+        holds = [
+            hold for hold in holds if hold["product_id"] != DELIVERY_PRODUCT_ODOO_ID
+        ]
+
+        if not holds:
+            return []
+
         # Validate all quantities first
         for hold in holds:
             if hold["quantity"] <= 0:
@@ -215,27 +231,19 @@ class InventoryTransactionService:
                     f"Quantity must be positive for product {hold['product_id']}"
                 )
 
-        # Sort holds by (product_id, store_id) for deterministic locking order
-        sorted_holds = sorted(holds, key=lambda h: (h["product_id"], h["store_id"]))
+        # Build unique (product_id, store_id) pairs for the query
+        inventory_keys = list(set((h["product_id"], h["store_id"]) for h in holds))
 
-        # Build unique (product_id, store_id) pairs
-        inventory_keys = [(h["product_id"], h["store_id"]) for h in sorted_holds]
-
-        # Lock all required inventory rows at once (in sorted order)
-        inventory_records = {}
-        for product_id, store_id in inventory_keys:
-            result = await session.execute(
-                select(Inventory)
-                .filter_by(product_id=product_id, store_id=store_id)
-                .with_for_update()
+        # Lock and fetch all required inventory rows at once
+        result = await session.execute(
+            select(Inventory)
+            .filter(
+                tuple_(Inventory.product_id, Inventory.store_id).in_(inventory_keys)
             )
-            inventory = result.scalars().first()
-
-            if not inventory:
-                # Skip missing inventory during rollback
-                continue
-
-            inventory_records[(product_id, store_id)] = inventory
+            .with_for_update()
+        )
+        inventory_items = result.scalars().all()
+        inventory_records = {(i.product_id, i.store_id): i for i in inventory_items}
 
         # Validate all releases before applying any changes
         for hold in holds:

@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from src.config.constants import OdooSyncStatus
+from src.config.constants import OdooSyncStatus, DELIVERY_PRODUCT_ODOO_ID
 from src.database.connection import AsyncSessionLocal
 from src.database.models.order import Order, OrderItem
 from src.database.models.user import User
@@ -57,30 +57,56 @@ class OdooOrderSync:
             self._error_handler.logger.info(f"Starting Odoo sync for order {order_id}")
 
             # Fetch order data with relationships
+            self._error_handler.logger.info(f"[{order_id}] Fetching order data...")
             async with AsyncSessionLocal() as session:
                 order_data = await self._fetch_order_data(session, order_id)
+            self._error_handler.logger.info(
+                f"[{order_id}] Fetched order data successfully."
+            )
 
             # Ensure authenticated with Odoo
             if self.odoo._uid is None:
+                self._error_handler.logger.info(
+                    f"[{order_id}] Authenticating with Odoo..."
+                )
                 self.odoo.authenticate()
+                self._error_handler.logger.info(
+                    f"[{order_id}] Authenticated successfully."
+                )
 
             # Step 1: Sync customer to Odoo (find or create)
+            self._error_handler.logger.info(f"[{order_id}] Syncing customer...")
             odoo_customer_id = await self._sync_customer(order_data["user"])
+            self._error_handler.logger.info(
+                f"[{order_id}] Customer synced successfully. Odoo Customer ID: {odoo_customer_id}"
+            )
 
             # Step 2: Create sales order in Odoo (or find existing)
+            self._error_handler.logger.info(f"[{order_id}] Creating sales order...")
             odoo_order_result = await self._create_sales_order(
                 order_data, odoo_customer_id
             )
             odoo_order_id = odoo_order_result["order_id"]
             order_exists = odoo_order_result["already_exists"]
             order_state = odoo_order_result.get("state", "draft")
+            self._error_handler.logger.info(
+                f"[{order_id}] Sales order created/found successfully. Odoo Order ID: {odoo_order_id}"
+            )
 
             # Step 3: Create order lines (skip if order is already confirmed)
             if order_state != "sale":
+                self._error_handler.logger.info(f"[{order_id}] Creating order lines...")
                 await self._create_order_lines(odoo_order_id, order_data["items"])
+                self._error_handler.logger.info(
+                    f"[{order_id}] Order lines created successfully."
+                )
 
                 # Step 4: Confirm order in Odoo (skip if already confirmed)
+                self._error_handler.logger.info(f"[{order_id}] Confirming order...")
                 await self._confirm_order(odoo_order_id)
+                self._error_handler.logger.info(
+                    f"[{order_id}] Order confirmed successfully."
+                )
             else:
                 self._error_handler.logger.info(
                     f"Order {odoo_order_id} already confirmed in Odoo, skipping line creation and confirmation"
@@ -180,7 +206,7 @@ class OdooOrderSync:
 
     async def _sync_customer(self, user: User) -> int:
         """
-        Find or create customer in Odoo
+        Find or create customer in Odoo, with local caching.
 
         Args:
             user: User model instance
@@ -188,8 +214,18 @@ class OdooOrderSync:
         Returns:
             Odoo partner ID
         """
+        # Step 1: Check for cached Odoo customer ID
+        if user.odoo_customer_id:
+            self._error_handler.logger.info(
+                f"Found cached Odoo customer ID {user.odoo_customer_id} for user {user.firebase_uid}"
+            )
+            return user.odoo_customer_id
+
         try:
-            # Search for existing customer by firebase_uid
+            # Step 2: Search for existing customer in Odoo by firebase_uid
+            self._error_handler.logger.info(
+                f"No cached ID found. Searching for Odoo customer for user {user.firebase_uid}"
+            )
             existing_customers = self.odoo.search_read(
                 "res.partner",
                 [("firebase_uid", "=", user.firebase_uid)],
@@ -198,46 +234,44 @@ class OdooOrderSync:
             )
 
             if existing_customers:
-                # Customer exists - update customer_rank
                 customer_id = existing_customers[0]["id"]
                 self._error_handler.logger.info(
                     f"Found existing Odoo customer {customer_id} for user {user.firebase_uid}"
                 )
+            else:
+                # Step 3: Create new customer if not found
+                self._error_handler.logger.info(
+                    f"Odoo customer not found. Creating new one for user {user.firebase_uid}"
+                )
+                customer_values = {
+                    "name": user.name,
+                    "email": user.email or False,
+                    "phone": user.phone or False,
+                    "mobile": user.phone or False,
+                    "firebase_uid": user.firebase_uid,
+                    "customer_rank": 1,
+                    "is_company": False,
+                }
 
-                # Update customer_rank (total_orders + 1 for this new order)
-                self.odoo.write(
-                    "res.partner",
-                    [customer_id],
-                    {"customer_rank": user.total_orders + 1},
+                if user.addresses and len(user.addresses) > 0:
+                    default_address = next(
+                        (addr for addr in user.addresses if addr.is_default),
+                        user.addresses[0],
+                    )
+                    customer_values["street"] = default_address.address
+
+                customer_id = self.odoo.create("res.partner", customer_values)
+                self._error_handler.logger.info(
+                    f"Created new Odoo customer {customer_id} for user {user.firebase_uid}"
                 )
 
-                return customer_id
-
-            # Customer doesn't exist - create new
-            customer_values = {
-                "name": user.name,
-                "email": user.email or False,
-                "phone": user.phone or False,
-                "mobile": user.phone or False,  # Use same phone for mobile
-                "firebase_uid": user.firebase_uid,
-                "customer_rank": 1,  # First order
-                "is_company": False,
-            }
-
-            # Add address if available
-            if user.addresses and len(user.addresses) > 0:
-                # Get default address or first address
-                default_address = next(
-                    (addr for addr in user.addresses if addr.is_default),
-                    user.addresses[0],
-                )
-                customer_values["street"] = default_address.address
-
-            customer_id = self.odoo.create("res.partner", customer_values)
-
-            self._error_handler.logger.info(
-                f"Created new Odoo customer {customer_id} for user {user.firebase_uid}"
-            )
+            # Step 4: Cache the Odoo customer ID in our local database
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    user_to_update = await session.get(User, user.firebase_uid)
+                    if user_to_update:
+                        user_to_update.odoo_customer_id = customer_id
+                        await session.flush()
 
             return customer_id
 
@@ -398,27 +432,34 @@ class OdooOrderSync:
                         f"Found Odoo product | ID: {odoo_product_id} | Name: {odoo_products[0]['name']}"
                     )
 
-                    # Calculate discount percentage
-                    # base_price is the original price, unit_price is after discount
-                    base_price = float(product.base_price)
-                    final_price = float(item.unit_price)
+                    # For the delivery product, the price is dynamic.
+                    # Set the price_unit directly to the delivery charge and discount to 0.
+                    if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
+                        base_price = float(item.unit_price)
+                        final_price = base_price
+                        discount_percent = 0.0
+                    else:
+                        # For regular products, calculate discount based on base vs final price.
+                        base_price = float(product.base_price)
+                        final_price = float(item.unit_price)
 
-                    discount_percent = 0.0
-                    if base_price > 0:
-                        discount_percent = (
-                            (base_price - final_price) / base_price
-                        ) * 100
-                        discount_percent = max(
-                            0.0, min(100.0, discount_percent)
-                        )  # Clamp 0-100
+                        if base_price > 0:
+                            discount_percent = (
+                                (base_price - final_price) / base_price
+                            ) * 100
+                            discount_percent = max(
+                                0.0, min(100.0, discount_percent)
+                            )  # Clamp 0-100
+                        else:
+                            discount_percent = 0.0
 
                     # Create order line
                     line_values = {
                         "order_id": odoo_order_id,
                         "product_id": odoo_product_id,
                         "product_uom_qty": item.quantity,
-                        "price_unit": base_price,  # Original price
-                        "discount": discount_percent,  # Discount percentage
+                        "price_unit": base_price,  # Use base_price or dynamic price
+                        "discount": discount_percent,  # Apply calculated discount
                     }
 
                     self._error_handler.logger.info(

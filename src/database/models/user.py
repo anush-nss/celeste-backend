@@ -124,6 +124,9 @@ class User(Base):
     last_order_at: Mapped[Optional[datetime]] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    odoo_customer_id: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("NOW()"), nullable=False
