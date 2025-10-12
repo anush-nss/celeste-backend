@@ -1,9 +1,9 @@
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.config.constants import OrderStatus
+from src.config.constants import FulfillmentMode, OrderStatus
 
 
 class OrderItemSchema(BaseModel):
@@ -24,7 +24,17 @@ class OrderSchema(BaseModel):
     id: int
     user_id: str  # Changed from int to str to match Firebase UID
     store_id: int
+    address_id: Optional[int] = Field(
+        default=None, description="Delivery address ID (for delivery orders)"
+    )
     total_amount: float
+    delivery_charge: Optional[float] = Field(
+        default=0.0, description="Delivery charge for the order"
+    )
+    fulfillment_mode: FulfillmentMode = Field(
+        default=FulfillmentMode.PICKUP,
+        description="Order fulfillment mode: pickup, delivery, or far_delivery",
+    )
     status: OrderStatus
     created_at: datetime
     updated_at: datetime

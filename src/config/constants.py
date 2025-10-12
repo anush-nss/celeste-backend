@@ -13,11 +13,18 @@ class DiscountType(str, Enum):
 
 class OrderStatus(str, Enum):
     PENDING = "pending"
+    CONFIRMED = "confirmed"
     PROCESSING = "processing"
+    PACKED = "packed"
     SHIPPED = "shipped"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
-    CONFIRMED = "confirmed"
+
+
+class FulfillmentMode(str, Enum):
+    PICKUP = "pickup"
+    DELIVERY = "delivery"
+    FAR_DELIVERY = "far_delivery"
 
 
 class OdooSyncStatus(str, Enum):

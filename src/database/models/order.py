@@ -16,7 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.config.constants import OdooSyncStatus, OrderStatus
+from src.config.constants import FulfillmentMode, OdooSyncStatus, OrderStatus
 from src.database.base import Base
 
 if TYPE_CHECKING:
@@ -83,17 +83,41 @@ class Order(Base):
     store_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("stores.id"), nullable=False
     )
+    address_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("addresses.id"), nullable=True
+    )
     total_amount: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
     delivery_charge: Mapped[Decimal] = mapped_column(
         DECIMAL(10, 2), nullable=False, server_default=text("'0.00'")
     )
-    status: Mapped[OrderStatus] = mapped_column(
-        Enum(OrderStatus), default=OrderStatus.PENDING, nullable=False
+    fulfillment_mode: Mapped[str] = mapped_column(
+        Enum(
+            FulfillmentMode,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="fulfillmentmode",
+        ),
+        default=FulfillmentMode.PICKUP.value,
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        Enum(
+            OrderStatus,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="orderstatus",
+        ),
+        default=OrderStatus.PENDING.value,
+        nullable=False,
     )
 
     # Odoo ERP sync fields
-    odoo_sync_status: Mapped[OdooSyncStatus] = mapped_column(
-        Enum(OdooSyncStatus), default=OdooSyncStatus.PENDING, nullable=False
+    odoo_sync_status: Mapped[str] = mapped_column(
+        Enum(
+            OdooSyncStatus,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="odoosyncstatus",
+        ),
+        default=OdooSyncStatus.PENDING.value,
+        nullable=False,
     )
     odoo_order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     odoo_customer_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

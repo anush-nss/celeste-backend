@@ -5,6 +5,8 @@ High-level service for syncing orders and customers to Odoo ERP.
 Handles customer creation, order creation, and error recovery.
 """
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -38,6 +40,8 @@ class OdooOrderSync:
     def __init__(self):
         self.odoo = OdooService()
         self._error_handler = ErrorHandler(__name__)
+        # Thread pool for blocking Odoo RPC calls
+        self._executor = ThreadPoolExecutor(max_workers=4)
 
     async def sync_order_to_odoo(self, order_id: int) -> Dict[str, Any]:
         """
@@ -225,15 +229,19 @@ class OdooOrderSync:
             return user.odoo_customer_id
 
         try:
-            # Step 2: Search for existing customer in Odoo by firebase_uid
+            # Step 2: Search for existing customer in Odoo by firebase_uid (async)
             self._error_handler.logger.info(
                 f"No cached ID found. Searching for Odoo customer for user {user.firebase_uid}"
             )
-            existing_customers = self.odoo.search_read(
-                "res.partner",
-                [("firebase_uid", "=", user.firebase_uid)],
-                fields=["id", "name", "email"],
-                limit=1,
+            loop = asyncio.get_event_loop()
+            existing_customers = await loop.run_in_executor(
+                self._executor,
+                lambda: self.odoo.search_read(
+                    "res.partner",
+                    [("firebase_uid", "=", user.firebase_uid)],
+                    fields=["id", "name", "email"],
+                    limit=1,
+                )
             )
 
             if existing_customers:
@@ -242,7 +250,7 @@ class OdooOrderSync:
                     f"Found existing Odoo customer {customer_id} for user {user.firebase_uid}"
                 )
             else:
-                # Step 3: Create new customer if not found
+                # Step 3: Create new customer if not found (async)
                 self._error_handler.logger.info(
                     f"Odoo customer not found. Creating new one for user {user.firebase_uid}"
                 )
@@ -263,7 +271,10 @@ class OdooOrderSync:
                     )
                     customer_values["street"] = default_address.address
 
-                customer_id = self.odoo.create("res.partner", customer_values)
+                customer_id = await loop.run_in_executor(
+                    self._executor,
+                    lambda: self.odoo.create("res.partner", customer_values)
+                )
                 self._error_handler.logger.info(
                     f"Created new Odoo customer {customer_id} for user {user.firebase_uid}"
                 )
@@ -305,12 +316,16 @@ class OdooOrderSync:
             order_items = order_data["items"]
             client_ref = f"CELESTE-{order.id}"
 
-            # Check for existing order with this client reference
-            existing_orders = self.odoo.search_read(
-                "sale.order",
-                [("client_order_ref", "=", client_ref)],
-                fields=["id", "name", "state"],
-                limit=1,
+            # Check for existing order with this client reference (async)
+            loop = asyncio.get_event_loop()
+            existing_orders = await loop.run_in_executor(
+                self._executor,
+                lambda: self.odoo.search_read(
+                    "sale.order",
+                    [("client_order_ref", "=", client_ref)],
+                    fields=["id", "name", "state"],
+                    limit=1,
+                )
             )
 
             if existing_orders:
@@ -365,16 +380,20 @@ class OdooOrderSync:
                     padded_refs.append(padded_ref)
                     product_ref_map[padded_ref] = product
 
-            # Batch search Odoo products
+            # Batch search Odoo products (run in thread pool to avoid blocking)
             odoo_products_list = []
             if padded_refs:
                 self._error_handler.logger.info(
-                    f"Searching for {len(padded_refs)} products in Odoo"
+                    f"Searching for {len(padded_refs)} products in Odoo (async)"
                 )
-                odoo_products_list = self.odoo.search_read(
-                    "product.product",
-                    [("default_code", "in", padded_refs)],
-                    fields=["id", "name", "default_code"],
+                loop = asyncio.get_event_loop()
+                odoo_products_list = await loop.run_in_executor(
+                    self._executor,
+                    lambda: self.odoo.search_read(
+                        "product.product",
+                        [("default_code", "in", padded_refs)],
+                        fields=["id", "name", "default_code"],
+                    )
                 )
 
             # Create a map: padded_ref -> odoo_product_id
@@ -457,7 +476,7 @@ class OdooOrderSync:
                 f"Order lines summary | Prepared: {lines_created} | Skipped: {lines_skipped}"
             )
 
-            # Create order with all lines in a single call
+            # Create order with all lines in a single call (run in thread pool)
             date_order_str = order.created_at.strftime("%Y-%m-%d %H:%M:%S")
 
             order_values = {
@@ -468,7 +487,14 @@ class OdooOrderSync:
                 "order_line": order_lines,  # Include all lines in one call
             }
 
-            order_id = self.odoo.create("sale.order", order_values)
+            self._error_handler.logger.info(
+                f"Creating Odoo sales order with {lines_created} lines (async)..."
+            )
+            loop = asyncio.get_event_loop()
+            order_id = await loop.run_in_executor(
+                self._executor,
+                lambda: self.odoo.create("sale.order", order_values)
+            )
 
             self._error_handler.logger.info(
                 f"Created Odoo sales order {order_id} with {lines_created} lines for order {order.id}"
@@ -498,12 +524,16 @@ class OdooOrderSync:
             odoo_order_id: Odoo sales order ID
         """
         try:
-            # Check current state first to avoid re-confirming
-            order_info = self.odoo.search_read(
-                "sale.order",
-                [("id", "=", odoo_order_id)],
-                fields=["state"],
-                limit=1,
+            # Check current state first to avoid re-confirming (async)
+            loop = asyncio.get_event_loop()
+            order_info = await loop.run_in_executor(
+                self._executor,
+                lambda: self.odoo.search_read(
+                    "sale.order",
+                    [("id", "=", odoo_order_id)],
+                    fields=["state"],
+                    limit=1,
+                )
             )
 
             if order_info and order_info[0]["state"] == "sale":
@@ -512,11 +542,14 @@ class OdooOrderSync:
                 )
                 return
 
-            # Confirm the order by calling action_confirm method
-            self.odoo.execute_kw(
-                "sale.order",
-                "action_confirm",
-                [[odoo_order_id]],
+            # Confirm the order by calling action_confirm method (async)
+            await loop.run_in_executor(
+                self._executor,
+                lambda: self.odoo.execute_kw(
+                    "sale.order",
+                    "action_confirm",
+                    [[odoo_order_id]],
+                )
             )
 
             self._error_handler.logger.info(

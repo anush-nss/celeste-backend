@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from src.api.carts.service import CartService
 from src.api.inventory.service import InventoryService
-from src.api.orders.models import CreateOrderSchema, OrderSchema, UpdateOrderSchema
+from src.api.orders.models import CreateOrderSchema, OrderItemSchema, OrderSchema, UpdateOrderSchema
 from src.api.orders.services.payment_service import PaymentService
 from src.api.orders.services.store_selection_service import StoreSelectionService
 from src.api.pricing.service import PricingService
@@ -22,6 +22,7 @@ from src.api.users.models import (
 )
 from src.config.constants import (
     CartStatus,
+    FulfillmentMode,
     OrderStatus,
     DELIVERY_PRODUCT_ODOO_ID,
 )
@@ -363,7 +364,34 @@ class OrderService:
                 query = query.filter(Order.user_id == user_id)
             result = await session.execute(query)
             orders = result.scalars().unique().all()
-            return [OrderSchema.model_validate(order) for order in orders]
+
+            # Filter out delivery product from each order's items
+            order_schemas = []
+            for order in orders:
+                filtered_items = [
+                    item
+                    for item in order.items
+                    if item.product_id != DELIVERY_PRODUCT_ODOO_ID
+                ]
+
+                order_dict = {
+                    "id": order.id,
+                    "user_id": order.user_id,
+                    "store_id": order.store_id,
+                    "address_id": order.address_id,
+                    "total_amount": float(order.total_amount),
+                    "delivery_charge": float(order.delivery_charge),
+                    "fulfillment_mode": order.fulfillment_mode,
+                    "status": order.status,
+                    "created_at": order.created_at,
+                    "updated_at": order.updated_at,
+                    "items": [
+                        OrderItemSchema.model_validate(item) for item in filtered_items
+                    ],
+                }
+                order_schemas.append(OrderSchema.model_validate(order_dict))
+
+            return order_schemas
 
     @handle_service_errors("retrieving order")
     async def get_order_by_id(self, order_id: int) -> OrderSchema | None:
@@ -374,7 +402,32 @@ class OrderService:
                 .filter(Order.id == order_id)
             )
             order = result.scalars().first()
-            return OrderSchema.model_validate(order) if order else None
+            if not order:
+                return None
+
+            # Filter out delivery product from items (it's shown as delivery_charge field)
+            filtered_items = [
+                item
+                for item in order.items
+                if item.product_id != DELIVERY_PRODUCT_ODOO_ID
+            ]
+
+            # Build order dict with filtered items
+            order_dict = {
+                "id": order.id,
+                "user_id": order.user_id,
+                "store_id": order.store_id,
+                "address_id": order.address_id,
+                "total_amount": float(order.total_amount),
+                "delivery_charge": float(order.delivery_charge),
+                "fulfillment_mode": order.fulfillment_mode,
+                "status": order.status,
+                "created_at": order.created_at,
+                "updated_at": order.updated_at,
+                "items": [OrderItemSchema.model_validate(item) for item in filtered_items],
+            }
+
+            return OrderSchema.model_validate(order_dict)
 
     @handle_service_errors("creating order")
     async def create_order(
@@ -426,7 +479,7 @@ class OrderService:
                     user_id=user_id,
                     store_id=order_data.store_id,
                     total_amount=total_amount,
-                    status=OrderStatus.PENDING,
+                    status=OrderStatus.PENDING.value,
                     items=order_items_to_create,
                 )
                 session.add(new_order)
@@ -453,12 +506,16 @@ class OrderService:
                         f"Order with ID {order_id} not found."
                     )
 
-                if order.status == status_update.status:
+                # Get status values as strings for comparison
+                current_status = order.status
+                new_status = status_update.status.value if isinstance(status_update.status, OrderStatus) else status_update.status
+
+                if current_status == new_status:
                     return OrderSchema.model_validate(order)  # No change
 
                 # Logic for status transitions
-                if status_update.status == OrderStatus.CONFIRMED:
-                    if order.status != OrderStatus.PENDING:
+                if new_status == OrderStatus.CONFIRMED.value:
+                    if current_status != OrderStatus.PENDING.value:
                         raise ValidationException(
                             "Order must be PENDING to be CONFIRMED."
                         )
@@ -471,30 +528,25 @@ class OrderService:
                             quantity=item.quantity,
                             session=session,
                         )
-                elif status_update.status == OrderStatus.CANCELLED:
-                    if order.status == OrderStatus.PENDING:
-                        # Release the hold
-                        for item in order.items:
-                            if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
-                                continue
-                            await self.inventory_service.release_hold(
-                                product_id=item.product_id,
-                                store_id=item.store_id,
-                                quantity=item.quantity,
-                                session=session,
-                            )
-                    elif order.status == OrderStatus.CONFIRMED:
-                        # This would be a more complex "cancellation" that might
-                        # involve releasing a reservation. For now, let's assume
-                        # only PENDING orders can be cancelled.
+
+                elif new_status == OrderStatus.PROCESSING.value:
+                    if current_status != OrderStatus.CONFIRMED.value:
                         raise ValidationException(
-                            "Cannot cancel a CONFIRMED order directly. Process a return instead."
+                            "Order must be CONFIRMED to be PROCESSING."
                         )
-                elif status_update.status == OrderStatus.SHIPPED:
-                    if order.status != OrderStatus.CONFIRMED:
+
+                elif new_status == OrderStatus.PACKED.value:
+                    if current_status != OrderStatus.PROCESSING.value:
                         raise ValidationException(
-                            "Order must be CONFIRMED to be SHIPPED."
+                            "Order must be PROCESSING to be PACKED."
                         )
+
+                elif new_status == OrderStatus.SHIPPED.value:
+                    if current_status != OrderStatus.PACKED.value:
+                        raise ValidationException(
+                            "Order must be PACKED to be SHIPPED."
+                        )
+                    # Fulfill inventory when shipped (rider collected from store)
                     for item in order.items:
                         if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
                             continue
@@ -505,7 +557,43 @@ class OrderService:
                             session=session,
                         )
 
-                order.status = status_update.status
+                elif new_status == OrderStatus.DELIVERED.value:
+                    # Can go from PACKED (pickup) or SHIPPED (delivery)
+                    if current_status not in [OrderStatus.PACKED.value, OrderStatus.SHIPPED.value]:
+                        raise ValidationException(
+                            "Order must be PACKED or SHIPPED to be DELIVERED."
+                        )
+                    # If coming from PACKED (pickup order), fulfill inventory now
+                    if current_status == OrderStatus.PACKED.value:
+                        for item in order.items:
+                            if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
+                                continue
+                            await self.inventory_service.fulfill_order(
+                                product_id=item.product_id,
+                                store_id=item.store_id,
+                                quantity=item.quantity,
+                                session=session,
+                            )
+
+                elif new_status == OrderStatus.CANCELLED.value:
+                    if current_status == OrderStatus.PENDING.value:
+                        # Release the hold
+                        for item in order.items:
+                            if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
+                                continue
+                            await self.inventory_service.release_hold(
+                                product_id=item.product_id,
+                                store_id=item.store_id,
+                                quantity=item.quantity,
+                                session=session,
+                            )
+                    elif current_status in [OrderStatus.CONFIRMED.value, OrderStatus.PROCESSING.value, OrderStatus.PACKED.value]:
+                        # Cannot cancel orders that are confirmed or being prepared
+                        raise ValidationException(
+                            "Cannot cancel a CONFIRMED, PROCESSING, or PACKED order. Please contact support."
+                        )
+
+                order.status = status_update.status.value if isinstance(status_update.status, OrderStatus) else status_update.status
                 # Note: session.begin() context manager auto-commits on exit
                 await session.flush()  # Ensure changes are persisted
                 await session.refresh(order)
@@ -563,30 +651,51 @@ class OrderService:
                     )
                 final_total = total_amount + delivery_charge
 
-                # STEP 8: Create main order record
+                # STEP 8: Determine fulfillment mode
+                if checkout_data.location.mode == "pickup":
+                    fulfillment_mode = FulfillmentMode.PICKUP.value
+                elif checkout_data.location.mode == "delivery":
+                    # Distinguish between nearby delivery and far delivery
+                    fulfillment_mode = (
+                        FulfillmentMode.DELIVERY.value
+                        if is_nearby_store
+                        else FulfillmentMode.FAR_DELIVERY.value
+                    )
+                else:
+                    fulfillment_mode = FulfillmentMode.PICKUP.value  # Default fallback
+
+                # STEP 9: Create main order record
                 # Use the first store as the main store for the order
                 main_store_id = store_assignments[0]["store_id"]
+
+                # Set address_id for delivery orders, None for pickup
+                address_id = None
+                if checkout_data.location.mode == "delivery":
+                    address_id = checkout_data.location.address_id
+
                 new_order = Order(
                     user_id=user_id,
                     store_id=main_store_id,
+                    address_id=address_id,
                     total_amount=final_total,
-                    delivery_charge=delivery_charge,  # Populate the new field
-                    status=OrderStatus.PENDING,
+                    delivery_charge=delivery_charge,
+                    fulfillment_mode=fulfillment_mode,
+                    status=OrderStatus.PENDING.value,
                 )
                 session.add(new_order)
                 await session.flush()
 
-                # Add delivery charge as a separate order item if applicable
+                # STEP 10: Add delivery charge as a separate order item if applicable
                 if delivery_charge > 0:
                     # Try to get the delivery product from cache first
                     delivery_product_dict = self.products_cache.get_delivery_product()
-                    delivery_product = (
-                        Product(**delivery_product_dict)
-                        if delivery_product_dict
-                        else None
-                    )
+                    delivery_product_id = None
 
-                    if not delivery_product:
+                    if delivery_product_dict:
+                        # Extract ID from cached dict (no need to create Product instance)
+                        delivery_product_id = delivery_product_dict.get("id")
+
+                    if not delivery_product_id:
                         # Fetch from the database if not in cache
                         delivery_product_result = await session.execute(
                             select(Product).filter(
@@ -596,6 +705,7 @@ class OrderService:
                         delivery_product = delivery_product_result.scalar_one_or_none()
 
                         if delivery_product:
+                            delivery_product_id = delivery_product.id
                             # Cache the product for future requests
                             self.products_cache.set_delivery_product(
                                 sqlalchemy_to_dict(
@@ -608,10 +718,10 @@ class OrderService:
                                 )
                             )
 
-                    if delivery_product:
+                    if delivery_product_id:
                         delivery_item = OrderItem(
                             order_id=new_order.id,
-                            product_id=delivery_product.id,
+                            product_id=delivery_product_id,
                             store_id=main_store_id,  # Assign to the main store
                             quantity=1,
                             unit_price=delivery_charge,
@@ -627,7 +737,7 @@ class OrderService:
                             "Delivery charge will not be added as a line item."
                         )
 
-                # STEP 9: Create order items and collect inventory holds
+                # STEP 11: Create order items and collect inventory holds
                 holds_to_place = []  # Collect all holds for bulk placement
                 placed_holds = []  # Track successfully placed holds for rollback
 
@@ -676,7 +786,7 @@ class OrderService:
                     # Track successful holds for potential rollback
                     placed_holds = holds_to_place
 
-                    # STEP 10: Update cart statuses to ordered (bulk update)
+                    # STEP 12: Update cart statuses to ordered (bulk update)
                     await session.execute(
                         update(Cart)
                         .where(Cart.id.in_(checkout_data.cart_ids))
@@ -701,7 +811,7 @@ class OrderService:
                         )
                     raise e
 
-            # STEP 10: Initiate payment process outside transaction
+            # STEP 13: Initiate payment process outside transaction
             payment_result = await self.payment_service.initiate_payment(
                 order_id=new_order.id,
                 total_amount=final_total,
