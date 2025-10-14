@@ -34,7 +34,7 @@ class OdooSyncStatus(str, Enum):
 
 
 # Default fallback tier when no default tier is found in database
-DEFAULT_FALLBACK_TIER = "BRONZE"
+DEFAULT_FALLBACK_TIER_ID = 1
 
 
 class PriceListType(str, Enum):

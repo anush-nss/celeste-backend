@@ -320,7 +320,7 @@ class StoreSelectionService:
     async def _check_store_availability(
         self, store_id: int, cart_items: List[Dict[str, Any]], session
     ) -> Dict[str, Any]:
-        """Check if all items are available at specific store (bulk optimized)"""
+        """Check if all items are available at specific store (bulk optimized, respects safety stock)"""
 
         availability_result = {
             "all_available": True,
@@ -343,14 +343,17 @@ class StoreSelectionService:
         result = await session.execute(inventory_query)
         inventories = result.scalars().all()
 
-        # Build inventory map: product_id -> available quantity
-        inventory_map = {inv.product_id: inv.quantity_available for inv in inventories}
+        # Build inventory map: product_id -> usable quantity (considering safety stock)
+        inventory_map = {}
+        for inv in inventories:
+            usable_qty = max(0, inv.quantity_available - (inv.safety_stock or 0))
+            inventory_map[inv.product_id] = usable_qty
 
         # Check availability for each item
         for item in cart_items:
-            available_qty = inventory_map.get(item["product_id"], 0)
+            usable_qty = inventory_map.get(item["product_id"], 0)
 
-            if available_qty >= item["quantity"]:
+            if usable_qty >= item["quantity"]:
                 availability_result["available_items"].append(item)
             else:
                 availability_result["unavailable_items"].append(item)
@@ -452,7 +455,7 @@ class StoreSelectionService:
             key = (inv.product_id, inv.store_id)
             inventory_map[key] = inv
 
-        # Check each cart item
+        # Check each cart item (respecting safety stock)
         fulfillment_info = []
         can_fulfill_all = True
 
@@ -460,7 +463,7 @@ class StoreSelectionService:
             product_id = item["product_id"]
             quantity_needed = item["quantity"]
 
-            # Find closest store with sufficient stock
+            # Find closest store with sufficient usable stock (considering safety stock)
             fulfilled_store = None
             quantity_available = 0
 
@@ -468,13 +471,17 @@ class StoreSelectionService:
                 inv_key = (product_id, store_id)
                 inv = inventory_map.get(inv_key)
 
-                if inv and inv.quantity_available >= quantity_needed:
-                    # Found store with enough stock
-                    fulfilled_store = stores_by_id[store_id]
-                    quantity_available = inv.quantity_available
-                    break
+                if inv:
+                    # Calculate usable quantity (respecting safety stock)
+                    usable_qty = max(0, inv.quantity_available - (inv.safety_stock or 0))
 
-            # If not fully available, find store with maximum available quantity
+                    if usable_qty >= quantity_needed:
+                        # Found store with enough usable stock
+                        fulfilled_store = stores_by_id[store_id]
+                        quantity_available = usable_qty
+                        break
+
+            # If not fully available, find store with maximum usable quantity
             if not fulfilled_store:
                 max_available = 0
                 best_store = None
@@ -483,9 +490,13 @@ class StoreSelectionService:
                     inv_key = (product_id, store_id)
                     inv = inventory_map.get(inv_key)
 
-                    if inv and inv.quantity_available > max_available:
-                        max_available = inv.quantity_available
-                        best_store = stores_by_id[store_id]
+                    if inv:
+                        # Calculate usable quantity (respecting safety stock)
+                        usable_qty = max(0, inv.quantity_available - (inv.safety_stock or 0))
+
+                        if usable_qty > max_available:
+                            max_available = usable_qty
+                            best_store = stores_by_id[store_id]
 
                 quantity_available = max_available
                 fulfilled_store = best_store

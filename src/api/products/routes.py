@@ -113,6 +113,10 @@ async def get_all_products(
     only_discounted: Optional[bool] = Query(
         False, description="Return only products with discounts applied"
     ),
+    has_inventory: Optional[bool] = Query(
+        None,
+        description="Filter products with available inventory (quantity > safety_stock)",
+    ),
     store_id: Optional[List[int]] = Query(
         None, description="Store IDs for multi-store inventory data"
     ),
@@ -152,6 +156,7 @@ async def get_all_products(
         min_price=min_price,
         max_price=max_price,
         only_discounted=only_discounted,
+        has_inventory=has_inventory,
         store_id=store_id,
         include_inventory=include_inventory,
         latitude=latitude,

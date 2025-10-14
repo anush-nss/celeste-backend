@@ -11,6 +11,7 @@ class InventorySchema(BaseModel):
     quantity_available: int
     quantity_reserved: int
     quantity_on_hold: int
+    safety_stock: int
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -22,12 +23,14 @@ class CreateInventorySchema(BaseModel):
     quantity_available: int = Field(..., ge=0)
     quantity_reserved: int = Field(0, ge=0)
     quantity_on_hold: int = Field(0, ge=0)
+    safety_stock: int = Field(0, ge=0)
 
 
 class UpdateInventorySchema(BaseModel):
     quantity_available: Optional[int] = Field(None, ge=0)
     quantity_reserved: Optional[int] = Field(None, ge=0)
     quantity_on_hold: Optional[int] = Field(None, ge=0)
+    safety_stock: Optional[int] = Field(None, ge=0)
 
 
 class AdjustInventorySchema(BaseModel):
@@ -36,3 +39,4 @@ class AdjustInventorySchema(BaseModel):
     available_change: int = 0
     on_hold_change: int = 0
     reserved_change: int = 0
+    safety_stock_change: int = 0

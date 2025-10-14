@@ -1,71 +1,226 @@
-import asyncio
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from sqlalchemy import text
 
 from src.api.products.models import EnhancedProductSchema, InventoryInfoSchema
 from src.config.constants import NEXT_DAY_DELIVERY_ONLY_TAG_ID
 from src.database.connection import AsyncSessionLocal
-from src.shared.cache_service import cache_service
 from src.shared.error_handler import ErrorHandler
 
 
 class ProductInventoryService:
-    """Product inventory service with bulk operations and spatial queries"""
+    """Product inventory service with aggregated availability logic"""
 
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
-        self.cache = cache_service
 
     async def add_inventory_to_products_bulk(
         self,
         products: List[EnhancedProductSchema],
-        store_ids: List[int],
+        store_ids: Optional[List[int]],
         is_nearby_store: bool = True,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
     ) -> List[EnhancedProductSchema]:
-        """Add inventory to multiple products using single comprehensive query"""
-        if not store_ids or not products:
+        """Add aggregated inventory to multiple products"""
+        if not products:
             return products
 
-        # Generate cache key for inventory data
-        product_ids = [p.id for p in products]
-        filtered_product_ids = [pid for pid in product_ids if pid is not None]
-        filtered_store_ids = [sid for sid in store_ids if sid is not None]
-        cache_key = f"inventory:bulk:{','.join(map(str, sorted(filtered_product_ids)))}:{','.join(map(str, sorted(filtered_store_ids)))}:{is_nearby_store}"
+        product_ids = [p.id for p in products if p.id is not None]
+        if not product_ids:
+            return products
 
-        # Try cache first
-        cached_inventory = await self.cache.get(cache_key)
-        if cached_inventory:
-            return self._apply_cached_inventory(
-                products, cached_inventory, is_nearby_store
-            )
+        # Get products with next-day delivery tag
+        next_day_only_products = await self._get_products_with_next_day_tag(product_ids)
 
-        # If using default stores (not nearby), check for excluded products
-        excluded_product_ids = set()
-        if not is_nearby_store:
-            excluded_product_ids = await self._get_excluded_products(
-                filtered_product_ids
-            )
-
-        # Single comprehensive query for all inventory data
-        inventory_dict = await self._get_bulk_inventory(
-            filtered_product_ids, filtered_store_ids
+        # Get inventory data with safety stock
+        inventory_dict = await self._get_bulk_inventory_with_safety_stock(
+            product_ids, store_ids
         )
 
-        # Cache inventory data for 2 minutes
-        await self.cache.set(cache_key, inventory_dict, ttl=120)
+        # Apply aggregated inventory to each product
+        for product in products:
+            if product.id is None:
+                continue
 
-        # Apply inventory to products
-        return self._apply_inventory_to_products(
-            products, inventory_dict, is_nearby_store, excluded_product_ids
+            has_next_day_tag = product.id in next_day_only_products
+            inventory_data = inventory_dict.get(product.id, [])
+
+            product.inventory = self._calculate_aggregated_inventory(
+                inventory_data=inventory_data,
+                is_nearby_store=is_nearby_store,
+                has_next_day_tag=has_next_day_tag,
+                has_location=latitude is not None and longitude is not None,
+            )
+
+        return products
+
+    async def get_aggregated_inventory_for_product(
+        self,
+        product_id: int,
+        store_ids: Optional[List[int]],
+        is_nearby_store: bool = True,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+    ) -> InventoryInfoSchema:
+        """Get aggregated inventory for a single product"""
+
+        # Check if product has next-day delivery tag
+        next_day_only_products = await self._get_products_with_next_day_tag(
+            [product_id]
+        )
+        has_next_day_tag = product_id in next_day_only_products
+
+        # Get inventory data
+        inventory_dict = await self._get_bulk_inventory_with_safety_stock(
+            [product_id], store_ids
+        )
+        inventory_data = inventory_dict.get(product_id, [])
+
+        return self._calculate_aggregated_inventory(
+            inventory_data=inventory_data,
+            is_nearby_store=is_nearby_store,
+            has_next_day_tag=has_next_day_tag,
+            has_location=latitude is not None and longitude is not None,
         )
 
-    async def _get_bulk_inventory(
-        self, product_ids: List[int], store_ids: List[int]
+    def _calculate_aggregated_inventory(
+        self,
+        inventory_data: List[Dict],
+        is_nearby_store: bool,
+        has_next_day_tag: bool,
+        has_location: bool,
+    ) -> InventoryInfoSchema:
+        """
+        Calculate aggregated inventory based on the comprehensive logic:
+
+        1. If product has NEXT_DAY_DELIVERY_ONLY_TAG and no location provided
+           → can_order=False, reason="requires location"
+
+        2. If product has NEXT_DAY_DELIVERY_ONLY_TAG and no nearby stores
+           → can_order=False, reason="no nearby stores"
+
+        3. If product has NEXT_DAY_DELIVERY_ONLY_TAG and nearby stores exist
+           → Check inventory from nearby stores only
+
+        4. If product doesn't have tag and has nearby stores with stock
+           → Use nearby stores
+
+        5. If product doesn't have tag and no nearby stock
+           → Fall back to default stores (if is_nearby_store=False)
+        """
+
+        # Case 1: Next-day delivery product without location
+        if has_next_day_tag and not has_location:
+            if inventory_data:
+                # Calculate max available across all stores
+                max_available = 0
+                for inv in inventory_data:
+                    usable_qty = max(0, inv["quantity_available"] - inv["safety_stock"])
+                    if usable_qty > max_available:
+                        max_available = usable_qty
+                
+                return InventoryInfoSchema(
+                    can_order=False,  # Cannot order without location
+                    max_available=max_available,  # But show actual available quantity
+                    in_stock=max_available > 0,
+                    ondemand_delivery_available=False,
+                    reason_unavailable="Product requires location for on-demand delivery",
+                )
+            else:
+                return InventoryInfoSchema(
+                    can_order=False,
+                    max_available=0,
+                    in_stock=False,
+                    ondemand_delivery_available=False,
+                    reason_unavailable="Product requires location for on-demand delivery",
+                )
+
+        # Case 2: Next-day delivery product with no nearby stores
+        # Still calculate actual inventory for display, but indicate it can't be ordered
+        if has_next_day_tag and not is_nearby_store:
+            if inventory_data:
+                # Calculate max available across all stores
+                max_available = 0
+                for inv in inventory_data:
+                    usable_qty = max(0, inv["quantity_available"] - inv["safety_stock"])
+                    if usable_qty > max_available:
+                        max_available = usable_qty
+                
+                return InventoryInfoSchema(
+                    can_order=False,  # Cannot order due to location constraint
+                    max_available=max_available,  # But show actual available quantity
+                    in_stock=max_available > 0,
+                    ondemand_delivery_available=False,
+                    reason_unavailable="Product only available with on-demand delivery. No nearby stores found.",
+                )
+            else:
+                return InventoryInfoSchema(
+                    can_order=False,
+                    max_available=0,
+                    in_stock=False,
+                    ondemand_delivery_available=False,
+                    reason_unavailable="Product only available with on-demand delivery. No nearby stores found.",
+                )
+
+        # Calculate usable quantities (quantity_available - safety_stock)
+        if not inventory_data:
+            # No inventory data available
+            if has_next_day_tag:
+                reason = "Out of stock at nearby stores"
+            else:
+                reason = "Out of stock" if not is_nearby_store else "Out of stock at nearby stores"
+
+            return InventoryInfoSchema(
+                can_order=False,
+                max_available=0,
+                in_stock=False,
+                ondemand_delivery_available=False,
+                reason_unavailable=reason,
+            )
+
+        # Calculate max available across all stores
+        max_available = 0
+        for inv in inventory_data:
+            usable_qty = max(0, inv["quantity_available"] - inv["safety_stock"])
+            if usable_qty > max_available:
+                max_available = usable_qty
+
+        # Determine if product can be ordered
+        can_order = max_available > 0
+        in_stock = max_available > 0
+
+        # Determine delivery availability
+        ondemand_delivery_available = is_nearby_store and in_stock
+
+        # Set reason if unavailable
+        reason_unavailable = None
+        if not can_order:
+            if has_next_day_tag:
+                reason_unavailable = "Out of stock at nearby stores"
+            else:
+                reason_unavailable = "Out of stock"
+
+        return InventoryInfoSchema(
+            can_order=can_order,
+            max_available=max_available,
+            in_stock=in_stock,
+            ondemand_delivery_available=ondemand_delivery_available,
+            reason_unavailable=reason_unavailable,
+        )
+
+    async def _get_bulk_inventory_with_safety_stock(
+        self, product_ids: List[int], store_ids: Optional[List[int]]
     ) -> Dict[int, List[Dict]]:
-        """Get inventory for multiple products and stores in single query"""
+        """Get inventory with safety stock for multiple products"""
+        if not product_ids:
+            return {}
+
+        if not store_ids:
+            # No stores specified, return empty
+            return {}
+
         async with AsyncSessionLocal() as session:
-            # Comprehensive single query with aggregation
             query = """
             SELECT
                 product_id,
@@ -73,11 +228,11 @@ class ProductInventoryService:
                 quantity_available,
                 quantity_on_hold,
                 quantity_reserved,
+                COALESCE(safety_stock, 0) as safety_stock,
                 updated_at
             FROM inventory
             WHERE product_id = ANY(:product_ids)
               AND store_id = ANY(:store_ids)
-              AND quantity_available >= 0
             ORDER BY product_id, store_id
             """
 
@@ -85,7 +240,7 @@ class ProductInventoryService:
                 text(query), {"product_ids": product_ids, "store_ids": store_ids}
             )
 
-            # Group by product_id efficiently
+            # Group by product_id
             inventory_dict = {}
             for row in result.fetchall():
                 if row.product_id not in inventory_dict:
@@ -94,17 +249,17 @@ class ProductInventoryService:
                 inventory_dict[row.product_id].append(
                     {
                         "store_id": row.store_id,
-                        "in_stock": row.quantity_available > 0,
                         "quantity_available": row.quantity_available,
                         "quantity_on_hold": row.quantity_on_hold,
                         "quantity_reserved": row.quantity_reserved,
+                        "safety_stock": row.safety_stock,
                         "updated_at": row.updated_at,
                     }
                 )
 
             return inventory_dict
 
-    async def _get_excluded_products(self, product_ids: List[int]) -> set:
+    async def _get_products_with_next_day_tag(self, product_ids: List[int]) -> set:
         """Get products that have the NEXT_DAY_DELIVERY_ONLY_TAG_ID"""
         if not product_ids:
             return set()
@@ -114,157 +269,15 @@ class ProductInventoryService:
             SELECT DISTINCT product_id
             FROM product_tags
             WHERE product_id = ANY(:product_ids)
-              AND tag_id = :excluded_tag_id
+              AND tag_id = :tag_id
             """
 
             result = await session.execute(
                 text(query),
                 {
                     "product_ids": product_ids,
-                    "excluded_tag_id": NEXT_DAY_DELIVERY_ONLY_TAG_ID,
+                    "tag_id": NEXT_DAY_DELIVERY_ONLY_TAG_ID,
                 },
             )
 
             return {row.product_id for row in result.fetchall()}
-
-    def _apply_inventory_to_products(
-        self,
-        products: List[EnhancedProductSchema],
-        inventory_dict: Dict[int, List[Dict]],
-        is_nearby_store: bool = True,
-        excluded_product_ids: set = set(),
-    ) -> List[EnhancedProductSchema]:
-        """Apply inventory data to products efficiently"""
-        if excluded_product_ids is None:
-            excluded_product_ids = set()
-
-        for product in products:
-            # If product is excluded and using default stores, set inventory to null
-            if not is_nearby_store and product.id in excluded_product_ids:
-                product.inventory = None
-                continue
-
-            if product.id in inventory_dict:
-                inventory_list = []
-                for inv_data in inventory_dict[product.id]:
-                    inventory_list.append(
-                        InventoryInfoSchema(
-                            store_id=inv_data["store_id"],
-                            in_stock=inv_data["in_stock"],
-                            quantity_available=inv_data["quantity_available"],
-                            quantity_on_hold=inv_data["quantity_on_hold"],
-                            quantity_reserved=inv_data["quantity_reserved"],
-                            is_nearby_store=is_nearby_store,
-                        )
-                    )
-                product.inventory = inventory_list
-
-        return products
-
-    def _apply_cached_inventory(
-        self,
-        products: List[EnhancedProductSchema],
-        cached_inventory: Dict[int, List[Dict]],
-        is_nearby_store: bool = True,
-    ) -> List[EnhancedProductSchema]:
-        """Apply cached inventory data to products"""
-        # Note: excluded_product_ids are not cached, so we need to recalculate
-        excluded_product_ids = set()
-        if not is_nearby_store:
-            # This will be recalculated, but for cached data we accept this tradeoff
-            product_ids = [p.id for p in products if p.id is not None]
-            import asyncio
-
-            excluded_product_ids = asyncio.create_task(
-                self._get_excluded_products(product_ids)
-            )
-            try:
-                excluded_product_ids = asyncio.get_event_loop().run_until_complete(
-                    excluded_product_ids
-                )
-            except Exception:
-                excluded_product_ids = set()
-
-        return self._apply_inventory_to_products(
-            products, cached_inventory, is_nearby_store, excluded_product_ids
-        )
-
-    async def add_inventory_to_single_product(
-        self, product: EnhancedProductSchema, store_id: int
-    ) -> EnhancedProductSchema:
-        """Add inventory to single product with caching"""
-        cache_key = f"inventory:single:{product.id}:{store_id}"
-
-        # Try cache first
-        cached_inventory = await self.cache.get(cache_key)
-        if cached_inventory:
-            if cached_inventory:
-                product.inventory = [InventoryInfoSchema(**cached_inventory)]
-            return product
-
-        async with AsyncSessionLocal() as session:
-            query = """
-            SELECT
-                store_id,
-                quantity_available,
-                quantity_on_hold,
-                quantity_reserved
-            FROM inventory
-            WHERE product_id = :product_id
-              AND store_id = :store_id
-            """
-
-            result = await session.execute(
-                text(query), {"product_id": product.id, "store_id": store_id}
-            )
-
-            row = result.fetchone()
-            if row:
-                inventory_data = {
-                    "store_id": row.store_id,
-                    "in_stock": row.quantity_available > 0,
-                    "quantity_available": row.quantity_available,
-                    "quantity_on_hold": row.quantity_on_hold,
-                    "quantity_reserved": row.quantity_reserved,
-                }
-
-                # Cache for 2 minutes
-                await self.cache.set(cache_key, inventory_data, ttl=120)
-
-                product.inventory = [InventoryInfoSchema(**inventory_data)]
-
-        return product
-
-    async def preload_inventory_cache(
-        self, product_ids: List[int], store_ids: List[int]
-    ) -> None:
-        """Preload inventory cache for common queries"""
-        # Split into batches to avoid large queries
-        batch_size = 100
-        tasks = []
-
-        for i in range(0, len(product_ids), batch_size):
-            batch_product_ids = product_ids[i : i + batch_size]
-            task = self._preload_batch(batch_product_ids, store_ids)
-            tasks.append(task)
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def _preload_batch(
-        self, product_ids: List[int], store_ids: List[int]
-    ) -> None:
-        """Preload a batch of inventory data"""
-        try:
-            cache_key = f"inventory:bulk:{','.join(map(str, sorted(product_ids)))}:{','.join(map(str, sorted(store_ids)))}"
-
-            # Skip if already cached
-            if await self.cache.get(cache_key):
-                return
-
-            inventory_dict = await self._get_bulk_inventory(product_ids, store_ids)
-            await self.cache.set(cache_key, inventory_dict, ttl=120)
-
-        except Exception:
-            # Log error but don't fail the request
-            pass
