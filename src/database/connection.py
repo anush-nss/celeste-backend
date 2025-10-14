@@ -44,7 +44,24 @@ def initialize_firebase():
             )
 
 
-engine = create_async_engine(DATABASE_URL, echo=LOG_LEVEL == "DEBUG")
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=LOG_LEVEL == "DEBUG",
+    # Connection pool settings
+    pool_size=settings.DB_POOL_SIZE,  # Number of permanent connections
+    max_overflow=settings.DB_MAX_OVERFLOW,  # Additional connections that can be created
+    pool_timeout=settings.DB_POOL_TIMEOUT,  # Seconds to wait for connection from pool
+    pool_recycle=settings.DB_POOL_RECYCLE,  # Recycle connections after N seconds (important for Cloud SQL)
+    pool_pre_ping=True,  # Validate connections before using them (prevents "connection is closed")
+    # asyncpg-specific settings
+    connect_args={
+        "command_timeout": settings.DB_COMMAND_TIMEOUT,  # Query timeout in seconds
+        "server_settings": {
+            "jit": "off",  # Disable JIT for better performance on short queries
+            "application_name": "celeste_api",  # For monitoring
+        },
+    },
+)
 
 AsyncSessionLocal = async_sessionmaker(
     engine, expire_on_commit=False, class_=AsyncSession

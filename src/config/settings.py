@@ -18,6 +18,11 @@ class Settings:
 
     # Database
     DATABASE_URL = os.getenv("DATABASE_URL", None)
+    DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
+    DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+    DB_POOL_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+    DB_POOL_RECYCLE = int(os.getenv("DB_POOL_RECYCLE", "3600"))
+    DB_COMMAND_TIMEOUT = int(os.getenv("DB_COMMAND_TIMEOUT", "60"))
     FIREBASE_SERVICE_ACCOUNT_PATH = os.getenv(
         "FIREBASE_SERVICE_ACCOUNT_PATH", "service-account.json"
     )
