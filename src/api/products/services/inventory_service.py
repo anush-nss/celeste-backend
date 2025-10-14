@@ -4,11 +4,7 @@ from typing import Dict, List
 from sqlalchemy import text
 
 from src.api.products.models import EnhancedProductSchema, InventoryInfoSchema
-from src.config.constants import (
-    DEFAULT_SEARCH_RADIUS_KM,
-    DEFAULT_STORE_IDS,
-    NEXT_DAY_DELIVERY_ONLY_TAG_ID,
-)
+from src.config.constants import NEXT_DAY_DELIVERY_ONLY_TAG_ID
 from src.database.connection import AsyncSessionLocal
 from src.shared.cache_service import cache_service
 from src.shared.error_handler import ErrorHandler
@@ -192,68 +188,6 @@ class ProductInventoryService:
         return self._apply_inventory_to_products(
             products, cached_inventory, is_nearby_store, excluded_product_ids
         )
-
-    async def get_stores_by_location(
-        self,
-        latitude: float,
-        longitude: float,
-        radius_km: float = DEFAULT_SEARCH_RADIUS_KM,
-    ) -> tuple[List[int], bool]:
-        """
-        Get stores near location using spatial query with caching
-
-        Returns: (store_ids, is_nearby_store)
-            - store_ids: List of store IDs
-            - is_nearby_store: True if stores are within radius, False if using fallback defaults
-        """
-        cache_key = f"stores:location:{latitude:.6f}:{longitude:.6f}:{radius_km}"
-
-        # Try cache first (cache for 10 minutes)
-        cached_result = await self.cache.get(cache_key)
-        if cached_result:
-            return cached_result
-
-        async with AsyncSessionLocal() as session:
-            # Advanced spatial query using PostGIS functions
-            query = """
-            SELECT id
-            FROM stores
-            WHERE is_active = true
-              AND ST_DWithin(
-                  ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
-                  ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
-                  :radius_meters
-              )
-            ORDER BY ST_Distance(
-                ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
-                ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography
-            )
-            LIMIT 20
-            """
-
-            result = await session.execute(
-                text(query),
-                {
-                    "latitude": latitude,
-                    "longitude": longitude,
-                    "radius_meters": radius_km * 1000,  # Convert km to meters
-                },
-            )
-
-            store_ids = [row.id for row in result.fetchall()]
-
-            # If no stores found, use default stores as fallback
-            is_nearby_store = True
-            if not store_ids and DEFAULT_STORE_IDS:
-                store_ids = DEFAULT_STORE_IDS
-                is_nearby_store = False
-
-            result_tuple = (store_ids, is_nearby_store)
-
-            # Cache result for 10 minutes
-            await self.cache.set(cache_key, result_tuple, ttl=600)
-
-            return result_tuple
 
     async def add_inventory_to_single_product(
         self, product: EnhancedProductSchema, store_id: int

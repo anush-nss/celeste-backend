@@ -3,7 +3,11 @@ from typing import List
 from sqlalchemy import update
 from sqlalchemy.future import select
 
-from src.api.users.models import AddressSchema, UpdateAddressSchema
+from src.api.users.models import (
+    AddressSchema,
+    AddressWithDeliverySchema,
+    UpdateAddressSchema,
+)
 from src.database.connection import AsyncSessionLocal
 from src.database.models.address import Address
 from src.shared.error_handler import ErrorHandler
@@ -17,9 +21,31 @@ class UserAddressService:
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
 
+    async def _check_delivery_availability(
+        self, latitude: float, longitude: float
+    ) -> dict:
+        """Check if on-demand delivery is available from nearby stores"""
+        from src.api.stores.service import StoreService
+
+        store_service = StoreService()
+        store_ids, is_nearby_store = await store_service.get_store_ids_by_location(
+            latitude=latitude, longitude=longitude
+        )
+
+        # Cast to List[int] for type safety
+        if isinstance(store_ids, list) and store_ids:
+            stores_count = len(store_ids)
+        else:
+            stores_count = 0
+
+        return {
+            "ondemand_delivery_available": is_nearby_store and stores_count > 0,
+            "nearby_stores_count": stores_count if is_nearby_store else 0,
+        }
+
     async def add_address(
         self, user_id: str, address_data: AddressSchema
-    ) -> AddressSchema:
+    ) -> AddressWithDeliverySchema:
         """Add a new address for a user"""
         async with AsyncSessionLocal() as session:
             # If new address is default, atomically set all other addresses for this user to not default
@@ -40,7 +66,16 @@ class UserAddressService:
             session.add(new_address)
             await session.commit()
             await session.refresh(new_address)
-            return AddressSchema.model_validate(new_address)
+
+            # Build response with delivery info if this is a default address
+            address_dict = AddressSchema.model_validate(new_address).model_dump()
+            if address_data.is_default:
+                delivery_info = await self._check_delivery_availability(
+                    address_data.latitude, address_data.longitude
+                )
+                address_dict.update(delivery_info)
+
+            return AddressWithDeliverySchema(**address_dict)
 
     async def get_addresses(self, user_id: str) -> List[AddressSchema]:
         """Get all addresses for a user"""
@@ -109,7 +144,7 @@ class UserAddressService:
 
     async def set_default_address(
         self, user_id: str, address_id: int
-    ) -> AddressSchema | None:
+    ) -> AddressWithDeliverySchema | None:
         """Set an address as the default for a user"""
         async with AsyncSessionLocal() as session:
             # Atomically unset current default address and set new default in one transaction
@@ -144,4 +179,12 @@ class UserAddressService:
 
             # Refresh the specific address we're returning
             await session.refresh(address)
-            return AddressSchema.model_validate(address)
+
+            # Build response with delivery info
+            address_dict = AddressSchema.model_validate(address).model_dump()
+            delivery_info = await self._check_delivery_availability(
+                address.latitude, address.longitude
+            )
+            address_dict.update(delivery_info)
+
+            return AddressWithDeliverySchema(**address_dict)

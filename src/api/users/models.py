@@ -34,6 +34,19 @@ class AddressSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AddressWithDeliverySchema(AddressSchema):
+    """Address schema with delivery capability information"""
+
+    ondemand_delivery_available: Optional[bool] = Field(
+        None,
+        description="Whether on-demand delivery is available from nearby stores",
+    )
+    nearby_stores_count: Optional[int] = Field(
+        None,
+        description="Number of nearby stores found within delivery radius",
+    )
+
+
 class UpdateAddressSchema(BaseModel):
     address: Optional[
         Annotated[

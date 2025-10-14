@@ -240,8 +240,14 @@ async def get_all_stores(
     # If location AND radius provided, use location-based search for filtering
     # If only location provided, use get_all_stores with distance calculations
     if latitude is not None and longitude is not None and radius is not None:
-        stores_list = await store_service.get_stores_by_location(query_params)
-        # get_stores_by_location returns List[Dict[str, Any]], so return it directly
+        stores_list, is_nearby_store = await store_service.get_store_ids_by_location(
+            latitude=latitude,
+            longitude=longitude,
+            radius_km=radius,
+            return_full_stores=True,
+            include_distance=include_distance,
+        )
+        # get_store_ids_by_location returns List[Dict[str, Any]], so return it directly
         return success_response(stores_list, status_code=status.HTTP_200_OK)
     else:
         result = await store_service.get_all_stores(query_params)
@@ -291,18 +297,13 @@ async def get_nearby_stores(
     - **Efficient**: Uses bounding box filtering for optimal coverage
     - **Sorted**: Results ordered by distance
     """
-    query_params = StoreQuerySchema(
+    result, is_nearby_store = await store_service.get_store_ids_by_location(
         latitude=latitude,
         longitude=longitude,
-        radius=radius,
-        limit=limit,
-        is_active=True,  # Only active stores for nearby search
-        tags=tags,
+        radius_km=radius,
+        return_full_stores=True,
         include_distance=include_distance,
-        include_tags=include_tags,
     )
-
-    result = await store_service.get_stores_by_location(query_params)
     return success_response(result, status_code=status.HTTP_200_OK)
 
 

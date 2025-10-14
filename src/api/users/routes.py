@@ -8,6 +8,7 @@ from src.api.orders.service import OrderService
 from src.api.users.models import (
     AddCartItemSchema,
     AddressSchema,
+    AddressWithDeliverySchema,
     CreateCartSchema,
     MultiCartCheckoutSchema,
     ShareCartSchema,
@@ -70,7 +71,11 @@ async def update_user_profile(
 
 
 # Address Management Endpoints
-@users_router.post("/me/addresses", summary="Add a new address for the current user")
+@users_router.post(
+    "/me/addresses",
+    summary="Add a new address for the current user",
+    response_model=AddressWithDeliverySchema,
+)
 async def add_address(
     address_data: AddressSchema,
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
@@ -164,6 +169,7 @@ async def delete_address(
 @users_router.put(
     "/me/addresses/{address_id}/set_default",
     summary="Set a specific address as default for the current user",
+    response_model=AddressWithDeliverySchema,
 )
 async def set_default_address(
     address_id: int,

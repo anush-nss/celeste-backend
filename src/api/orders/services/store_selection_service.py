@@ -2,7 +2,7 @@
 Store selection service with automatic selection and splitting logic
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from sqlalchemy import and_, text
 from sqlalchemy.future import select
@@ -409,23 +409,20 @@ class StoreSelectionService:
         Returns dict with per-product fulfillment info.
         """
         # Reuse StoreService to get nearby stores
-        from src.api.stores.models import StoreQuerySchema
         from src.api.stores.service import StoreService
 
         store_service = StoreService()
-        query_params = StoreQuerySchema(
-            latitude=latitude,
-            longitude=longitude,
-            radius=radius_km,
-            is_active=True,
-            include_distance=True,
-            limit=10,
-            tags=None,
-            include_tags=False,
-        )
 
         # Get stores sorted by distance (closest first)
-        stores_data = await store_service.get_stores_by_location(query_params)
+        stores_data, is_nearby_store = await store_service.get_store_ids_by_location(
+            latitude=latitude,
+            longitude=longitude,
+            radius_km=radius_km,
+            return_full_stores=True, 
+            include_distance=True,
+        )
+        stores_data = cast(Optional[List[Dict[str, Any]]], stores_data)
+        
 
         if not stores_data:
             return {
