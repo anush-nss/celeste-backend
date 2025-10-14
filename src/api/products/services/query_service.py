@@ -27,11 +27,14 @@ class ProductQueryService:
         query_params: ProductQuerySchema,
         customer_tier: Optional[int] = None,
         store_ids: Optional[List[int]] = None,
+        is_nearby_store: bool = True,
     ) -> PaginatedProductsResponse:
         """Execute comprehensive product query with integrated pricing and inventory data"""
 
         # Generate cache key
-        cache_key = self._generate_cache_key(query_params, customer_tier, store_ids)
+        cache_key = self._generate_cache_key(
+            query_params, customer_tier, store_ids, is_nearby_store
+        )
 
         # Try cache first
         cached_result = await self.cache.get(cache_key)
@@ -49,7 +52,9 @@ class ProductQueryService:
             rows = result.fetchall()
 
             # Process results efficiently
-            products, pagination = await self._process_results_fast(rows, query_params)
+            products, pagination = await self._process_results_fast(
+                rows, query_params, is_nearby_store
+            )
 
             response = PaginatedProductsResponse(
                 products=products, pagination=pagination
@@ -263,7 +268,10 @@ class ProductQueryService:
         return sql_query, params
 
     async def _process_results_fast(
-        self, rows: Sequence[Any], query_params: ProductQuerySchema
+        self,
+        rows: Sequence[Any],
+        query_params: ProductQuerySchema,
+        is_nearby_store: bool = True,
     ) -> tuple[List[EnhancedProductSchema], Dict]:
         """Fast result processing without ORM overhead"""
 
@@ -287,7 +295,7 @@ class ProductQueryService:
 
         for i in range(0, len(actual_rows), batch_size):
             batch = actual_rows[i : i + batch_size]
-            task = self._process_row_batch(batch, query_params)
+            task = self._process_row_batch(batch, query_params, is_nearby_store)
             tasks.append(task)
 
         if tasks:
@@ -309,9 +317,20 @@ class ProductQueryService:
         return products, pagination
 
     async def _process_row_batch(
-        self, rows: Sequence[Any], query_params: ProductQuerySchema
+        self,
+        rows: Sequence[Any],
+        query_params: ProductQuerySchema,
+        is_nearby_store: bool = True,
     ) -> List[EnhancedProductSchema]:
         """Process a batch of rows efficiently"""
+
+        # If using default stores (not nearby), check for excluded products
+        excluded_product_ids = set()
+        if not is_nearby_store and query_params.include_inventory:
+            product_ids = [row.id for row in rows if hasattr(row, "id")]
+            if product_ids:
+                excluded_product_ids = await self._get_excluded_products(product_ids)
+
         products = []
 
         for row in rows:
@@ -396,42 +415,45 @@ class ProductQueryService:
                 product_data["product_tags"] = tags
 
             # Parse inventory efficiently
-            if (
-                query_params.include_inventory
-                and hasattr(row, "inventory_data")
-                and row.inventory_data
-            ):
-                inventory = []
-                for inv_data in row.inventory_data.split(";"):
-                    if inv_data:
-                        parts = inv_data.split("|")
-                        if len(parts) >= 4:
-                            try:
-                                store_id = int(parts[0]) if parts[0].strip() else None
-                                quantity_available = (
-                                    int(parts[1]) if parts[1].strip() else 0
-                                )
-                                quantity_on_hold = (
-                                    int(parts[2]) if parts[2].strip() else 0
-                                )
-                                quantity_reserved = (
-                                    int(parts[3]) if parts[3].strip() else 0
-                                )
-
-                                if store_id is not None:
-                                    inventory.append(
-                                        {
-                                            "store_id": store_id,
-                                            "in_stock": quantity_available > 0,
-                                            "quantity_available": quantity_available,
-                                            "quantity_on_hold": quantity_on_hold,
-                                            "quantity_reserved": quantity_reserved,
-                                        }
+            if query_params.include_inventory:
+                # Check if product is excluded when using default stores
+                if not is_nearby_store and row.id in excluded_product_ids:
+                    product_data["inventory"] = None
+                elif hasattr(row, "inventory_data") and row.inventory_data:
+                    inventory = []
+                    for inv_data in row.inventory_data.split(";"):
+                        if inv_data:
+                            parts = inv_data.split("|")
+                            if len(parts) >= 4:
+                                try:
+                                    store_id = (
+                                        int(parts[0]) if parts[0].strip() else None
                                     )
-                            except (ValueError, IndexError):
-                                # Skip malformed inventory data
-                                continue
-                product_data["inventory"] = inventory
+                                    quantity_available = (
+                                        int(parts[1]) if parts[1].strip() else 0
+                                    )
+                                    quantity_on_hold = (
+                                        int(parts[2]) if parts[2].strip() else 0
+                                    )
+                                    quantity_reserved = (
+                                        int(parts[3]) if parts[3].strip() else 0
+                                    )
+
+                                    if store_id is not None:
+                                        inventory.append(
+                                            {
+                                                "store_id": store_id,
+                                                "in_stock": quantity_available > 0,
+                                                "quantity_available": quantity_available,
+                                                "quantity_on_hold": quantity_on_hold,
+                                                "quantity_reserved": quantity_reserved,
+                                                "is_nearby_store": is_nearby_store,
+                                            }
+                                        )
+                                except (ValueError, IndexError):
+                                    # Skip malformed inventory data
+                                    continue
+                    product_data["inventory"] = inventory
 
             # Parse pricing efficiently
             if query_params.include_pricing and hasattr(row, "final_price"):
@@ -476,11 +498,38 @@ class ProductQueryService:
 
         return products
 
+    async def _get_excluded_products(self, product_ids: List[int]) -> set:
+        """Get products that have the NEXT_DAY_DELIVERY_ONLY_TAG_ID"""
+        from src.config.constants import NEXT_DAY_DELIVERY_ONLY_TAG_ID
+        from src.database.connection import AsyncSessionLocal
+
+        if not product_ids:
+            return set()
+
+        async with AsyncSessionLocal() as session:
+            query = text("""
+                SELECT DISTINCT product_id
+                FROM product_tags
+                WHERE product_id = ANY(:product_ids)
+                  AND tag_id = :excluded_tag_id
+            """)
+
+            result = await session.execute(
+                query,
+                {
+                    "product_ids": product_ids,
+                    "excluded_tag_id": NEXT_DAY_DELIVERY_ONLY_TAG_ID,
+                },
+            )
+
+            return {row.product_id for row in result.fetchall()}
+
     def _generate_cache_key(
         self,
         query_params: ProductQuerySchema,
         customer_tier: Optional[int],
         store_ids: Optional[List[int]],
+        is_nearby_store: bool = True,
     ) -> str:
         """Generate cache key for query parameters"""
         key_parts = [
@@ -493,6 +542,7 @@ class ProductQueryService:
             f"inventory_{query_params.include_inventory}",
             f"tier_{customer_tier or 0}",
             f"stores_{','.join(map(str, store_ids or []))}",
+            f"nearby_{is_nearby_store}",
             f"cat_ids_{','.join(map(str, query_params.category_ids or []))}",
             f"tags_{','.join(query_params.tags or [])}",
             f"min_price_{query_params.min_price or 0}",

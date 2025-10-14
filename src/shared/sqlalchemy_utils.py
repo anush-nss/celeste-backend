@@ -62,10 +62,11 @@ def sqlalchemy_to_dict(
             result[rel_name] = None
             continue
 
+        # Check if the relationship is actually loaded (to avoid lazy loading in async context)
+        is_loaded = _is_relationship_loaded(obj, rel_name)
+
         # Only include if specifically requested or if it's already loaded
-        should_include = rel_name in include_relationships or (
-            not include_relationships and _is_relationship_loaded(obj, rel_name)
-        )
+        should_include = (rel_name in include_relationships or not include_relationships) and is_loaded
 
         if should_include:
             try:
@@ -107,13 +108,25 @@ def sqlalchemy_to_dict(
 def _is_relationship_loaded(obj: DeclarativeBase, relationship_name: str) -> bool:
     """
     Check if a relationship is already loaded without triggering lazy loading.
+    Uses SQLAlchemy's inspection API for accurate detection.
     """
     try:
-        # Check if the relationship attribute is in the object's __dict__
-        # This means it's been loaded and won't trigger a database query
+        # Use SQLAlchemy's inspection API to check if relationship is loaded
+        obj_inspect = inspect(obj)
+
+        # Check if the relationship is in the unloaded set
+        # If it's unloaded, it hasn't been accessed yet
+        if relationship_name in obj_inspect.unloaded:
+            return False
+
+        # If not in unloaded, check if it's in the object's dict (actually loaded)
         return relationship_name in obj.__dict__
     except Exception:
-        return False
+        # Fallback to checking __dict__ if inspection fails
+        try:
+            return relationship_name in obj.__dict__
+        except Exception:
+            return False
 
 
 def safe_model_validate(

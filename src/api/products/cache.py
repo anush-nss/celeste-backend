@@ -27,6 +27,10 @@ class ProductsCache:
         """Generate cache key for product data"""
         return self.cache.generate_key(self.prefix, product_id)
 
+    def get_delivery_product_key(self) -> str:
+        """Generate cache key for the delivery product"""
+        return self.cache.generate_key(self.prefix, "delivery_product")
+
     # Cache operations with domain-specific TTL
     def get_product(self, product_id: str) -> Optional[dict]:
         """Get cached product data"""
@@ -37,6 +41,17 @@ class ProductsCache:
         """Cache product data with configured TTL"""
         key = self.get_product_key(product_id)
         ttl = cache_config.get_ttl("products")
+        return self.cache.set(key, product_data, ttl_seconds=ttl)
+
+    def get_delivery_product(self) -> Optional[dict]:
+        """Get cached delivery product data"""
+        key = self.get_delivery_product_key()
+        return self.cache.get(key)
+
+    def set_delivery_product(self, product_data: dict) -> bool:
+        """Cache the delivery product with a static TTL"""
+        key = self.get_delivery_product_key()
+        ttl = cache_config.get_ttl("static")
         return self.cache.set(key, product_data, ttl_seconds=ttl)
 
     # Cache invalidation methods

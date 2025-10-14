@@ -1,14 +1,24 @@
+from datetime import datetime
 from typing import Any, Dict, List, Union
 
 from fastapi import APIRouter, HTTPException, status
 from google.cloud.firestore import SERVER_TIMESTAMP
 
 from src.api.auth.service import AuthService
+from src.integrations.odoo import (
+    OdooService,
+    OdooTestRequest,
+    OdooTestResponse,
+    OdooConnectionResponse,
+    OdooProductResponse,
+)
+from src.integrations.odoo.models import OdooCustomerResponse
 from src.shared.database import get_async_db
 from src.shared.responses import success_response
 
 dev_router = APIRouter(prefix="/dev", tags=["Development"])
 auth_service = AuthService()
+odoo_service = OdooService()
 
 
 @dev_router.post("/auth/token", summary="Generate dev ID token for existing user")
@@ -196,4 +206,166 @@ async def clear_collection(collection: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to clear collection: {str(e)}",
+        )
+
+
+@dev_router.post("/odoo/test", summary="Test Odoo ERP connection and read product")
+async def test_odoo_connection(request: OdooTestRequest):
+    """
+    Test connection to Odoo ERP and optionally read product data.
+
+    Test Types:
+    - **connection**: Test connection and authentication only
+    - **product**: Test connection and read product(s)
+
+    Example request bodies:
+
+    Connection test:
+    ```json
+    {
+        "test_type": "connection"
+    }
+    ```
+
+    Product test (first product):
+    ```json
+    {
+        "test_type": "product",
+        "limit": 1
+    }
+    ```
+
+    Product test (specific product):
+    ```json
+    {
+        "test_type": "product",
+        "product_id": 123
+    }
+    ```
+
+    Customer creation test:
+    ```json
+    {
+        "test_type": "customer",
+        "customer_data": {
+            "name": "John Doe",
+            "email": "john.doe@example.com",
+            "phone": "+94771234567",
+            "mobile": "+94771234567",
+            "street": "123 Main Street",
+            "city": "Colombo",
+            "zip": "00100"
+        }
+    }
+    ```
+    """
+    try:
+        timestamp = datetime.utcnow().isoformat()
+
+        if request.test_type == "connection":
+            # Test connection only
+            connection_result = odoo_service.test_connection()
+
+            response = OdooTestResponse(
+                test_type="connection",
+                connection=OdooConnectionResponse(**connection_result),
+                products=None,
+                customer=None,
+                timestamp=timestamp,
+                success=connection_result["status"] == "success",
+            )
+
+            return success_response(response.model_dump())
+
+        elif request.test_type == "product":
+            # Test connection and read product
+            connection_result = odoo_service.test_connection()
+
+            if connection_result["status"] != "success":
+                # Connection failed, return connection error
+                response = OdooTestResponse(
+                    test_type="product",
+                    connection=OdooConnectionResponse(**connection_result),
+                    products=None,
+                    customer=None,
+                    timestamp=timestamp,
+                    success=False,
+                )
+                return success_response(response.model_dump())
+
+            # Connection successful, read product
+            product_result = odoo_service.read_product(
+                product_id=request.product_id, limit=request.limit
+            )
+
+            response = OdooTestResponse(
+                test_type="product",
+                connection=OdooConnectionResponse(**connection_result),
+                products=OdooProductResponse(**product_result)
+                if product_result
+                else None,
+                customer=None,
+                timestamp=timestamp,
+                success=(
+                    connection_result["status"] == "success"
+                    and product_result["status"] == "success"
+                ),
+            )
+
+            return success_response(response.model_dump())
+
+        elif request.test_type == "customer":
+            # Test connection and create customer
+            connection_result = odoo_service.test_connection()
+
+            if connection_result["status"] != "success":
+                # Connection failed, return connection error
+                response = OdooTestResponse(
+                    test_type="customer",
+                    connection=OdooConnectionResponse(**connection_result),
+                    products=None,
+                    customer=None,
+                    timestamp=timestamp,
+                    success=False,
+                )
+                return success_response(response.model_dump())
+
+            # Connection successful, validate customer_data
+            if not request.customer_data:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="customer_data is required for customer test type",
+                )
+
+            # Create customer
+            customer_result = odoo_service.create_customer(
+                request.customer_data.model_dump()
+            )
+
+            response = OdooTestResponse(
+                test_type="customer",
+                connection=OdooConnectionResponse(**connection_result),
+                products=None,
+                customer=OdooCustomerResponse(**customer_result)
+                if customer_result
+                else None,
+                timestamp=timestamp,
+                success=(
+                    connection_result["status"] == "success"
+                    and customer_result["status"] == "success"
+                ),
+            )
+
+            return success_response(response.model_dump())
+
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid test_type: {request.test_type}. Use 'connection', 'product', or 'customer'",
+            )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Odoo test failed: {str(e)}",
         )

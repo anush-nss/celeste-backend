@@ -13,11 +13,24 @@ class DiscountType(str, Enum):
 
 class OrderStatus(str, Enum):
     PENDING = "pending"
+    CONFIRMED = "confirmed"
     PROCESSING = "processing"
+    PACKED = "packed"
     SHIPPED = "shipped"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
-    CONFIRMED = "confirmed"
+
+
+class FulfillmentMode(str, Enum):
+    PICKUP = "pickup"
+    DELIVERY = "delivery"
+    FAR_DELIVERY = "far_delivery"
+
+
+class OdooSyncStatus(str, Enum):
+    PENDING = "pending"
+    SYNCED = "synced"
+    FAILED = "failed"
 
 
 # Default fallback tier when no default tier is found in database
@@ -68,6 +81,13 @@ MAX_SEARCH_RADIUS_KM = 50.0
 DEFAULT_STORES_LIMIT = 20
 MAX_STORES_LIMIT = 100
 
+# Default fallback stores for distant users (when no stores found in radius)
+DEFAULT_STORE_IDS = [1]
+
+# Products with this tag ID will NOT show inventory from default stores
+# These are typically next-day delivery products that can't serve distant users
+NEXT_DAY_DELIVERY_ONLY_TAG_ID = 1
+
 # Geospatial constants (removed geohash functionality)
 
 # Coordinate validation
@@ -93,6 +113,10 @@ class CartStatus(str, Enum):
 class CartUserRole(str, Enum):
     OWNER = "owner"
     VIEWER = "viewer"
+
+
+# Odoo-related constants
+DELIVERY_PRODUCT_ODOO_ID = 20906
 
 
 # Cache invalidation scope constants

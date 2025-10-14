@@ -10,12 +10,13 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     text,
 )
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.config.constants import OrderStatus
+from src.config.constants import FulfillmentMode, OdooSyncStatus, OrderStatus
 from src.database.base import Base
 
 if TYPE_CHECKING:
@@ -70,6 +71,9 @@ class Order(Base):
         ),
         # Recent orders optimization
         Index("idx_orders_recent", "created_at", "status"),
+        # Odoo sync status tracking
+        Index("idx_orders_odoo_sync_status", "odoo_sync_status"),
+        Index("idx_orders_odoo_failed_syncs", "odoo_sync_status", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -79,10 +83,52 @@ class Order(Base):
     store_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("stores.id"), nullable=False
     )
-    total_amount: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
-    status: Mapped[OrderStatus] = mapped_column(
-        Enum(OrderStatus), default=OrderStatus.PENDING, nullable=False
+    address_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("addresses.id"), nullable=True
     )
+    total_amount: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
+    delivery_charge: Mapped[Decimal] = mapped_column(
+        DECIMAL(10, 2), nullable=False, server_default=text("'0.00'")
+    )
+    fulfillment_mode: Mapped[str] = mapped_column(
+        Enum(
+            FulfillmentMode,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="fulfillmentmode",
+        ),
+        default=FulfillmentMode.PICKUP.value,
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        Enum(
+            OrderStatus,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="orderstatus",
+        ),
+        default=OrderStatus.PENDING.value,
+        nullable=False,
+    )
+
+    # Odoo ERP sync fields
+    odoo_sync_status: Mapped[str] = mapped_column(
+        Enum(
+            OdooSyncStatus,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="odoosyncstatus",
+        ),
+        default=OdooSyncStatus.PENDING.value,
+        nullable=False,
+    )
+    odoo_order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    odoo_customer_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    odoo_sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    odoo_synced_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    odoo_last_retry_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("NOW()"), nullable=False
     )
@@ -113,9 +159,11 @@ class OrderItem(Base):
         Index("idx_order_items_order_id", "order_id"),
         Index("idx_order_items_product_id", "product_id"),
         Index("idx_order_items_source_cart_id", "source_cart_id"),
+        Index("idx_order_items_store_id", "store_id"),
         # Composite indexes for order analysis
         Index("idx_order_items_order_product", "order_id", "product_id"),
         Index("idx_order_items_product_order", "product_id", "order_id"),
+        Index("idx_order_items_order_store", "order_id", "store_id"),
         # Pricing and quantity analysis
         Index("idx_order_items_unit_price", "unit_price"),
         Index("idx_order_items_total_price", "total_price"),
@@ -149,6 +197,9 @@ class OrderItem(Base):
     )
     product_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("products.id"), nullable=False
+    )
+    store_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("stores.id"), nullable=False
     )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)

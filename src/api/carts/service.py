@@ -1,4 +1,3 @@
-import math
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -40,149 +39,6 @@ from src.shared.exceptions import (
 
 class CartService:
     @staticmethod
-    def _calculate_delivery_charge(store_deliveries: List[Dict]) -> Decimal:
-        """
-        Calculate delivery charge based on stores and their distances.
-        For prototyping: use max distance store and calculate base on that.
-        """
-        if not store_deliveries:
-            return Decimal("0.00")
-
-        # Base delivery charge
-        base_charge = Decimal("50.00")  # Rs. 50 base charge
-        rate_per_km = Decimal("15.00")  # Rs. 15 per km
-
-        max_distance = Decimal("0.00")
-
-        for delivery in store_deliveries:
-            # Calculate distance using Haversine formula
-            store_lat = delivery["store_lat"]
-            store_lng = delivery["store_lng"]
-            delivery_lat = delivery["delivery_lat"]
-            delivery_lng = delivery["delivery_lng"]
-
-            # Convert to radians
-            lat1, lng1 = math.radians(store_lat), math.radians(store_lng)
-            lat2, lng2 = math.radians(delivery_lat), math.radians(delivery_lng)
-
-            # Haversine formula
-            dlat = lat2 - lat1
-            dlng = lng2 - lng1
-            a = (
-                math.sin(dlat / 2) ** 2
-                + math.cos(lat1) * math.cos(lat2) * math.sin(dlng / 2) ** 2
-            )
-            c = 2 * math.asin(math.sqrt(a))
-            distance_km = Decimal(str(6371 * c))  # Earth radius in km
-
-            max_distance = max(max_distance, distance_km)
-
-        # Calculate total charge: base + (max_distance * rate)
-        total_charge = base_charge + (max_distance * rate_per_km)
-
-        return total_charge.quantize(Decimal("0.01"))
-
-    @staticmethod
-    async def _check_inventory_with_location(
-        session, cart_groups: List, location_obj, location
-    ):
-        """
-        Optimized inventory check: directly use location object coordinates, no extra queries.
-        Returns InventoryValidationSummary with availability details.
-        """
-        from src.api.orders.services.store_selection_service import (
-            StoreSelectionService,
-        )
-        from src.api.users.models import (
-            InventoryStatusSchema,
-            InventoryValidationSummary,
-        )
-
-        # Get coordinates directly from location_obj (already fetched in validation)
-        latitude = (
-            float(location_obj.latitude)
-            if location_obj and hasattr(location_obj, "latitude")
-            else None
-        )
-        longitude = (
-            float(location_obj.longitude)
-            if location_obj and hasattr(location_obj, "longitude")
-            else None
-        )
-
-        if not latitude or not longitude:
-            # Cannot determine location - return empty validation
-            return InventoryValidationSummary(
-                can_fulfill_all=False,
-                items_checked=0,
-                items_available=0,
-                items_out_of_stock=0,
-            )
-
-        # Prepare cart items for inventory check
-        cart_items = []
-        for group in cart_groups:
-            for item in group.items:
-                cart_items.append(
-                    {"product_id": item.product_id, "quantity": item.quantity}
-                )
-
-        # Use StoreSelectionService to check inventory at nearby stores
-        store_selection_service = StoreSelectionService()
-        fulfillment_result = (
-            await store_selection_service.check_inventory_at_nearby_stores(
-                latitude=latitude,
-                longitude=longitude,
-                cart_items=cart_items,
-                session=session,
-                radius_km=50.0,
-            )
-        )
-
-        # Map fulfillment info back to cart items
-        fulfillment_by_product = {
-            item["product_id"]: item for item in fulfillment_result.get("items", [])
-        }
-
-        items_available = 0
-        items_out_of_stock = 0
-
-        for group in cart_groups:
-            for item in group.items:
-                fulfillment = fulfillment_by_product.get(item.product_id)
-
-                if fulfillment:
-                    item.inventory_status = InventoryStatusSchema(
-                        can_fulfill=fulfillment["can_fulfill"],
-                        quantity_requested=fulfillment["quantity_requested"],
-                        quantity_available=fulfillment["quantity_available"],
-                        store_id=fulfillment.get("store_id"),
-                        store_name=fulfillment.get("store_name"),
-                    )
-
-                    if fulfillment["can_fulfill"]:
-                        items_available += 1
-                    else:
-                        items_out_of_stock += 1
-                else:
-                    # No fulfillment info - treat as unavailable
-                    item.inventory_status = InventoryStatusSchema(
-                        can_fulfill=False,
-                        quantity_requested=item.quantity,
-                        quantity_available=0,
-                        store_id=None,
-                        store_name=None,
-                    )
-                    items_out_of_stock += 1
-
-        return InventoryValidationSummary(
-            can_fulfill_all=fulfillment_result.get("can_fulfill", False),
-            items_checked=len(cart_items),
-            items_available=items_available,
-            items_out_of_stock=items_out_of_stock,
-        )
-
-    @staticmethod
     @handle_service_errors("creating cart")
     async def create_cart(user_id: str, cart_data: CreateCartSchema) -> CartSchema:
         """Create a new cart for the user"""
@@ -196,7 +52,7 @@ class CartService:
                 )
             )
             existing_cart_result = await session.execute(existing_cart_query)
-            existing_cart = existing_cart_result.scalar_one_or_none()
+            existing_cart = existing_cart_result.scalars().first()
 
             if existing_cart:
                 raise ConflictException(
@@ -381,7 +237,7 @@ class CartService:
                     )
                 )
                 existing_cart_result = await session.execute(existing_cart_query)
-                existing_cart = existing_cart_result.scalar_one_or_none()
+                existing_cart = existing_cart_result.scalars().first()
 
                 if existing_cart:
                     raise ConflictException(
@@ -768,7 +624,8 @@ class CartService:
 
             location_query = select(Address).where(
                 and_(
-                    Address.id == checkout_data.location.address_id, Address.user_id == user_id
+                    Address.id == checkout_data.location.address_id,
+                    Address.user_id == user_id,
                 )
             )
             location_result = await session.execute(location_query)
@@ -1074,6 +931,13 @@ class CartService:
         user_id: str, checkout_data: MultiCartCheckoutSchema
     ) -> OrderPreviewSchema:
         """Preview multi-cart order with optimized bulk queries, exact pricing, and inventory validation"""
+        from src.api.orders.services.store_selection_service import (
+            StoreSelectionService,
+        )
+        from src.api.users.models import (
+            InventoryValidationSummary,
+        )
+
         async with AsyncSessionLocal() as session:
             # STEP 1: Validate checkout data (user, location, carts)
             validation_data = await CartService.validate_checkout_data(
@@ -1090,35 +954,122 @@ class CartService:
             # STEP 3: Build cart groups with detailed pricing
             cart_groups = CartService.build_cart_groups(validation_data, pricing_data)
 
-            # STEP 4: Check inventory (optimized - no store assignment needed for preview)
+            # STEP 4: Handle inventory validation and store assignments
             location_obj = validation_data["location_obj"]
-            inventory_validation = await CartService._check_inventory_with_location(
-                session, cart_groups, location_obj, checkout_data.location
+            store_selection_service = StoreSelectionService()
+            is_nearby_store = True
+            fulfillment_result = None
+            can_fulfill = False
+            unavailable_items = []
+
+            cart_items_for_inventory = []
+            for group in cart_groups:
+                for item in group.items:
+                    cart_items_for_inventory.append(
+                        {"product_id": item.product_id, "quantity": item.quantity}
+                    )
+
+            if checkout_data.location.mode == "pickup":
+                fulfillment_result = (
+                    await store_selection_service.validate_pickup_store(
+                        store_id=location_obj.id,
+                        cart_items=cart_items_for_inventory,
+                        session=session,
+                    )
+                )
+                can_fulfill = fulfillment_result["all_items_available"]
+                unavailable_items = fulfillment_result["unavailable_items"]
+            elif checkout_data.location.mode == "delivery" and location_obj:
+                fulfillment_result = (
+                    await store_selection_service.select_stores_for_delivery(
+                        address_id=location_obj.id,
+                        cart_items=cart_items_for_inventory,
+                        session=session,
+                    )
+                )
+                can_fulfill = len(fulfillment_result["unavailable_items"]) == 0
+                unavailable_items = fulfillment_result["unavailable_items"]
+                is_nearby_store = fulfillment_result.get("is_nearby_store", True)
+
+            # Build inventory validation summary
+            items_available = len(cart_items_for_inventory) - len(unavailable_items)
+            inventory_validation = InventoryValidationSummary(
+                can_fulfill_all=can_fulfill,
+                items_checked=len(cart_items_for_inventory),
+                items_available=items_available,
+                items_out_of_stock=len(unavailable_items),
             )
+
+            # Apply fulfillment status to cart items
+            # This part is complex, so for now, we rely on the summary
+            # A detailed per-item status can be added if needed by enhancing this section
 
             # STEP 5: Calculate totals and delivery charges
             total_amount = Decimal("0.00")
             total_savings = Decimal("0.00")
+            items_count = 0
 
             for group in cart_groups:
                 total_amount += Decimal(str(group.cart_total))
                 total_savings += Decimal(str(group.cart_total_savings))
+                items_count += len(group.items)
 
-            # Simplified delivery charge calculation (use first nearby store for estimate)
             delivery_charge = Decimal("0.00")
-            if checkout_data.location.mode == "delivery" and location_obj:
-                # Simple delivery charge estimate based on location
-                delivery_charge = Decimal("100.00")  # Flat rate for preview
+            if checkout_data.location.mode == "delivery" and fulfillment_result:
+                store_assignments = []
+                store_ids = [
+                    int(sid)
+                    for sid in fulfillment_result.get("store_assignments", {}).keys()
+                ]
+                if store_ids:
+                    stores_query = select(Store).where(Store.id.in_(store_ids))
+                    stores_result = await session.execute(stores_query)
+                    stores_dict = {s.id: s for s in stores_result.scalars().all()}
+                else:
+                    stores_dict = {}
+
+                primary_store_fallback = fulfillment_result.get("primary_store")
+
+                for store_id, items in fulfillment_result.get(
+                    "store_assignments", {}
+                ).items():
+                    store_id_int = int(store_id)
+                    store = stores_dict.get(store_id_int)
+
+                    if store:
+                        store_lat = float(store.latitude)
+                        store_lng = float(store.longitude)
+                    elif primary_store_fallback:
+                        store_lat = primary_store_fallback["latitude"]
+                        store_lng = primary_store_fallback["longitude"]
+                    else:
+                        store_lat, store_lng = 0.0, 0.0
+
+                    store_assignments.append(
+                        {
+                            "store_id": store_id_int,
+                            "product_ids": [item["product_id"] for item in items],
+                            "delivery_lat": float(location_obj.latitude),
+                            "delivery_lng": float(location_obj.longitude),
+                            "store_lat": store_lat,
+                            "store_lng": store_lng,
+                        }
+                    )
+                from src.api.orders.service import OrderService
+
+                order_service = OrderService()
+                delivery_charge = order_service.calculate_delivery_charge(
+                    store_assignments, is_nearby_store, total_amount, items_count
+                )
 
             # Calculate final totals
-            subtotal = total_amount + total_savings  # Original prices before discounts
+            subtotal = total_amount + total_savings
             final_total = total_amount + delivery_charge
 
             # Build pricing summary
             user_tier_id = validation_data["user_tier_id"]
-            product_data_for_pricing = pricing_data["product_data_for_pricing"]
             pricing_summary = {
-                "items_count": len(product_data_for_pricing),
+                "items_count": items_count,
                 "subtotal_before_discounts": float(subtotal),
                 "total_discounts_applied": float(total_savings),
                 "subtotal_after_discounts": float(total_amount),
@@ -1140,4 +1091,5 @@ class CartService:
                 total_amount=float(final_total),
                 pricing_summary=pricing_summary,
                 inventory_validation=inventory_validation,
+                is_nearby_store=is_nearby_store,
             )

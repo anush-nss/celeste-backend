@@ -202,6 +202,18 @@ class InventoryService:
             product_id, store_id, quantity, session
         )
 
+    async def place_holds_bulk(
+        self, holds: list[dict], session
+    ) -> list[InventorySchema]:
+        """Place multiple inventory holds in a single optimized operation."""
+        return await self.transaction_service.place_holds_bulk(holds, session)
+
+    async def release_holds_bulk(
+        self, holds: list[dict], session
+    ) -> list[InventorySchema]:
+        """Release multiple inventory holds in a single optimized operation."""
+        return await self.transaction_service.release_holds_bulk(holds, session)
+
     @handle_service_errors("retrieving inventory for products")
     async def get_inventory_for_products_in_store(
         self, product_ids: List[int], store_id: int

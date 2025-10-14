@@ -1,5 +1,5 @@
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -9,16 +9,23 @@ from sqlalchemy.orm import selectinload
 
 from src.api.carts.service import CartService
 from src.api.inventory.service import InventoryService
-from src.api.orders.models import CreateOrderSchema, OrderSchema, UpdateOrderSchema
+from src.api.orders.models import CreateOrderSchema, OrderItemSchema, OrderSchema, UpdateOrderSchema
 from src.api.orders.services.payment_service import PaymentService
 from src.api.orders.services.store_selection_service import StoreSelectionService
 from src.api.pricing.service import PricingService
+from src.api.products.cache import products_cache
+from src.integrations.odoo.order_sync import OdooOrderSync
 from src.api.users.models import (
     CartGroupSchema,
     CheckoutResponseSchema,
     MultiCartCheckoutSchema,
 )
-from src.config.constants import CartStatus, OrderStatus
+from src.config.constants import (
+    CartStatus,
+    FulfillmentMode,
+    OrderStatus,
+    DELIVERY_PRODUCT_ODOO_ID,
+)
 from src.database.connection import AsyncSessionLocal
 from src.database.models.cart import Cart
 from src.database.models.order import Order, OrderItem
@@ -27,6 +34,7 @@ from src.database.models.store import Store
 from src.database.models.user import User
 from src.shared.error_handler import ErrorHandler, handle_service_errors
 from src.shared.exceptions import ResourceNotFoundException, ValidationException
+from src.shared.sqlalchemy_utils import sqlalchemy_to_dict
 
 
 class OrderService:
@@ -36,15 +44,68 @@ class OrderService:
         self.pricing_service = PricingService()
         self.payment_service = PaymentService()
         self.store_selection_service = StoreSelectionService()
+        self.products_cache = products_cache
 
-    def calculate_delivery_charge(self, store_deliveries: List[Dict]) -> Decimal:
+    def calculate_flat_delivery_charge(
+        self,
+        store_deliveries: List[Dict],
+        delivery_address: Optional[Dict] = None,
+        order_details: Optional[Dict] = None,
+    ) -> Decimal:
+        """
+        Calculate flat delivery charge for non-nearby stores (default fallback stores).
+
+        For now, this is a fixed rate. In the future, this can be calculated based on:
+        - Delivery address location
+        - Order total amount
+        - Store locations
+        - Number of items
+        - etc.
+
+        Args:
+            store_deliveries: List of dict with store assignment details
+            delivery_address: Dict with delivery location details:
+                - latitude: float
+                - longitude: float
+                - address: str
+                - city: str
+                - etc.
+            order_details: Dict with order information:
+                - total_amount: Decimal
+                - items_count: int
+                - total_weight: float (if available)
+                - etc.
+
+        Returns:
+            Decimal: Flat delivery charge
+        """
+        # TODO: Implement dynamic calculation based on:
+        # - delivery_address['latitude'], delivery_address['longitude']
+        # - order_details['total_amount']
+        # - store_deliveries (number of stores, locations)
+        # - Distance to nearest distribution center
+        # - Urban vs rural area
+        # - Order value-based free shipping thresholds
+
+        # For now, return fixed rate
+        return Decimal("300.00")
+
+    def calculate_delivery_charge(
+        self,
+        store_deliveries: List[Dict],
+        is_nearby_store: bool = True,
+        total_amount: Optional[Decimal] = None,
+        items_count: Optional[int] = None,
+    ) -> Decimal:
         """
         Calculate delivery charge based on stores and their distances.
-        For prototyping: use max distance store and calculate base on that.
 
         Args:
             store_deliveries: List of dict with keys: 'store_id', 'store_name', 'store_lat', 'store_lng',
                              'delivery_lat', 'delivery_lng', 'items', 'store_total'
+            is_nearby_store: Whether delivery is from nearby stores or default fallback stores
+            total_amount: Total order amount (for future flat rate calculations)
+            items_count: Number of items in order (for future flat rate calculations)
 
         Returns:
             Decimal: Total delivery charge
@@ -52,6 +113,28 @@ class OrderService:
         if not store_deliveries:
             return Decimal("0.00")
 
+        # Use flat rate for non-nearby stores
+        if not is_nearby_store:
+            # Extract delivery address from store_deliveries
+            delivery_address = None
+            if store_deliveries and "delivery_lat" in store_deliveries[0]:
+                delivery_address = {
+                    "latitude": store_deliveries[0].get("delivery_lat"),
+                    "longitude": store_deliveries[0].get("delivery_lng"),
+                }
+
+            # Build order details
+            order_details = {}
+            if total_amount is not None:
+                order_details["total_amount"] = total_amount
+            if items_count is not None:
+                order_details["items_count"] = items_count
+
+            return self.calculate_flat_delivery_charge(
+                store_deliveries, delivery_address, order_details
+            )
+
+        # For nearby stores: calculate based on distance using Haversine formula
         # Base delivery charge
         base_charge = Decimal("50.00")  # Rs. 50 base charge
         rate_per_km = Decimal("15.00")  # Rs. 15 per km
@@ -88,10 +171,12 @@ class OrderService:
 
     async def _determine_store_assignments(
         self, session, cart_groups: List[CartGroupSchema], location, location_obj
-    ) -> List[Dict]:
+    ) -> Dict[str, Any]:
         """
         Determine optimal store assignments using StoreSelectionService
-        Returns list of store assignment dicts with cart_ids, store info, and totals
+        Returns dict with:
+            - store_assignments: list of store assignment dicts with cart_ids, store info, and totals
+            - is_nearby_store: bool indicating if stores are nearby or default fallback stores
         """
         # Convert cart groups to cart items format for store selection service
         cart_items = []
@@ -119,18 +204,27 @@ class OrderService:
                     f"Items not available at pickup store: {unavailable_products}"
                 )
 
-            return [
-                {
-                    "store_id": location_obj.id,
-                    "store_name": location_obj.name,
-                    "store_lat": float(location_obj.latitude),
-                    "store_lng": float(location_obj.longitude),
-                    "delivery_lat": None,
-                    "delivery_lng": None,
-                    "cart_ids": [group.cart_id for group in cart_groups],
-                    "store_total": sum(group.cart_total for group in cart_groups),
-                }
+            # For pickup, all products come from the same store
+            all_product_ids = [
+                item.product_id for group in cart_groups for item in group.items
             ]
+
+            return {
+                "store_assignments": [
+                    {
+                        "store_id": location_obj.id,
+                        "store_name": location_obj.name,
+                        "store_lat": float(location_obj.latitude),
+                        "store_lng": float(location_obj.longitude),
+                        "delivery_lat": None,
+                        "delivery_lng": None,
+                        "cart_ids": [group.cart_id for group in cart_groups],
+                        "store_total": sum(group.cart_total for group in cart_groups),
+                        "product_ids": all_product_ids,
+                    }
+                ],
+                "is_nearby_store": True,  # Pickup is always from a chosen nearby store
+            }
 
         else:
             # Delivery mode: use smart store selection
@@ -176,7 +270,10 @@ class OrderService:
             ].items():
                 # Get cart IDs for this store by matching product IDs back to cart_items
                 store_cart_ids = []
+                product_ids_for_store = []  # Track which products are from this store
+
                 for assigned_item in assigned_items:
+                    product_ids_for_store.append(assigned_item["product_id"])
                     for cart_item in cart_items:
                         if (
                             cart_item["product_id"] == assigned_item["product_id"]
@@ -214,10 +311,14 @@ class OrderService:
                         "delivery_lng": float(location_obj.longitude),
                         "cart_ids": store_cart_ids,
                         "store_total": store_total,
+                        "product_ids": product_ids_for_store,  # Add product IDs to mapping
                     }
                 )
 
-            return store_assignments
+            return {
+                "store_assignments": store_assignments,
+                "is_nearby_store": delivery_result.get("is_nearby_store", True),
+            }
 
     @handle_service_errors("updating user statistics")
     async def update_user_statistics(self, user_id: str, order_total: Decimal) -> None:
@@ -263,7 +364,34 @@ class OrderService:
                 query = query.filter(Order.user_id == user_id)
             result = await session.execute(query)
             orders = result.scalars().unique().all()
-            return [OrderSchema.model_validate(order) for order in orders]
+
+            # Filter out delivery product from each order's items
+            order_schemas = []
+            for order in orders:
+                filtered_items = [
+                    item
+                    for item in order.items
+                    if item.product_id != DELIVERY_PRODUCT_ODOO_ID
+                ]
+
+                order_dict = {
+                    "id": order.id,
+                    "user_id": order.user_id,
+                    "store_id": order.store_id,
+                    "address_id": order.address_id,
+                    "total_amount": float(order.total_amount),
+                    "delivery_charge": float(order.delivery_charge),
+                    "fulfillment_mode": order.fulfillment_mode,
+                    "status": order.status,
+                    "created_at": order.created_at,
+                    "updated_at": order.updated_at,
+                    "items": [
+                        OrderItemSchema.model_validate(item) for item in filtered_items
+                    ],
+                }
+                order_schemas.append(OrderSchema.model_validate(order_dict))
+
+            return order_schemas
 
     @handle_service_errors("retrieving order")
     async def get_order_by_id(self, order_id: int) -> OrderSchema | None:
@@ -274,7 +402,32 @@ class OrderService:
                 .filter(Order.id == order_id)
             )
             order = result.scalars().first()
-            return OrderSchema.model_validate(order) if order else None
+            if not order:
+                return None
+
+            # Filter out delivery product from items (it's shown as delivery_charge field)
+            filtered_items = [
+                item
+                for item in order.items
+                if item.product_id != DELIVERY_PRODUCT_ODOO_ID
+            ]
+
+            # Build order dict with filtered items
+            order_dict = {
+                "id": order.id,
+                "user_id": order.user_id,
+                "store_id": order.store_id,
+                "address_id": order.address_id,
+                "total_amount": float(order.total_amount),
+                "delivery_charge": float(order.delivery_charge),
+                "fulfillment_mode": order.fulfillment_mode,
+                "status": order.status,
+                "created_at": order.created_at,
+                "updated_at": order.updated_at,
+                "items": [OrderItemSchema.model_validate(item) for item in filtered_items],
+            }
+
+            return OrderSchema.model_validate(order_dict)
 
     @handle_service_errors("creating order")
     async def create_order(
@@ -308,13 +461,16 @@ class OrderService:
                         session=session,
                     )
 
-                    price = product.base_price
-                    total_amount += price * item_data.quantity
+                    unit_price = Decimal(str(product.base_price))
+                    total_price = unit_price * item_data.quantity
+                    total_amount += total_price
                     order_items_to_create.append(
                         OrderItem(
                             product_id=item_data.product_id,
+                            store_id=order_data.store_id,
                             quantity=item_data.quantity,
-                            price=price,
+                            unit_price=unit_price,
+                            total_price=total_price,
                         )
                     )
 
@@ -323,7 +479,7 @@ class OrderService:
                     user_id=user_id,
                     store_id=order_data.store_id,
                     total_amount=total_amount,
-                    status=OrderStatus.PENDING,
+                    status=OrderStatus.PENDING.value,
                     items=order_items_to_create,
                 )
                 session.add(new_order)
@@ -350,54 +506,96 @@ class OrderService:
                         f"Order with ID {order_id} not found."
                     )
 
-                if order.status == status_update.status:
+                # Get status values as strings for comparison
+                current_status = order.status
+                new_status = status_update.status.value if isinstance(status_update.status, OrderStatus) else status_update.status
+
+                if current_status == new_status:
                     return OrderSchema.model_validate(order)  # No change
 
                 # Logic for status transitions
-                if status_update.status == OrderStatus.CONFIRMED:
-                    if order.status != OrderStatus.PENDING:
+                if new_status == OrderStatus.CONFIRMED.value:
+                    if current_status != OrderStatus.PENDING.value:
                         raise ValidationException(
                             "Order must be PENDING to be CONFIRMED."
                         )
                     for item in order.items:
+                        if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
+                            continue
                         await self.inventory_service.confirm_reservation(
                             product_id=item.product_id,
-                            store_id=order.store_id,
-                            quantity=item.quantity,
-                            session=session,
-                        )
-                elif status_update.status == OrderStatus.CANCELLED:
-                    if order.status == OrderStatus.PENDING:
-                        # Release the hold
-                        for item in order.items:
-                            await self.inventory_service.release_hold(
-                                product_id=item.product_id,
-                                store_id=order.store_id,
-                                quantity=item.quantity,
-                                session=session,
-                            )
-                    elif order.status == OrderStatus.CONFIRMED:
-                        # This would be a more complex "cancellation" that might
-                        # involve releasing a reservation. For now, let's assume
-                        # only PENDING orders can be cancelled.
-                        raise ValidationException(
-                            "Cannot cancel a CONFIRMED order directly. Process a return instead."
-                        )
-                elif status_update.status == OrderStatus.SHIPPED:
-                    if order.status != OrderStatus.CONFIRMED:
-                        raise ValidationException(
-                            "Order must be CONFIRMED to be SHIPPED."
-                        )
-                    for item in order.items:
-                        await self.inventory_service.fulfill_order(
-                            product_id=item.product_id,
-                            store_id=order.store_id,
+                            store_id=item.store_id,
                             quantity=item.quantity,
                             session=session,
                         )
 
-                order.status = status_update.status
-                await session.commit()
+                elif new_status == OrderStatus.PROCESSING.value:
+                    if current_status != OrderStatus.CONFIRMED.value:
+                        raise ValidationException(
+                            "Order must be CONFIRMED to be PROCESSING."
+                        )
+
+                elif new_status == OrderStatus.PACKED.value:
+                    if current_status != OrderStatus.PROCESSING.value:
+                        raise ValidationException(
+                            "Order must be PROCESSING to be PACKED."
+                        )
+
+                elif new_status == OrderStatus.SHIPPED.value:
+                    if current_status != OrderStatus.PACKED.value:
+                        raise ValidationException(
+                            "Order must be PACKED to be SHIPPED."
+                        )
+                    # Fulfill inventory when shipped (rider collected from store)
+                    for item in order.items:
+                        if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
+                            continue
+                        await self.inventory_service.fulfill_order(
+                            product_id=item.product_id,
+                            store_id=item.store_id,
+                            quantity=item.quantity,
+                            session=session,
+                        )
+
+                elif new_status == OrderStatus.DELIVERED.value:
+                    # Can go from PACKED (pickup) or SHIPPED (delivery)
+                    if current_status not in [OrderStatus.PACKED.value, OrderStatus.SHIPPED.value]:
+                        raise ValidationException(
+                            "Order must be PACKED or SHIPPED to be DELIVERED."
+                        )
+                    # If coming from PACKED (pickup order), fulfill inventory now
+                    if current_status == OrderStatus.PACKED.value:
+                        for item in order.items:
+                            if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
+                                continue
+                            await self.inventory_service.fulfill_order(
+                                product_id=item.product_id,
+                                store_id=item.store_id,
+                                quantity=item.quantity,
+                                session=session,
+                            )
+
+                elif new_status == OrderStatus.CANCELLED.value:
+                    if current_status == OrderStatus.PENDING.value:
+                        # Release the hold
+                        for item in order.items:
+                            if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
+                                continue
+                            await self.inventory_service.release_hold(
+                                product_id=item.product_id,
+                                store_id=item.store_id,
+                                quantity=item.quantity,
+                                session=session,
+                            )
+                    elif current_status in [OrderStatus.CONFIRMED.value, OrderStatus.PROCESSING.value, OrderStatus.PACKED.value]:
+                        # Cannot cancel orders that are confirmed or being prepared
+                        raise ValidationException(
+                            "Cannot cancel a CONFIRMED, PROCESSING, or PACKED order. Please contact support."
+                        )
+
+                order.status = status_update.status.value if isinstance(status_update.status, OrderStatus) else status_update.status
+                # Note: session.begin() context manager auto-commits on exit
+                await session.flush()  # Ensure changes are persisted
                 await session.refresh(order)
                 return OrderSchema.model_validate(order)
 
@@ -421,19 +619,24 @@ class OrderService:
         # STEP 3: Build cart groups with pricing (no DB needed)
         cart_groups = CartService.build_cart_groups(validation_data, pricing_data)
 
-        # STEP 4: Calculate totals
+        # STEP 4: Calculate totals and count items
         total_amount = Decimal("0.00")
+        items_count = 0
         for group in cart_groups:
             total_amount += Decimal(str(group.cart_total))
+            items_count += len(group.items)
 
         # STEP 5: Now proceed with order creation in a separate transaction
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 # STEP 6: Determine store assignments for order fulfillment
                 location_obj = validation_data["location_obj"]
-                store_assignments = await self._determine_store_assignments(
+                store_result = await self._determine_store_assignments(
                     session, cart_groups, checkout_data.location, location_obj
                 )
+
+                store_assignments = store_result["store_assignments"]
+                is_nearby_store = store_result["is_nearby_store"]
 
                 if not store_assignments:
                     raise ValidationException(
@@ -443,58 +646,131 @@ class OrderService:
                 # STEP 7: Calculate delivery charges (only for delivery mode)
                 delivery_charge = Decimal("0.00")
                 if checkout_data.location.mode == "delivery":
-                    delivery_charge = self.calculate_delivery_charge(store_assignments)
+                    delivery_charge = self.calculate_delivery_charge(
+                        store_assignments, is_nearby_store, total_amount, items_count
+                    )
                 final_total = total_amount + delivery_charge
 
-                # STEP 8: Create main order record
+                # STEP 8: Determine fulfillment mode
+                if checkout_data.location.mode == "pickup":
+                    fulfillment_mode = FulfillmentMode.PICKUP.value
+                elif checkout_data.location.mode == "delivery":
+                    # Distinguish between nearby delivery and far delivery
+                    fulfillment_mode = (
+                        FulfillmentMode.DELIVERY.value
+                        if is_nearby_store
+                        else FulfillmentMode.FAR_DELIVERY.value
+                    )
+                else:
+                    fulfillment_mode = FulfillmentMode.PICKUP.value  # Default fallback
+
+                # STEP 9: Create main order record
                 # Use the first store as the main store for the order
                 main_store_id = store_assignments[0]["store_id"]
+
+                # Set address_id for delivery orders, None for pickup
+                address_id = None
+                if checkout_data.location.mode == "delivery":
+                    address_id = checkout_data.location.address_id
+
                 new_order = Order(
                     user_id=user_id,
                     store_id=main_store_id,
+                    address_id=address_id,
                     total_amount=final_total,
-                    status=OrderStatus.PENDING,
+                    delivery_charge=delivery_charge,
+                    fulfillment_mode=fulfillment_mode,
+                    status=OrderStatus.PENDING.value,
                 )
                 session.add(new_order)
                 await session.flush()
 
-                # STEP 9: Create order items and place inventory holds
-                placed_holds = []  # Track holds for error rollback
-                try:
-                    for cart_group in cart_groups:
-                        # Find the assigned store for this cart's items
-                        assigned_store = next(
-                            (
-                                store
-                                for store in store_assignments
-                                if cart_group.cart_id
-                                in store.get("cart_ids", [cart_group.cart_id])
-                            ),
-                            store_assignments[0],  # Fallback to main store
+                # STEP 10: Add delivery charge as a separate order item if applicable
+                if delivery_charge > 0:
+                    # Try to get the delivery product from cache first
+                    delivery_product_dict = self.products_cache.get_delivery_product()
+                    delivery_product_id = None
+
+                    if delivery_product_dict:
+                        # Extract ID from cached dict (no need to create Product instance)
+                        delivery_product_id = delivery_product_dict.get("id")
+
+                    if not delivery_product_id:
+                        # Fetch from the database if not in cache
+                        delivery_product_result = await session.execute(
+                            select(Product).filter(
+                                Product.id == DELIVERY_PRODUCT_ODOO_ID
+                            )
+                        )
+                        delivery_product = delivery_product_result.scalar_one_or_none()
+
+                        if delivery_product:
+                            delivery_product_id = delivery_product.id
+                            # Cache the product for future requests
+                            self.products_cache.set_delivery_product(
+                                sqlalchemy_to_dict(
+                                    delivery_product,
+                                    exclude_relationships={
+                                        "categories",
+                                        "product_tags",
+                                        "inventory_levels",
+                                    },
+                                )
+                            )
+
+                    if delivery_product_id:
+                        delivery_item = OrderItem(
+                            order_id=new_order.id,
+                            product_id=delivery_product_id,
+                            store_id=main_store_id,  # Assign to the main store
+                            quantity=1,
+                            unit_price=delivery_charge,
+                            total_price=delivery_charge,
+                            # Associate with the first cart in the checkout
+                            source_cart_id=checkout_data.cart_ids[0],
+                        )
+                        session.add(delivery_item)
+                    else:
+                        # Log a warning if the delivery product is not found
+                        self._error_handler.logger.warning(
+                            f"Delivery product with Odoo ID {DELIVERY_PRODUCT_ODOO_ID} not found. "
+                            "Delivery charge will not be added as a line item."
                         )
 
+                # STEP 11: Create order items and collect inventory holds
+                holds_to_place = []  # Collect all holds for bulk placement
+                placed_holds = []  # Track successfully placed holds for rollback
+
+                # Build product-to-store mapping from store assignments
+                product_store_map = {}
+                for store_assignment in store_assignments:
+                    # Map each product to its assigned store
+                    for product_id in store_assignment.get("product_ids", []):
+                        product_store_map[product_id] = store_assignment
+
+                try:
+                    # First pass: Create all order items and collect holds
+                    for cart_group in cart_groups:
                         for item in cart_group.items:
-                            # Create order item with pricing from preview
+                            # Get the correct assigned store for this specific product
+                            assigned_store = product_store_map.get(
+                                item.product_id, store_assignments[0]
+                            )
+
+                            # Create order item with pricing from preview and assigned store
                             order_item = OrderItem(
                                 order_id=new_order.id,
                                 source_cart_id=cart_group.cart_id,
                                 product_id=item.product_id,
+                                store_id=assigned_store["store_id"],
                                 quantity=item.quantity,
                                 unit_price=Decimal(str(item.final_price)),
                                 total_price=Decimal(str(item.total_price)),
                             )
                             session.add(order_item)
 
-                            # Place inventory hold at the assigned store
-                            await self.inventory_service.place_hold(
-                                product_id=item.product_id,
-                                store_id=assigned_store["store_id"],
-                                quantity=item.quantity,
-                                session=session,
-                            )
-
-                            # Track successful hold for potential rollback
-                            placed_holds.append(
+                            # Collect hold for bulk placement
+                            holds_to_place.append(
                                 {
                                     "product_id": item.product_id,
                                     "store_id": assigned_store["store_id"],
@@ -502,33 +778,40 @@ class OrderService:
                                 }
                             )
 
-                    # STEP 10: Update cart statuses to ordered
-                    for cart_id in checkout_data.cart_ids:
-                        await session.execute(
-                            update(Cart)
-                            .where(Cart.id == cart_id)
-                            .values(
-                                status=CartStatus.ORDERED, ordered_at=datetime.now()
-                            )
+                    # Place all inventory holds in bulk (optimized single operation)
+                    await self.inventory_service.place_holds_bulk(
+                        holds_to_place, session
+                    )
+
+                    # Track successful holds for potential rollback
+                    placed_holds = holds_to_place
+
+                    # STEP 12: Update cart statuses to ordered (bulk update)
+                    await session.execute(
+                        update(Cart)
+                        .where(Cart.id.in_(checkout_data.cart_ids))
+                        .values(
+                            status=CartStatus.ORDERED,
+                            ordered_at=datetime.now(timezone.utc),
                         )
+                    )
 
                     await session.refresh(new_order)
                 except Exception as e:
-                    # If anything fails, release all placed holds
-                    for hold in placed_holds:
-                        try:
-                            await self.inventory_service.release_hold(
-                                product_id=hold["product_id"],
-                                store_id=hold["store_id"],
-                                quantity=hold["quantity"],
-                                session=session,
-                            )
-                        except Exception:
-                            # Log but don't fail the rollback
-                            pass
+                    # If anything fails, release all placed holds in bulk
+                    try:
+                        await self.inventory_service.release_holds_bulk(
+                            placed_holds, session
+                        )
+                    except Exception as rollback_error:
+                        # Log but don't fail the rollback
+                        self._error_handler.logger.error(
+                            f"Failed to release holds during rollback: {rollback_error}",
+                            exc_info=True,
+                        )
                     raise e
 
-            # STEP 10: Initiate payment process outside transaction
+            # STEP 13: Initiate payment process outside transaction
             payment_result = await self.payment_service.initiate_payment(
                 order_id=new_order.id,
                 total_amount=final_total,
@@ -545,11 +828,39 @@ class OrderService:
                 payment_url=payment_result["payment_url"],
                 payment_reference=payment_result["payment_reference"],
                 payment_expires_at=payment_result["expires_at"],
+                is_nearby_store=is_nearby_store,
+            )
+
+    async def _background_odoo_sync(self, order_id: int) -> None:
+        """Background task to sync order to Odoo (runs after response is sent)"""
+        try:
+            odoo_sync = OdooOrderSync()
+            sync_result = await odoo_sync.sync_order_to_odoo(order_id)
+            if sync_result["success"]:
+                self._error_handler.logger.info(
+                    f"Background sync: Order {order_id} successfully synced to Odoo | "
+                    f"Odoo Order ID: {sync_result['odoo_order_id']}"
+                )
+            else:
+                self._error_handler.logger.warning(
+                    f"Background sync: Odoo sync failed for order {order_id}: {sync_result['error']}"
+                )
+        except Exception as e:
+            self._error_handler.logger.error(
+                f"Background sync: Failed to sync order {order_id} to Odoo: {str(e)}",
+                exc_info=True,
             )
 
     @handle_service_errors("processing payment callback")
-    async def process_payment_callback(self, callback_data: Dict) -> Dict[str, Any]:
-        """Process payment gateway callback and update order status"""
+    async def process_payment_callback(
+        self, callback_data: Dict, background_tasks=None
+    ) -> Dict[str, Any]:
+        """Process payment gateway callback and update order status
+
+        Args:
+            callback_data: Payment gateway callback data
+            background_tasks: FastAPI BackgroundTasks for async processing
+        """
 
         # Process callback through payment service
         callback_result = await self.payment_service.process_payment_callback(
@@ -580,6 +891,19 @@ class OrderService:
                 # Log but don't fail the payment processing
                 self._error_handler.logger.error(
                     f"Failed to update user statistics for order {order_id}: {str(e)}"
+                )
+
+            # Queue Odoo sync as background task (non-blocking)
+            if background_tasks:
+                background_tasks.add_task(self._background_odoo_sync, order_id)
+                self._error_handler.logger.info(
+                    f"Odoo sync queued as background task for order {order_id}"
+                )
+            else:
+                # Fallback: log warning if BackgroundTasks not provided
+                self._error_handler.logger.warning(
+                    f"BackgroundTasks not provided - Odoo sync skipped for order {order_id}. "
+                    "Use retry endpoint to sync manually."
                 )
 
             return {

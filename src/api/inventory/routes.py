@@ -120,9 +120,10 @@ async def adjust_inventory(adjustment_data: AdjustInventorySchema):
     - `reserved_change`: Change in the number of items reserved for confirmed orders.
     """
     async with AsyncSessionLocal() as session:
-        updated_inventory = await inventory_service.adjust_inventory_stock(
-            adjustment_data, session
-        )
+        async with session.begin():
+            updated_inventory = await inventory_service.adjust_inventory_stock(
+                adjustment_data, session
+            )
         return success_response(updated_inventory.model_dump(mode="json"))
 
 

@@ -25,6 +25,7 @@ class CacheConfig:
     PRODUCT_DATA_TTL = int(os.getenv("CACHE_PRODUCT_DATA_TTL", "600"))  # 10 minutes
     USER_DATA_TTL = int(os.getenv("CACHE_USER_DATA_TTL", "900"))  # 15 minutes
     CATEGORY_DATA_TTL = int(os.getenv("CACHE_CATEGORY_DATA_TTL", "1800"))  # 30 minutes
+    STATIC_DATA_TTL = int(os.getenv("CACHE_STATIC_DATA_TTL", "3600"))  # 1 hour
 
     # Cache cleanup and maintenance
     CLEANUP_INTERVAL_MINUTES = int(
@@ -69,6 +70,7 @@ class CacheConfig:
             "products": cls.PRODUCT_DATA_TTL,
             "users": cls.USER_DATA_TTL,
             "categories": cls.CATEGORY_DATA_TTL,
+            "static": cls.STATIC_DATA_TTL,
             "default": cls.DEFAULT_TTL,
         }
         return ttl_mapping.get(cache_type, cls.DEFAULT_TTL)

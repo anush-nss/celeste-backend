@@ -398,6 +398,10 @@ class OrderPreviewSchema(BaseModel):
         None  # Inventory check results
     )
     estimated_delivery: Optional[datetime] = None
+    is_nearby_store: bool = Field(
+        True,
+        description="True if order fulfilled from nearby stores, False if from distant default stores",
+    )
 
 
 class CheckoutResponseSchema(BaseModel):
@@ -409,5 +413,9 @@ class CheckoutResponseSchema(BaseModel):
     payment_url: Optional[str] = None
     payment_reference: Optional[str] = None
     payment_expires_at: Optional[datetime] = None
+    is_nearby_store: bool = Field(
+        True,
+        description="True if order fulfilled from nearby stores, False if from distant default stores",
+    )
 
     model_config = ConfigDict(from_attributes=True)
