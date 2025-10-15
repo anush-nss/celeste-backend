@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from src.config.constants import CartStatus, CartUserRole, UserRole
 
 
-class AddressSchema(BaseModel):
+class AddressResponseSchema(BaseModel):
     id: Optional[int] = None
     address: Annotated[
         str,
@@ -28,13 +28,37 @@ class AddressSchema(BaseModel):
     is_default: bool = Field(
         default=False, description="Whether this is the default address"
     )
+    active: bool = Field(default=True, description="Whether this address is active")
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class AddressWithDeliverySchema(AddressSchema):
+class AddressCreationSchema(BaseModel):
+    address: Annotated[
+        str,
+        Field(
+            min_length=5,
+            max_length=500,
+            description="Complete address",
+            examples=["123 Main St, New York, NY 10001"],
+        ),
+    ]
+    latitude: Annotated[
+        float,
+        Field(ge=-90, le=90, description="Latitude coordinate", examples=[40.7128]),
+    ]
+    longitude: Annotated[
+        float,
+        Field(ge=-180, le=180, description="Longitude coordinate", examples=[-74.0060]),
+    ]
+    is_default: bool = Field(
+        default=False, description="Whether this is the default address"
+    )
+
+
+class AddressWithDeliverySchema(AddressResponseSchema):
     """Address schema with delivery capability information"""
 
     ondemand_delivery_available: Optional[bool] = Field(
@@ -47,35 +71,7 @@ class AddressWithDeliverySchema(AddressSchema):
     )
 
 
-class UpdateAddressSchema(BaseModel):
-    address: Optional[
-        Annotated[
-            str,
-            Field(
-                min_length=5,
-                max_length=500,
-                description="Complete address",
-                examples=["456 Oak Ave, Los Angeles, CA 90210"],
-            ),
-        ]
-    ] = None
-    latitude: Optional[
-        Annotated[
-            float,
-            Field(ge=-90, le=90, description="Latitude coordinate", examples=[34.0522]),
-        ]
-    ] = None
-    longitude: Optional[
-        Annotated[
-            float,
-            Field(
-                ge=-180,
-                le=180,
-                description="Longitude coordinate",
-                examples=[-118.2437],
-            ),
-        ]
-    ] = None
+
 
 
 class CartItemSchema(BaseModel):
@@ -110,7 +106,7 @@ class UserSchema(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     last_order_at: Optional[datetime] = None
-    addresses: Optional[List[AddressSchema]] = None
+    addresses: Optional[List[AddressResponseSchema]] = None
     cart: Optional[List[CartItemSchema]] = None  # Added cart
 
     model_config = ConfigDict(from_attributes=True)

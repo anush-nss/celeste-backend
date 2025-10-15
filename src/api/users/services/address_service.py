@@ -4,9 +4,9 @@ from sqlalchemy import update
 from sqlalchemy.future import select
 
 from src.api.users.models import (
-    AddressSchema,
+    AddressCreationSchema,
+    AddressResponseSchema,
     AddressWithDeliverySchema,
-    UpdateAddressSchema,
 )
 from src.database.connection import AsyncSessionLocal
 from src.database.models.address import Address
@@ -44,7 +44,7 @@ class UserAddressService:
         }
 
     async def add_address(
-        self, user_id: str, address_data: AddressSchema
+        self, user_id: str, address_data: AddressCreationSchema
     ) -> AddressWithDeliverySchema:
         """Add a new address for a user"""
         async with AsyncSessionLocal() as session:
@@ -68,7 +68,7 @@ class UserAddressService:
             await session.refresh(new_address)
 
             # Build response with delivery info if this is a default address
-            address_dict = AddressSchema.model_validate(new_address).model_dump()
+            address_dict = AddressResponseSchema.model_validate(new_address).model_dump()
             if address_data.is_default:
                 delivery_info = await self._check_delivery_availability(
                     address_data.latitude, address_data.longitude
@@ -77,16 +77,18 @@ class UserAddressService:
 
             return AddressWithDeliverySchema(**address_dict)
 
-    async def get_addresses(self, user_id: str) -> List[AddressSchema]:
-        """Get all addresses for a user"""
+    async def get_addresses(self, user_id: str) -> List[AddressResponseSchema]:
+        """Get all active addresses for a user"""
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Address).filter_by(user_id=user_id))
+            result = await session.execute(
+                select(Address).filter_by(user_id=user_id, active=True)
+            )
             addresses = result.scalars().all()
-            return safe_model_validate_list(AddressSchema, addresses)
+            return safe_model_validate_list(AddressResponseSchema, addresses)
 
     async def get_address_by_id(
         self, user_id: str, address_id: int
-    ) -> AddressSchema | None:
+    ) -> AddressResponseSchema | None:
         """Get a specific address by ID for a user"""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -94,51 +96,23 @@ class UserAddressService:
             )
             address = result.scalars().first()
             if address:
-                return AddressSchema.model_validate(address)
+                return AddressResponseSchema.model_validate(address)
             return None
 
-    async def update_address(
-        self, user_id: str, address_id: int, address_data: UpdateAddressSchema
-    ) -> AddressSchema | None:
-        """Update an existing address"""
-        async with AsyncSessionLocal() as session:
-            # First verify the address exists and belongs to the user
-            result = await session.execute(
-                select(Address).filter_by(user_id=user_id, id=address_id)
-            )
-            address = result.scalars().first()
 
-            if not address:
-                raise ResourceNotFoundException(
-                    detail=f"Address with ID {address_id} not found for user {user_id}"
-                )
-
-            update_data = address_data.model_dump(exclude_unset=True)
-
-            # if no data to update, return early
-            if len(update_data) == 0:
-                raise ValidationException(detail="No data provided for update")
-
-            # Update the specific address with all provided fields
-            for field, value in update_data.items():
-                setattr(address, field, value)
-
-            await session.commit()
-            await session.refresh(address)
-            return AddressSchema.model_validate(address)
 
     async def delete_address(self, user_id: str, address_id: int) -> bool:
-        """Delete an address"""
+        """Soft delete an address by setting its active flag to false."""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Address).filter_by(user_id=user_id, id=address_id)
+                select(Address).filter_by(user_id=user_id, id=address_id, active=True)
             )
             address = result.scalars().first()
 
             if not address:
                 return False
 
-            await session.delete(address)
+            address.active = False
             await session.commit()
             return True
 
@@ -181,7 +155,7 @@ class UserAddressService:
             await session.refresh(address)
 
             # Build response with delivery info
-            address_dict = AddressSchema.model_validate(address).model_dump()
+            address_dict = AddressResponseSchema.model_validate(address).model_dump()
             delivery_info = await self._check_delivery_availability(
                 address.latitude, address.longitude
             )

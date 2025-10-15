@@ -7,11 +7,11 @@ from src.api.carts.service import CartService
 from src.api.orders.service import OrderService
 from src.api.users.models import (
     AddCartItemSchema,
-    AddressSchema,
+    AddressCreationSchema,
+    AddressResponseSchema,
     AddressWithDeliverySchema,
     CreateCartSchema,
     ShareCartSchema,
-    UpdateAddressSchema,
     UpdateCartItemQuantitySchema,
     UpdateCartSchema,
     UpdateUserSchema,
@@ -81,7 +81,7 @@ async def update_user_profile(
     response_model=AddressWithDeliverySchema,
 )
 async def add_address(
-    address_data: AddressSchema,
+    address_data: AddressCreationSchema,
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
     user_id = current_user.uid
@@ -97,7 +97,9 @@ async def add_address(
     )
 
 
-@users_router.get("/me/addresses", summary="Get all addresses for the current user")
+from typing import Annotated, List, Optional
+
+@users_router.get("/me/addresses", summary="Get all addresses for the current user", response_model=List[AddressResponseSchema])
 async def get_addresses(
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
@@ -110,7 +112,7 @@ async def get_addresses(
 
 
 @users_router.get(
-    "/me/addresses/{address_id}", summary="Get a specific address for the current user"
+    "/me/addresses/{address_id}", summary="Get a specific address for the current user", response_model=AddressResponseSchema
 )
 async def get_address_by_id(
     address_id: int,
@@ -129,26 +131,7 @@ async def get_address_by_id(
     return success_response(address.model_dump(mode="json"))
 
 
-@users_router.put(
-    "/me/addresses/{address_id}",
-    summary="Update a specific address for the current user",
-)
-async def update_address(
-    address_id: int,
-    address_data: UpdateAddressSchema,
-    current_user: Annotated[DecodedToken, Depends(get_current_user)],
-):
-    user_id = current_user.uid
-    if not user_id:
-        raise UnauthorizedException(detail="User ID not found in token")
 
-    updated_address = await user_service.update_address(
-        user_id, address_id, address_data
-    )
-    if not updated_address:
-        raise HTTPException(status_code=500, detail="Failed to update address")
-
-    return success_response(updated_address.model_dump(mode="json"))
 
 
 @users_router.delete(
