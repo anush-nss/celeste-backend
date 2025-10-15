@@ -159,10 +159,10 @@ class PricingService:
 
             await session.delete(price_list)
             await session.commit()
-            
+
             # Invalidate cache when price list is deleted
             pricing_cache.invalidate_price_list_cache(str(price_list_id))
-            
+
             return True
 
     async def create_price_lists(
@@ -297,10 +297,10 @@ class PricingService:
             price_list_id = line.price_list_id  # Store for cache invalidation
             await session.delete(line)
             await session.commit()
-            
+
             # Invalidate cache when price list line is deleted
             pricing_cache.invalidate_price_list_cache(str(price_list_id))
-            
+
             return True
 
     async def add_price_list_lines(
@@ -378,10 +378,10 @@ class PricingService:
                 )
                 session.add(association)
                 await session.commit()
-                
+
                 # Invalidate cache when tier-price list association is added
                 pricing_cache.invalidate_price_list_cache(str(price_list_id))
-                
+
                 return True
 
             except IntegrityError as e:
@@ -421,10 +421,10 @@ class PricingService:
 
             await session.delete(association)
             await session.commit()
-            
+
             # Invalidate cache when tier-price list association is removed
             pricing_cache.invalidate_price_list_cache(str(price_list_id))
-            
+
             return True
 
     async def get_tier_price_lists(self, tier_id: int) -> List[PriceListSchema]:

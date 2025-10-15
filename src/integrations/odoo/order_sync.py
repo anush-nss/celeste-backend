@@ -241,7 +241,7 @@ class OdooOrderSync:
                     [("firebase_uid", "=", user.firebase_uid)],
                     fields=["id", "name", "email"],
                     limit=1,
-                )
+                ),
             )
 
             if existing_customers:
@@ -273,7 +273,7 @@ class OdooOrderSync:
 
                 customer_id = await loop.run_in_executor(
                     self._executor,
-                    lambda: self.odoo.create("res.partner", customer_values)
+                    lambda: self.odoo.create("res.partner", customer_values),
                 )
                 self._error_handler.logger.info(
                     f"Created new Odoo customer {customer_id} for user {user.firebase_uid}"
@@ -325,7 +325,7 @@ class OdooOrderSync:
                     [("client_order_ref", "=", client_ref)],
                     fields=["id", "name", "state"],
                     limit=1,
-                )
+                ),
             )
 
             if existing_orders:
@@ -393,7 +393,7 @@ class OdooOrderSync:
                         "product.product",
                         [("default_code", "in", padded_refs)],
                         fields=["id", "name", "default_code"],
-                    )
+                    ),
                 )
 
             # Create a map: padded_ref -> odoo_product_id
@@ -492,8 +492,7 @@ class OdooOrderSync:
             )
             loop = asyncio.get_event_loop()
             order_id = await loop.run_in_executor(
-                self._executor,
-                lambda: self.odoo.create("sale.order", order_values)
+                self._executor, lambda: self.odoo.create("sale.order", order_values)
             )
 
             self._error_handler.logger.info(
@@ -533,7 +532,7 @@ class OdooOrderSync:
                     [("id", "=", odoo_order_id)],
                     fields=["state"],
                     limit=1,
-                )
+                ),
             )
 
             if order_info and order_info[0]["state"] == "sale":
@@ -549,7 +548,7 @@ class OdooOrderSync:
                     "sale.order",
                     "action_confirm",
                     [[odoo_order_id]],
-                )
+                ),
             )
 
             self._error_handler.logger.info(

@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_, text
-from sqlalchemy.exc import IntegrityError, ProgrammingError, StatementError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
@@ -18,9 +18,6 @@ from src.config.cache_config import CacheConfig
 from src.config.constants import (
     DEFAULT_SEARCH_RADIUS_KM,
     DEFAULT_STORE_IDS,
-    DEFAULT_STORES_LIMIT,
-    MAX_SEARCH_RADIUS_KM,
-    MAX_STORES_LIMIT,
 )
 from src.database.connection import AsyncSessionLocal
 from src.database.models.product import Tag
@@ -240,7 +237,8 @@ class StoreService:
                 {
                     "latitude": latitude,
                     "longitude": longitude,
-                    "radius_meters": (radius_km or DEFAULT_SEARCH_RADIUS_KM) * 1000,  # Convert km to meters
+                    "radius_meters": (radius_km or DEFAULT_SEARCH_RADIUS_KM)
+                    * 1000,  # Convert km to meters
                 },
             )
 

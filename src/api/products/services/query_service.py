@@ -51,9 +51,7 @@ class ProductQueryService:
         # Try cache first for product data
         cached_result = await self.cache.get(cache_key)
         if cached_result:
-            products = [
-                EnhancedProductSchema(**p) for p in cached_result["products"]
-            ]
+            products = [EnhancedProductSchema(**p) for p in cached_result["products"]]
             pagination = cached_result["pagination"]
         else:
             async with AsyncSessionLocal() as session:
@@ -76,13 +74,12 @@ class ProductQueryService:
                 "products": [p.model_dump(mode="json") for p in products],
                 "pagination": pagination,
             }
-            await self.cache.set(cache_key, cache_data, ttl=CacheConfig.PRODUCT_DATA_TTL)
+            await self.cache.set(
+                cache_key, cache_data, ttl=CacheConfig.PRODUCT_DATA_TTL
+            )
 
         # Add real-time inventory if requested OR if filters require it
-        needs_inventory = (
-            query_params.include_inventory
-            or query_params.has_inventory
-        )
+        needs_inventory = query_params.include_inventory or query_params.has_inventory
 
         # Determine if we need to apply inventory filtering
         has_inventory_filter = query_params.has_inventory is not None
@@ -102,7 +99,11 @@ class ProductQueryService:
                     p
                     for p in products
                     if p.inventory
-                    and (p.inventory.can_order if query_params.has_inventory else not p.inventory.can_order)
+                    and (
+                        p.inventory.can_order
+                        if query_params.has_inventory
+                        else not p.inventory.can_order
+                    )
                 ]
 
             # Update pagination total_returned after filtering
@@ -592,12 +593,14 @@ class ProductQueryService:
 
         # Add real-time inventory if requested
         if query_params.include_inventory and store_ids:
-            products_with_inventory = await self.inventory_service.add_inventory_to_products_bulk(
-                products=[product],
-                store_ids=store_ids,
-                is_nearby_store=is_nearby_store,
-                latitude=query_params.latitude,
-                longitude=query_params.longitude,
+            products_with_inventory = (
+                await self.inventory_service.add_inventory_to_products_bulk(
+                    products=[product],
+                    store_ids=store_ids,
+                    is_nearby_store=is_nearby_store,
+                    latitude=query_params.latitude,
+                    longitude=query_params.longitude,
+                )
             )
             product = products_with_inventory[0] if products_with_inventory else product
 
@@ -645,12 +648,14 @@ class ProductQueryService:
 
         # Add real-time inventory if requested
         if query_params.include_inventory and store_ids:
-            products_with_inventory = await self.inventory_service.add_inventory_to_products_bulk(
-                products=[product],
-                store_ids=store_ids,
-                is_nearby_store=is_nearby_store,
-                latitude=query_params.latitude,
-                longitude=query_params.longitude,
+            products_with_inventory = (
+                await self.inventory_service.add_inventory_to_products_bulk(
+                    products=[product],
+                    store_ids=store_ids,
+                    is_nearby_store=is_nearby_store,
+                    latitude=query_params.latitude,
+                    longitude=query_params.longitude,
+                )
             )
             product = products_with_inventory[0] if products_with_inventory else product
 

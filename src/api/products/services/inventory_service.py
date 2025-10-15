@@ -119,7 +119,7 @@ class ProductInventoryService:
                     usable_qty = max(0, inv["quantity_available"] - inv["safety_stock"])
                     if usable_qty > max_available:
                         max_available = usable_qty
-                
+
                 return InventoryInfoSchema(
                     can_order=False,  # Cannot order without location
                     max_available=max_available,  # But show actual available quantity
@@ -146,7 +146,7 @@ class ProductInventoryService:
                     usable_qty = max(0, inv["quantity_available"] - inv["safety_stock"])
                     if usable_qty > max_available:
                         max_available = usable_qty
-                
+
                 return InventoryInfoSchema(
                     can_order=False,  # Cannot order due to location constraint
                     max_available=max_available,  # But show actual available quantity
@@ -169,7 +169,11 @@ class ProductInventoryService:
             if has_next_day_tag:
                 reason = "Out of stock at nearby stores"
             else:
-                reason = "Out of stock" if not is_nearby_store else "Out of stock at nearby stores"
+                reason = (
+                    "Out of stock"
+                    if not is_nearby_store
+                    else "Out of stock at nearby stores"
+                )
 
             return InventoryInfoSchema(
                 can_order=False,

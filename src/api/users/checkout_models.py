@@ -1,11 +1,10 @@
 """
 Pydantic models for the checkout process.
 """
+
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
-
-from src.api.users.models import CartItemPricingSchema
 
 
 class LocationSchema(BaseModel):
@@ -26,10 +25,6 @@ class CheckoutRequestSchema(BaseModel):
     split_order: bool = False
     location: LocationSchema
 
-
-from typing import List, Optional
-
-from pydantic import BaseModel, Field
 
 # Define a new base schema without the inventory_status field
 class CheckoutItemSchema(BaseModel):

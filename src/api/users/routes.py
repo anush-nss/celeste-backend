@@ -10,7 +10,6 @@ from src.api.users.models import (
     AddressSchema,
     AddressWithDeliverySchema,
     CreateCartSchema,
-    MultiCartCheckoutSchema,
     ShareCartSchema,
     UpdateAddressSchema,
     UpdateCartItemQuantitySchema,
@@ -26,9 +25,10 @@ from src.shared.exceptions import (
 )
 from src.shared.responses import success_response
 
-users_router = APIRouter(prefix="/users", tags=["Users"])
 from src.api.users.checkout_models import CheckoutRequestSchema
 from src.api.users.checkout_service import CheckoutService
+
+users_router = APIRouter(prefix="/users", tags=["Users"])
 
 user_service = UserService()
 order_service = OrderService()

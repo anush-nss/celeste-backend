@@ -47,8 +47,10 @@ class ProductService:
         )
 
         if product and store_id:
-            inventory_info = await self.inventory_service.get_aggregated_inventory_for_product(
-                product_id, [store_id], is_nearby_store=True
+            inventory_info = (
+                await self.inventory_service.get_aggregated_inventory_for_product(
+                    product_id, [store_id], is_nearby_store=True
+                )
             )
             product.inventory = inventory_info
 
@@ -68,8 +70,10 @@ class ProductService:
 
         if product and store_id and product.id is not None:
             # We need to get the product ID first to fetch inventory
-            inventory_info = await self.inventory_service.get_aggregated_inventory_for_product(
-                product.id, [store_id], is_nearby_store=True
+            inventory_info = (
+                await self.inventory_service.get_aggregated_inventory_for_product(
+                    product.id, [store_id], is_nearby_store=True
+                )
             )
             product.inventory = inventory_info
 
@@ -115,7 +119,12 @@ class ProductService:
 
         # Use query service to get product with comprehensive SQL
         product = await self.query_service.get_single_product_by_id(
-            product_id, query_params, customer_tier, effective_store_ids, quantity, is_nearby_store
+            product_id,
+            query_params,
+            customer_tier,
+            effective_store_ids,
+            quantity,
+            is_nearby_store,
         )
 
         return product
@@ -160,7 +169,12 @@ class ProductService:
 
         # Use query service to get product with comprehensive SQL
         product = await self.query_service.get_single_product_by_ref(
-            ref, query_params, customer_tier, effective_store_ids, quantity, is_nearby_store
+            ref,
+            query_params,
+            customer_tier,
+            effective_store_ids,
+            quantity,
+            is_nearby_store,
         )
 
         return product
@@ -205,8 +219,10 @@ class ProductService:
             and query_params.latitude
             and query_params.longitude
         ):
-            
-            effective_store_ids, is_nearby_store = await self.store_service.get_store_ids_by_location(
+            (
+                effective_store_ids,
+                is_nearby_store,
+            ) = await self.store_service.get_store_ids_by_location(
                 query_params.latitude, query_params.longitude
             )
             effective_store_ids = cast(List[int], effective_store_ids)

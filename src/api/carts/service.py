@@ -618,7 +618,10 @@ class CartService:
 
         # STEP 2: Validate location based on mode
         location_obj = None
-        if checkout_data.location.mode in [FulfillmentMode.PICKUP.value, FulfillmentMode.FAR_DELIVERY.value]:
+        if checkout_data.location.mode in [
+            FulfillmentMode.PICKUP.value,
+            FulfillmentMode.FAR_DELIVERY.value,
+        ]:
             if not checkout_data.location.address_id:
                 raise ValidationException("address_id is required for delivery mode")
 
@@ -979,7 +982,10 @@ class CartService:
                 )
                 can_fulfill = fulfillment_result["all_items_available"]
                 unavailable_items = fulfillment_result["unavailable_items"]
-            elif checkout_data.location.mode == FulfillmentMode.DELIVERY.value and location_obj:
+            elif (
+                checkout_data.location.mode == FulfillmentMode.DELIVERY.value
+                and location_obj
+            ):
                 fulfillment_result = (
                     await store_selection_service.select_stores_for_delivery(
                         address_id=location_obj.id,
@@ -1016,7 +1022,10 @@ class CartService:
                 items_count += len(group.items)
 
             delivery_charge = Decimal("0.00")
-            if checkout_data.location.mode == FulfillmentMode.DELIVERY.value and fulfillment_result:
+            if (
+                checkout_data.location.mode == FulfillmentMode.DELIVERY.value
+                and fulfillment_result
+            ):
                 store_assignments = []
                 store_ids = [
                     int(sid)

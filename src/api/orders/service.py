@@ -7,9 +7,13 @@ from sqlalchemy import update
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
-from src.api.carts.service import CartService
 from src.api.inventory.service import InventoryService
-from src.api.orders.models import CreateOrderSchema, OrderItemSchema, OrderSchema, UpdateOrderSchema
+from src.api.orders.models import (
+    CreateOrderSchema,
+    OrderItemSchema,
+    OrderSchema,
+    UpdateOrderSchema,
+)
 from src.api.orders.services.payment_service import PaymentService
 from src.api.orders.services.store_selection_service import StoreSelectionService
 from src.api.pricing.service import PricingService
@@ -17,11 +21,6 @@ from src.api.products.cache import products_cache
 
 
 from src.api.users.checkout_models import LocationSchema, StoreFulfillmentResponse
-from src.api.users.models import (
-    CartGroupSchema,
-    CheckoutResponseSchema,
-    MultiCartCheckoutSchema,
-)
 from src.config.constants import (
     CartStatus,
     FulfillmentMode,
@@ -32,12 +31,10 @@ from src.database.connection import AsyncSessionLocal
 from src.database.models.cart import Cart
 from src.database.models.order import Order, OrderItem
 from src.database.models.product import Product
-from src.database.models.store import Store
 from src.database.models.user import User
 from src.integrations.odoo.order_sync import OdooOrderSync
 from src.shared.error_handler import ErrorHandler, handle_service_errors
 from src.shared.exceptions import ResourceNotFoundException, ValidationException
-from src.shared.sqlalchemy_utils import sqlalchemy_to_dict
 
 
 class OrderService:
@@ -370,7 +367,9 @@ class OrderService:
                 "status": order.status,
                 "created_at": order.created_at,
                 "updated_at": order.updated_at,
-                "items": [OrderItemSchema.model_validate(item) for item in filtered_items],
+                "items": [
+                    OrderItemSchema.model_validate(item) for item in filtered_items
+                ],
             }
 
             return OrderSchema.model_validate(order_dict)
@@ -454,7 +453,11 @@ class OrderService:
 
                 # Get status values as strings for comparison
                 current_status = order.status
-                new_status = status_update.status.value if isinstance(status_update.status, OrderStatus) else status_update.status
+                new_status = (
+                    status_update.status.value
+                    if isinstance(status_update.status, OrderStatus)
+                    else status_update.status
+                )
 
                 if current_status == new_status:
                     return OrderSchema.model_validate(order)  # No change
@@ -489,9 +492,7 @@ class OrderService:
 
                 elif new_status == OrderStatus.SHIPPED.value:
                     if current_status != OrderStatus.PACKED.value:
-                        raise ValidationException(
-                            "Order must be PACKED to be SHIPPED."
-                        )
+                        raise ValidationException("Order must be PACKED to be SHIPPED.")
                     # Fulfill inventory when shipped (rider collected from store)
                     for item in order.items:
                         if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
@@ -505,7 +506,10 @@ class OrderService:
 
                 elif new_status == OrderStatus.DELIVERED.value:
                     # Can go from PACKED (pickup) or SHIPPED (delivery)
-                    if current_status not in [OrderStatus.PACKED.value, OrderStatus.SHIPPED.value]:
+                    if current_status not in [
+                        OrderStatus.PACKED.value,
+                        OrderStatus.SHIPPED.value,
+                    ]:
                         raise ValidationException(
                             "Order must be PACKED or SHIPPED to be DELIVERED."
                         )
@@ -533,13 +537,21 @@ class OrderService:
                                 quantity=item.quantity,
                                 session=session,
                             )
-                    elif current_status in [OrderStatus.CONFIRMED.value, OrderStatus.PROCESSING.value, OrderStatus.PACKED.value]:
+                    elif current_status in [
+                        OrderStatus.CONFIRMED.value,
+                        OrderStatus.PROCESSING.value,
+                        OrderStatus.PACKED.value,
+                    ]:
                         # Cannot cancel orders that are confirmed or being prepared
                         raise ValidationException(
                             "Cannot cancel a CONFIRMED, PROCESSING, or PACKED order. Please contact support."
                         )
 
-                order.status = status_update.status.value if isinstance(status_update.status, OrderStatus) else status_update.status
+                order.status = (
+                    status_update.status.value
+                    if isinstance(status_update.status, OrderStatus)
+                    else status_update.status
+                )
                 # Note: session.begin() context manager auto-commits on exit
                 await session.flush()  # Ensure changes are persisted
                 await session.refresh(order)

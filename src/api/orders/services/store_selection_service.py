@@ -37,9 +37,11 @@ class StoreSelectionService:
         self._error_handler = ErrorHandler(__name__)
         self.cart_service = CartService()
 
-    async def get_fulfillment_plan(self, session, user_id: str, request: CheckoutRequestSchema) -> dict:
-        """Centralized method to get a complete fulfillment plan.""" 
-        
+    async def get_fulfillment_plan(
+        self, session, user_id: str, request: CheckoutRequestSchema
+    ) -> dict:
+        """Centralized method to get a complete fulfillment plan."""
+
         location_schema = CheckoutLocationSchema(
             mode=request.location.mode,
             store_id=request.location.store_id,
@@ -57,9 +59,7 @@ class StoreSelectionService:
                 session, validation_data
             )
         )
-        cart_groups = self.cart_service.build_cart_groups(
-            validation_data, pricing_data
-        )
+        cart_groups = self.cart_service.build_cart_groups(validation_data, pricing_data)
 
         location_obj = validation_data["location_obj"]
         all_items = [
@@ -97,7 +97,7 @@ class StoreSelectionService:
 
         if not store_assignments:
             raise ValidationException("Could not find any stores to fulfill the order.")
-        
+
         return {
             "store_assignments": store_assignments,
             "unavailable_items": unavailable_items,
@@ -105,7 +105,6 @@ class StoreSelectionService:
             "location_obj": location_obj,
             "fulfillment_result": fulfillment_result,
         }
-
 
     async def select_stores_for_delivery(
         self, address_id: int, cart_items: List[Dict[str, Any]], mode: str, session
@@ -504,11 +503,10 @@ class StoreSelectionService:
             latitude=latitude,
             longitude=longitude,
             radius_km=radius_km,
-            return_full_stores=True, 
+            return_full_stores=True,
             include_distance=True,
         )
         stores_data = cast(Optional[List[Dict[str, Any]]], stores_data)
-        
 
         if not stores_data:
             return {
@@ -556,7 +554,9 @@ class StoreSelectionService:
 
                 if inv:
                     # Calculate usable quantity (respecting safety stock)
-                    usable_qty = max(0, inv.quantity_available - (inv.safety_stock or 0))
+                    usable_qty = max(
+                        0, inv.quantity_available - (inv.safety_stock or 0)
+                    )
 
                     if usable_qty >= quantity_needed:
                         # Found store with enough usable stock
@@ -575,7 +575,9 @@ class StoreSelectionService:
 
                     if inv:
                         # Calculate usable quantity (respecting safety stock)
-                        usable_qty = max(0, inv.quantity_available - (inv.safety_stock or 0))
+                        usable_qty = max(
+                            0, inv.quantity_available - (inv.safety_stock or 0)
+                        )
 
                         if usable_qty > max_available:
                             max_available = usable_qty

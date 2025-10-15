@@ -90,10 +90,11 @@ class UserService:
             except Exception:
                 # If there's an error getting default tier, use the fallback tier
                 pass
-            
+
             # If no default tier was found from the system, use the fallback tier
             if default_tier is None:
                 from src.config.constants import DEFAULT_FALLBACK_TIER_ID
+
                 default_tier = DEFAULT_FALLBACK_TIER_ID
 
             new_user = User(

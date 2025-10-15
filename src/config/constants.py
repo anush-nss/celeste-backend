@@ -33,7 +33,6 @@ class DeliveryServiceLevel(str, Enum):
     STANDARD = "standard"
 
 
-
 class OdooSyncStatus(str, Enum):
     PENDING = "pending"
     SYNCED = "synced"

@@ -1,6 +1,7 @@
 """
 Service for handling checkout preview and order creation.
 """
+
 from decimal import Decimal
 from fastapi import HTTPException, status
 
@@ -61,14 +62,17 @@ class CheckoutService:
                         store_items_priced.append(checkout_item)
 
                 delivery_cost = Decimal("0.00")
-                if request.location.mode in [FulfillmentMode.PICKUP.value, FulfillmentMode.FAR_DELIVERY.value]:
+                if request.location.mode in [
+                    FulfillmentMode.PICKUP.value,
+                    FulfillmentMode.FAR_DELIVERY.value,
+                ]:
                     is_nearby = fulfillment_result.get("is_nearby_store", True)
                     store_info = await session.get(Store, store_id)
 
                     if store_info is None:
                         raise HTTPException(
                             status_code=status.HTTP_404_NOT_FOUND,
-                            detail=f"Store with ID {store_id} not found"
+                            detail=f"Store with ID {store_id} not found",
                         )
 
                     single_store_delivery = [
@@ -93,7 +97,7 @@ class CheckoutService:
                 if store_info is None:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Store with ID {store_id} not found"
+                        detail=f"Store with ID {store_id} not found",
                     )
 
                 fulfillable_stores.append(
@@ -115,9 +119,14 @@ class CheckoutService:
                 unavailable_items=unavailable_items,
             )
 
-    async def create_order(self, user_id: str, request: CheckoutRequestSchema) -> CheckoutResponse:
+    async def create_order(
+        self, user_id: str, request: CheckoutRequestSchema
+    ) -> CheckoutResponse:
         """Creates one or more orders based on the checkout request."""
-        if request.location.mode == FulfillmentMode.PICKUP.value and request.split_order:
+        if (
+            request.location.mode == FulfillmentMode.PICKUP.value
+            and request.split_order
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Splitting an order is not supported for pickup.",
@@ -125,7 +134,10 @@ class CheckoutService:
 
         preview = await self.preview_order(user_id, request)
 
-        if not request.split_order and request.location.mode == FulfillmentMode.DELIVERY.value:
+        if (
+            not request.split_order
+            and request.location.mode == FulfillmentMode.DELIVERY.value
+        ):
             if len(preview.fulfillable_stores) > 1:
                 error_response = NonSplitErrorResponse(
                     detail="No single store can fulfill the entire order. Please review the options below or allow the order to be split.",
@@ -148,7 +160,7 @@ class CheckoutService:
             # Create a new StoreFulfillmentResponse with the order_id
             fulfillment_with_order_id = StoreFulfillmentResponse(
                 order_id=created_order.id,
-                **store_fulfillment.model_dump(exclude={"order_id"})
+                **store_fulfillment.model_dump(exclude={"order_id"}),
             )
             final_fulfillable_stores.append(fulfillment_with_order_id)
 
