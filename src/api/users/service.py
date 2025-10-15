@@ -82,13 +82,19 @@ class UserService:
             if existing_user.scalars().first():
                 raise ConflictException(detail=f"User with UID {uid} already exists")
 
-            # Try to set default customer tier when creating user, but allow null if no tiers exist
+            # Set default customer tier when creating user
+            # First try to get the system default tier, fall back to DEFAULT_FALLBACK_TIER_ID
             default_tier = None
             try:
                 default_tier = await self.tier_service.get_default_tier()
             except Exception:
-                # If no tiers exist, leave tier_id as None
+                # If there's an error getting default tier, use the fallback tier
                 pass
+            
+            # If no default tier was found from the system, use the fallback tier
+            if default_tier is None:
+                from src.config.constants import DEFAULT_FALLBACK_TIER_ID
+                default_tier = DEFAULT_FALLBACK_TIER_ID
 
             new_user = User(
                 firebase_uid=uid.strip(),
