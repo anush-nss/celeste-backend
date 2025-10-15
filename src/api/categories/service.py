@@ -376,6 +376,7 @@ class CategoryService:
                 select(Category)
                 .options(selectinload(Category.subcategories))
                 .filter(Category.id.in_(category_ids))
+                .order_by(Category.sort_order)
             )
             result = await session.execute(stmt)
             categories = result.scalars().unique().all()

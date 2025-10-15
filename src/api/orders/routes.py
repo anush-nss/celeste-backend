@@ -32,12 +32,15 @@ async def get_orders(
     cart_id: Optional[List[int]] = Query(
         None, description="Filter orders by source cart ID(s)"
     ),
+    status: Optional[List[str]] = Query(
+        None, description="Filter orders by status (e.g., pending, confirmed)"
+    ),
 ):
     if current_user.role == UserRole.ADMIN:
-        orders = await order_service.get_all_orders(cart_ids=cart_id)
+        orders = await order_service.get_all_orders(cart_ids=cart_id, status=status)
     else:
         orders = await order_service.get_all_orders(
-            user_id=current_user.uid, cart_ids=cart_id
+            user_id=current_user.uid, cart_ids=cart_id, status=status
         )
     return success_response([order.model_dump(mode="json") for order in orders])
 
@@ -138,25 +141,33 @@ async def verify_payment(
 
 @orders_router.get(
     "/odoo/failed-syncs",
-    summary="List orders with failed Odoo sync (Admin only)",
+    summary="List orders with failed or pending Odoo sync (Admin only)",
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def get_failed_odoo_syncs(limit: int = 50):
+async def get_failed_odoo_syncs(limit: int = 50, include_pending: bool = False):
     """
-    Get list of orders where Odoo sync failed.
+    Get list of orders where Odoo sync failed or is pending.
 
-    Returns orders with sync status FAILED, ordered by most recent retry attempt.
+    Returns orders with sync status FAILED, and optionally PENDING.
     Useful for monitoring and debugging Odoo sync issues.
 
-    - **limit**: Maximum number of failed orders to return (default: 50)
+    - **limit**: Maximum number of orders to return (default: 50)
+    - **include_pending**: Whether to include orders with PENDING sync status (default: False)
     """
     try:
         async with AsyncSessionLocal() as session:
-            # Query orders with failed Odoo sync
+            statuses_to_fetch = [OdooSyncStatus.FAILED]
+            if include_pending:
+                statuses_to_fetch.append(OdooSyncStatus.PENDING)
+
+            # Query orders with failed or pending Odoo sync
             query = (
                 select(Order)
-                .where(Order.odoo_sync_status == OdooSyncStatus.FAILED)
-                .order_by(Order.odoo_last_retry_at.desc())
+                .where(Order.odoo_sync_status.in_(statuses_to_fetch))
+                .order_by(
+                    Order.odoo_last_retry_at.desc().nulls_last(),
+                    Order.created_at.desc(),
+                )
                 .limit(limit)
             )
 

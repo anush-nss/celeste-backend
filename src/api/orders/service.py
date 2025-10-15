@@ -292,10 +292,18 @@ class OrderService:
 
     @handle_service_errors("retrieving orders")
     async def get_all_orders(
-        self, user_id: Optional[str] = None, cart_ids: Optional[List[int]] = None
+        self,
+        user_id: Optional[str] = None,
+        cart_ids: Optional[List[int]] = None,
+        status: Optional[List[str]] = None,
     ) -> List[OrderSchema]:
         async with AsyncSessionLocal() as session:
-            query = select(Order).options(selectinload(Order.items)).distinct()
+            query = (
+                select(Order)
+                .options(selectinload(Order.items))
+                .distinct()
+                .order_by(Order.created_at.desc())
+            )
 
             if cart_ids:
                 query = query.join(Order.items).filter(
@@ -304,6 +312,9 @@ class OrderService:
 
             if user_id:
                 query = query.filter(Order.user_id == user_id)
+
+            if status:
+                query = query.filter(Order.status.in_(status))
 
             result = await session.execute(query)
             orders = result.scalars().unique().all()
