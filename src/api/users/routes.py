@@ -25,7 +25,7 @@ from src.shared.exceptions import (
 )
 from src.shared.responses import success_response
 
-from src.api.users.checkout_models import CheckoutRequestSchema
+from src.api.users.checkout_models import CheckoutRequestSchema, CheckoutResponse
 from src.api.users.checkout_service import CheckoutService
 
 users_router = APIRouter(prefix="/users", tags=["Users"])
@@ -404,7 +404,11 @@ async def get_available_carts_for_checkout(
     return success_response({"available_carts": carts})
 
 
-@users_router.post("/me/checkout/preview", summary="Preview multi-cart order")
+@users_router.post(
+    "/me/checkout/preview",
+    summary="Preview multi-cart order",
+    response_model=CheckoutResponse,
+)
 async def preview_multi_cart_order(
     checkout_data: CheckoutRequestSchema,
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
@@ -421,6 +425,7 @@ async def preview_multi_cart_order(
     "/me/checkout/order",
     summary="Create multi-cart order",
     status_code=status.HTTP_201_CREATED,
+    response_model=CheckoutResponse,
 )
 async def create_multi_cart_order(
     checkout_data: CheckoutRequestSchema,

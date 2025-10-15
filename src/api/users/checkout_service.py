@@ -102,6 +102,7 @@ class CheckoutService:
 
                 fulfillable_stores.append(
                     StoreFulfillmentResponse(
+                        order_id=None,
                         store_id=store_id,
                         store_name=store_info.name,
                         items=store_items_priced,

@@ -633,6 +633,9 @@ class TierService:
                 sort_order=1,
                 min_total_spent=0.0,
                 min_orders_count=0,
+                is_active=True,
+                min_monthly_spent=0.0,
+                min_monthly_orders=0,
                 benefits=[],
             ),
         ]

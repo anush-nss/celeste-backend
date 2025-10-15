@@ -7,23 +7,21 @@ from src.config.constants import CartStatus, CartUserRole, UserRole
 
 
 class AddressResponseSchema(BaseModel):
-    id: Optional[int] = None
+    id: Optional[int] = Field(None, examples=[1])
     address: Annotated[
         str,
         Field(
             min_length=5,
             max_length=500,
             description="Complete address",
-            examples=["123 Main St, New York, NY 10001"],
+            examples=["123 Main St, Colombo 05"],
         ),
     ]
     latitude: Annotated[
-        float,
-        Field(ge=-90, le=90, description="Latitude coordinate", examples=[40.7128]),
+        float, Field(ge=-90, le=90, description="Latitude", examples=[6.8775])
     ]
     longitude: Annotated[
-        float,
-        Field(ge=-180, le=180, description="Longitude coordinate", examples=[-74.0060]),
+        float, Field(ge=-180, le=180, description="Longitude", examples=[79.8681])
     ]
     is_default: bool = Field(
         default=False, description="Whether this is the default address"
@@ -42,16 +40,14 @@ class AddressCreationSchema(BaseModel):
             min_length=5,
             max_length=500,
             description="Complete address",
-            examples=["123 Main St, New York, NY 10001"],
+            examples=["456 Galle Road, Colombo 03"],
         ),
     ]
     latitude: Annotated[
-        float,
-        Field(ge=-90, le=90, description="Latitude coordinate", examples=[40.7128]),
+        float, Field(ge=-90, le=90, description="Latitude", examples=[6.9036])
     ]
     longitude: Annotated[
-        float,
-        Field(ge=-180, le=180, description="Longitude coordinate", examples=[-74.0060]),
+        float, Field(ge=-180, le=180, description="Longitude", examples=[79.8521])
     ]
     is_default: bool = Field(
         default=False, description="Whether this is the default address"
@@ -64,10 +60,12 @@ class AddressWithDeliverySchema(AddressResponseSchema):
     ondemand_delivery_available: Optional[bool] = Field(
         None,
         description="Whether on-demand delivery is available from nearby stores",
+        examples=[True],
     )
     nearby_stores_count: Optional[int] = Field(
         None,
         description="Number of nearby stores found within delivery radius",
+        examples=[3],
     )
 
 
@@ -87,24 +85,31 @@ class CartItemSchema(BaseModel):
 
 
 class UserSchema(BaseModel):
-    firebase_uid: Annotated[str, Field(min_length=1)]
-    name: Annotated[str, Field(min_length=1)]
-    email: Optional[EmailStr] = None
-    phone: Optional[str] = None
-    is_delivery: Optional[bool] = None
-    role: UserRole = UserRole.CUSTOMER
-    tier_id: Optional[int] = Field(default=None, description="Customer tier ID")
+    firebase_uid: Annotated[
+        str, Field(min_length=1, examples=["TZKU3C493fY2JH9Ftnsdpz5occN2"])
+    ]
+    name: Annotated[str, Field(min_length=1, examples=["John Doe"])]
+    email: Optional[EmailStr] = Field(None, examples=["john.doe@example.com"])
+    phone: Optional[str] = Field(None, examples=["+94771234567"])
+    is_delivery: Optional[bool] = Field(None)
+    role: UserRole = Field(..., examples=[UserRole.CUSTOMER.value])
+    tier_id: Optional[int] = Field(
+        default=None, description="Customer tier ID", examples=[2]
+    )
     total_orders: int = Field(
-        default=0, ge=0, description="Total number of orders placed"
+        default=0, ge=0, description="Total number of orders placed", examples=[15]
     )
     lifetime_value: float = Field(
-        default=0.0, ge=0, description="Total amount spent by customer"
+        default=0.0,
+        ge=0,
+        description="Total amount spent by customer",
+        examples=[75000.0],
     )
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     last_order_at: Optional[datetime] = None
     addresses: Optional[List[AddressResponseSchema]] = None
-    cart: Optional[List[CartItemSchema]] = None  # Added cart
+    cart: Optional[List[CartItemSchema]] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -116,24 +121,13 @@ class CreateUserSchema(BaseModel):
             min_length=2,
             max_length=100,
             description="Full name of the user",
-            examples=["John Doe"],
+            examples=["Jane Doe"],
         ),
     ]
     email: Optional[EmailStr] = Field(
-        default=None, description="Email address", examples=["john.doe@example.com"]
+        default=None, description="Email address", examples=["jane.doe@example.com"]
     )
-    phone: Optional[
-        Annotated[
-            str,
-            Field(
-                min_length=10,
-                max_length=20,
-                description="Phone number with country code",
-                pattern=r"^\+\d{10,19}$",
-                examples=["+1234567890"],
-            ),
-        ]
-    ] = None
+    phone: Optional[str] = Field(None, examples=["+94712345678"])
     role: UserRole = Field(default=UserRole.CUSTOMER, description="Role of the user")
     tier_id: Optional[int] = Field(
         default=None, ge=1, description="Customer tier ID", examples=[1]

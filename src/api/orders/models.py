@@ -7,51 +7,85 @@ from src.config.constants import FulfillmentMode, OrderStatus
 
 
 class OrderItemSchema(BaseModel):
-    id: int
-    order_id: int
-    source_cart_id: int
-    product_id: int
-    store_id: int
-    quantity: int
-    unit_price: float
-    total_price: float
+    id: int = Field(..., examples=[101])
+    order_id: int = Field(..., examples=[1])
+    source_cart_id: int = Field(..., examples=[2])
+    product_id: int = Field(..., examples=[6288])
+    store_id: int = Field(..., examples=[1])
+    quantity: int = Field(..., examples=[2])
+    unit_price: float = Field(..., examples=[1150.0])
+    total_price: float = Field(..., examples=[2300.0])
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class OrderSchema(BaseModel):
-    id: int
-    user_id: str  # Changed from int to str to match Firebase UID
-    store_id: int
+    id: int = Field(..., examples=[1])
+    user_id: str = Field(..., examples=["TZKU3C493fY2JH9Ftnsdpz5occN2"])
+    store_id: int = Field(..., examples=[1])
     address_id: Optional[int] = Field(
-        default=None, description="Delivery address ID (for delivery orders)"
+        default=None,
+        description="Delivery address ID (for delivery orders)",
+        examples=[1],
     )
-    total_amount: float
+    total_amount: float = Field(..., examples=[2600.0])
     delivery_charge: Optional[float] = Field(
-        default=0.0, description="Delivery charge for the order"
+        default=0.0, description="Delivery charge for the order", examples=[300.0]
     )
     fulfillment_mode: FulfillmentMode = Field(
         default=FulfillmentMode.PICKUP,
         description="Order fulfillment mode: pickup, delivery, or far_delivery",
+        examples=[FulfillmentMode.DELIVERY.value],
     )
-    status: OrderStatus
+    status: OrderStatus = Field(..., examples=[OrderStatus.PENDING.value])
     created_at: datetime
     updated_at: datetime
     items: List[OrderItemSchema]
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": 1,
+                    "user_id": "TZKU3C493fY2JH9Ftnsdpz5occN2",
+                    "store_id": 1,
+                    "address_id": 1,
+                    "total_amount": 2600.0,
+                    "delivery_charge": 300.0,
+                    "fulfillment_mode": "delivery",
+                    "status": "pending",
+                    "created_at": "2025-10-15T10:00:00Z",
+                    "updated_at": "2025-10-15T10:00:00Z",
+                    "items": [
+                        {
+                            "id": 101,
+                            "order_id": 1,
+                            "source_cart_id": 2,
+                            "product_id": 6288,
+                            "store_id": 1,
+                            "quantity": 2,
+                            "unit_price": 1150.0,
+                            "total_price": 2300.0,
+                            "created_at": "2025-10-15T10:00:00Z",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
 
 
 class CreateOrderItemSchema(BaseModel):
-    product_id: int = Field(..., gt=0)
-    quantity: int = Field(..., gt=0)
+    product_id: int = Field(..., gt=0, examples=[6288])
+    quantity: int = Field(..., gt=0, examples=[3])
 
 
 class CreateOrderSchema(BaseModel):
-    store_id: int
+    store_id: int = Field(..., examples=[1])
     items: List[CreateOrderItemSchema]
 
 
 class UpdateOrderSchema(BaseModel):
-    status: OrderStatus
+    status: OrderStatus = Field(..., examples=[OrderStatus.CONFIRMED.value])
