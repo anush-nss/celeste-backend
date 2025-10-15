@@ -50,7 +50,8 @@ def _user_to_dict(
                 and user.addresses is not None
             ):
                 user_dict["addresses"] = [
-                    AddressResponseSchema.model_validate(addr) for addr in user.addresses
+                    AddressResponseSchema.model_validate(addr)
+                    for addr in user.addresses
                 ]
             else:
                 user_dict["addresses"] = []
@@ -174,8 +175,6 @@ class UserService:
     ) -> AddressResponseSchema | None:
         """Get a specific address by ID for a user"""
         return await self.address_service.get_address_by_id(user_id, address_id)
-
-
 
     async def delete_address(self, user_id: str, address_id: int) -> bool:
         """Delete an address"""

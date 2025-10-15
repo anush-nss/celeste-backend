@@ -619,7 +619,7 @@ class CartService:
         # STEP 2: Validate location based on mode
         location_obj = None
         if checkout_data.location.mode in [
-            FulfillmentMode.PICKUP.value,
+            FulfillmentMode.DELIVERY.value,
             FulfillmentMode.FAR_DELIVERY.value,
         ]:
             if not checkout_data.location.address_id:

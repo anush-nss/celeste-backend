@@ -61,6 +61,7 @@ class StoreFulfillmentResponse(BaseModel):
 class CheckoutResponse(BaseModel):
     """Response for checkout preview and successful order creation."""
 
+    fulfillment_mode: str
     fulfillable_stores: List[StoreFulfillmentResponse]
     overall_total: float
     unavailable_items: List[dict] = Field(default_factory=list)
@@ -70,5 +71,6 @@ class NonSplitErrorResponse(BaseModel):
     """Error response for non-split orders that cannot be fulfilled by a single store."""
 
     detail: str
+    fulfillment_mode: str
     fulfillable_stores: List[StoreFulfillmentResponse]
     overall_total: float

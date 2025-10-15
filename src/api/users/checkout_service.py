@@ -63,7 +63,7 @@ class CheckoutService:
 
                 delivery_cost = Decimal("0.00")
                 if request.location.mode in [
-                    FulfillmentMode.PICKUP.value,
+                    FulfillmentMode.DELIVERY.value,
                     FulfillmentMode.FAR_DELIVERY.value,
                 ]:
                     is_nearby = fulfillment_result.get("is_nearby_store", True)
@@ -113,7 +113,15 @@ class CheckoutService:
 
             fulfillable_stores.sort(key=lambda s: len(s.items), reverse=True)
 
+            # Determine the final fulfillment mode
+            final_fulfillment_mode = request.location.mode
+            if request.location.mode == FulfillmentMode.DELIVERY.value:
+                is_nearby = fulfillment_result.get("is_nearby_store", True)
+                if not is_nearby:
+                    final_fulfillment_mode = FulfillmentMode.FAR_DELIVERY.value
+
             return CheckoutResponse(
+                fulfillment_mode=final_fulfillment_mode,
                 fulfillable_stores=fulfillable_stores,
                 overall_total=float(overall_total),
                 unavailable_items=unavailable_items,
@@ -141,6 +149,7 @@ class CheckoutService:
             if len(preview.fulfillable_stores) > 1:
                 error_response = NonSplitErrorResponse(
                     detail="No single store can fulfill the entire order. Please review the options below or allow the order to be split.",
+                    fulfillment_mode=preview.fulfillment_mode,
                     fulfillable_stores=preview.fulfillable_stores,
                     overall_total=preview.overall_total,
                 )
@@ -165,6 +174,7 @@ class CheckoutService:
             final_fulfillable_stores.append(fulfillment_with_order_id)
 
         return CheckoutResponse(
+            fulfillment_mode=preview.fulfillment_mode,
             fulfillable_stores=final_fulfillable_stores,
             overall_total=preview.overall_total,
             unavailable_items=preview.unavailable_items,

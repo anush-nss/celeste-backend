@@ -1,4 +1,4 @@
-from typing import Annotated, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -97,9 +97,11 @@ async def add_address(
     )
 
 
-from typing import Annotated, List, Optional
-
-@users_router.get("/me/addresses", summary="Get all addresses for the current user", response_model=List[AddressResponseSchema])
+@users_router.get(
+    "/me/addresses",
+    summary="Get all addresses for the current user",
+    response_model=List[AddressResponseSchema],
+)
 async def get_addresses(
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
@@ -112,7 +114,9 @@ async def get_addresses(
 
 
 @users_router.get(
-    "/me/addresses/{address_id}", summary="Get a specific address for the current user", response_model=AddressResponseSchema
+    "/me/addresses/{address_id}",
+    summary="Get a specific address for the current user",
+    response_model=AddressResponseSchema,
 )
 async def get_address_by_id(
     address_id: int,
@@ -129,9 +133,6 @@ async def get_address_by_id(
         )
 
     return success_response(address.model_dump(mode="json"))
-
-
-
 
 
 @users_router.delete(

@@ -71,9 +71,6 @@ class AddressWithDeliverySchema(AddressResponseSchema):
     )
 
 
-
-
-
 class CartItemSchema(BaseModel):
     user_id: Annotated[
         str,

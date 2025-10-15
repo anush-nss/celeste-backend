@@ -11,7 +11,7 @@ from src.api.users.models import (
 from src.database.connection import AsyncSessionLocal
 from src.database.models.address import Address
 from src.shared.error_handler import ErrorHandler
-from src.shared.exceptions import ResourceNotFoundException, ValidationException
+from src.shared.exceptions import ResourceNotFoundException
 from src.shared.sqlalchemy_utils import safe_model_validate_list
 
 
@@ -68,7 +68,9 @@ class UserAddressService:
             await session.refresh(new_address)
 
             # Build response with delivery info if this is a default address
-            address_dict = AddressResponseSchema.model_validate(new_address).model_dump()
+            address_dict = AddressResponseSchema.model_validate(
+                new_address
+            ).model_dump()
             if address_data.is_default:
                 delivery_info = await self._check_delivery_availability(
                     address_data.latitude, address_data.longitude
@@ -98,8 +100,6 @@ class UserAddressService:
             if address:
                 return AddressResponseSchema.model_validate(address)
             return None
-
-
 
     async def delete_address(self, user_id: str, address_id: int) -> bool:
         """Soft delete an address by setting its active flag to false."""
