@@ -22,9 +22,16 @@ class OrderStatus(str, Enum):
 
 
 class FulfillmentMode(str, Enum):
-    PICKUP = "pickup"
     DELIVERY = "delivery"
+    PICKUP = "pickup"
     FAR_DELIVERY = "far_delivery"
+
+
+class DeliveryServiceLevel(str, Enum):
+    PRIORITY = "priority"
+    PREMIUM = "premium"
+    STANDARD = "standard"
+
 
 
 class OdooSyncStatus(str, Enum):

@@ -27,8 +27,12 @@ from src.shared.exceptions import (
 from src.shared.responses import success_response
 
 users_router = APIRouter(prefix="/users", tags=["Users"])
+from src.api.users.checkout_models import CheckoutRequestSchema
+from src.api.users.checkout_service import CheckoutService
+
 user_service = UserService()
 order_service = OrderService()
+checkout_service = CheckoutService()
 
 
 @users_router.get("/me", summary="Get current user profile")
@@ -418,14 +422,14 @@ async def get_available_carts_for_checkout(
 
 @users_router.post("/me/checkout/preview", summary="Preview multi-cart order")
 async def preview_multi_cart_order(
-    checkout_data: MultiCartCheckoutSchema,
+    checkout_data: CheckoutRequestSchema,
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
     user_id = current_user.uid
     if not user_id:
         raise UnauthorizedException(detail="User ID not found in token")
 
-    preview = await CartService.preview_multi_cart_order(user_id, checkout_data)
+    preview = await checkout_service.preview_order(user_id, checkout_data)
     return success_response(preview.model_dump(mode="json"))
 
 
@@ -435,14 +439,14 @@ async def preview_multi_cart_order(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_multi_cart_order(
-    checkout_data: MultiCartCheckoutSchema,
+    checkout_data: CheckoutRequestSchema,
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
     user_id = current_user.uid
     if not user_id:
         raise UnauthorizedException(detail="User ID not found in token")
 
-    order = await order_service.create_multi_cart_order(user_id, checkout_data)
+    order_summary = await checkout_service.create_order(user_id, checkout_data)
     return success_response(
-        order.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+        order_summary.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )

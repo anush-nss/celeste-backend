@@ -12,6 +12,7 @@ from src.config.constants import (
     DEFAULT_SEARCH_RADIUS_KM,
     DEFAULT_STORE_IDS,
     NEXT_DAY_DELIVERY_ONLY_TAG_ID,
+    FulfillmentMode,
 )
 from src.database.models.address import Address
 from src.database.models.inventory import Inventory
@@ -21,14 +22,93 @@ from src.shared.error_handler import ErrorHandler
 from src.shared.exceptions import ValidationException
 
 
+from src.api.carts.service import CartService
+from src.api.users.checkout_models import CheckoutRequestSchema
+from src.api.users.models import (
+    MultiCartCheckoutSchema,
+    CheckoutLocationSchema,
+)
+
+
 class StoreSelectionService:
     """Automatic store selection with nearest-first and splitting logic"""
 
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
+        self.cart_service = CartService()
+
+    async def get_fulfillment_plan(self, session, user_id: str, request: CheckoutRequestSchema) -> dict:
+        """Centralized method to get a complete fulfillment plan.""" 
+        
+        location_schema = CheckoutLocationSchema(
+            mode=request.location.mode,
+            store_id=request.location.store_id,
+            address_id=request.location.address_id,
+        )
+        validation_request = MultiCartCheckoutSchema(
+            cart_ids=request.cart_ids, location=location_schema
+        )
+
+        validation_data = await self.cart_service.validate_checkout_data(
+            session, user_id, validation_request
+        )
+        pricing_data = (
+            await self.cart_service.fetch_products_and_calculate_pricing_with_session(
+                session, validation_data
+            )
+        )
+        cart_groups = self.cart_service.build_cart_groups(
+            validation_data, pricing_data
+        )
+
+        location_obj = validation_data["location_obj"]
+        all_items = [
+            {
+                "product_id": item.product_id,
+                "quantity": item.quantity,
+                "cart_id": group.cart_id,
+            }
+            for group in cart_groups
+            for item in group.items
+        ]
+
+        if request.location.mode == FulfillmentMode.PICKUP.value:
+            fulfillment_result = await self.validate_pickup_store(
+                store_id=location_obj.id,
+                cart_items=all_items,
+                session=session,
+            )
+            if not fulfillment_result["all_items_available"]:
+                raise ValidationException(
+                    "Not all items are available at the selected pickup store."
+                )
+            store_assignments = {location_obj.id: all_items}
+            unavailable_items = []
+            fulfillment_result["is_nearby_store"] = True  # Set for pickup
+        else:
+            fulfillment_result = await self.select_stores_for_delivery(
+                address_id=location_obj.id,
+                cart_items=all_items,
+                mode=request.location.mode,
+                session=session,
+            )
+            store_assignments = fulfillment_result["store_assignments"]
+            unavailable_items = fulfillment_result["unavailable_items"]
+
+        if not store_assignments:
+            raise ValidationException("Could not find any stores to fulfill the order.")
+        
+        return {
+            "store_assignments": store_assignments,
+            "unavailable_items": unavailable_items,
+            "cart_groups": cart_groups,
+            "location_obj": location_obj,
+            "fulfillment_result": fulfillment_result,
+        }
+
 
     async def select_stores_for_delivery(
-        self, address_id: int, cart_items: List[Dict[str, Any]], session
+        self, address_id: int, cart_items: List[Dict[str, Any]], mode: str, session
     ) -> Dict[str, Any]:
         """Select optimal stores for delivery with splitting if needed"""
 
@@ -47,12 +127,15 @@ class StoreSelectionService:
             if not address_coords:
                 raise ValidationException(f"Address with ID {address_id} not found")
 
-            # Get all active stores with distances
-            nearby_stores, is_nearby = await self._get_stores_by_distance(
-                address_coords, session
-            )
+            # Get stores based on mode
+            if mode == "far_delivery":
+                stores, is_nearby = await self._get_default_stores(session), False
+            else:  # default to delivery
+                stores, is_nearby = await self._get_stores_by_distance(
+                    address_coords, session
+                )
 
-            if not nearby_stores:
+            if not stores:
                 raise ValidationException("No active stores found for delivery")
 
             # Update tracking flag
@@ -88,7 +171,7 @@ class StoreSelectionService:
                 selection_result["unavailable_items"] = excluded_items
 
             # Try to fulfill from nearest store first
-            nearest_store = nearby_stores[0]
+            nearest_store = stores[0]
             availability = await self._check_store_availability(
                 nearest_store["store_id"], cart_items, session
             )
@@ -106,7 +189,7 @@ class StoreSelectionService:
             else:
                 # Need to split across multiple stores
                 split_result = await self._split_items_across_stores(
-                    cart_items, nearby_stores, session
+                    cart_items, stores, session
                 )
 
                 # Merge unavailable items from excluded products and stock unavailability

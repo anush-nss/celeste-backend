@@ -1,6 +1,6 @@
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 
 from src.api.auth.models import DecodedToken
@@ -17,13 +17,17 @@ from src.shared.responses import success_response
 orders_router = APIRouter(prefix="/orders", tags=["Orders"])
 order_service = OrderService()
 
-
 @orders_router.get("/", summary="Retrieve orders", response_model=List[OrderSchema])
-async def get_orders(current_user: DecodedToken = Depends(get_current_user)):
+async def get_orders(
+    current_user: DecodedToken = Depends(get_current_user),
+    cart_id: Optional[List[int]] = Query(None, description="Filter orders by source cart ID(s)"),
+):
     if current_user.role == UserRole.ADMIN:
-        orders = await order_service.get_all_orders()
+        orders = await order_service.get_all_orders(cart_ids=cart_id)
     else:
-        orders = await order_service.get_all_orders(user_id=current_user.uid)
+        orders = await order_service.get_all_orders(
+            user_id=current_user.uid, cart_ids=cart_id
+        )
     return success_response([order.model_dump(mode="json") for order in orders])
 
 

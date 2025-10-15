@@ -21,7 +21,7 @@ from src.api.users.models import (
     UpdateCartItemQuantitySchema,
     UpdateCartSchema,
 )
-from src.config.constants import CartStatus, CartUserRole
+from src.config.constants import CartStatus, CartUserRole, FulfillmentMode
 from src.database.connection import AsyncSessionLocal
 from src.database.models.address import Address
 from src.database.models.cart import Cart, CartItem, CartUser
@@ -618,7 +618,7 @@ class CartService:
 
         # STEP 2: Validate location based on mode
         location_obj = None
-        if checkout_data.location.mode == "delivery":
+        if checkout_data.location.mode in [FulfillmentMode.PICKUP.value, FulfillmentMode.FAR_DELIVERY.value]:
             if not checkout_data.location.address_id:
                 raise ValidationException("address_id is required for delivery mode")
 
@@ -634,7 +634,7 @@ class CartService:
                 raise ValidationException(
                     f"Address {checkout_data.location.address_id} not found or not owned by user"
                 )
-        elif checkout_data.location.mode == "pickup":
+        elif checkout_data.location.mode == FulfillmentMode.PICKUP.value:
             if not checkout_data.location.store_id:
                 raise ValidationException("store_id is required for pickup mode")
 
@@ -969,7 +969,7 @@ class CartService:
                         {"product_id": item.product_id, "quantity": item.quantity}
                     )
 
-            if checkout_data.location.mode == "pickup":
+            if checkout_data.location.mode == FulfillmentMode.PICKUP.value:
                 fulfillment_result = (
                     await store_selection_service.validate_pickup_store(
                         store_id=location_obj.id,
@@ -979,12 +979,13 @@ class CartService:
                 )
                 can_fulfill = fulfillment_result["all_items_available"]
                 unavailable_items = fulfillment_result["unavailable_items"]
-            elif checkout_data.location.mode == "delivery" and location_obj:
+            elif checkout_data.location.mode == FulfillmentMode.DELIVERY.value and location_obj:
                 fulfillment_result = (
                     await store_selection_service.select_stores_for_delivery(
                         address_id=location_obj.id,
                         cart_items=cart_items_for_inventory,
                         session=session,
+                        mode=checkout_data.location.mode,
                     )
                 )
                 can_fulfill = len(fulfillment_result["unavailable_items"]) == 0
@@ -1015,7 +1016,7 @@ class CartService:
                 items_count += len(group.items)
 
             delivery_charge = Decimal("0.00")
-            if checkout_data.location.mode == "delivery" and fulfillment_result:
+            if checkout_data.location.mode == FulfillmentMode.DELIVERY.value and fulfillment_result:
                 store_assignments = []
                 store_ids = [
                     int(sid)

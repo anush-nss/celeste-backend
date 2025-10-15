@@ -1,0 +1,159 @@
+"""
+Service for handling checkout preview and order creation.
+"""
+from decimal import Decimal
+from fastapi import HTTPException, status
+
+from src.api.orders.service import OrderService
+from src.api.orders.services.store_selection_service import StoreSelectionService
+from src.api.users.checkout_models import (
+    CheckoutCartItemPricingSchema,
+    CheckoutRequestSchema,
+    CheckoutResponse,
+    NonSplitErrorResponse,
+    StoreFulfillmentResponse,
+)
+from src.config.constants import FulfillmentMode
+from src.database.connection import AsyncSessionLocal
+from src.database.models.store import Store
+
+
+class CheckoutService:
+    def __init__(self):
+        self.store_selection_service = StoreSelectionService()
+        self.order_service = OrderService()
+
+    async def preview_order(
+        self, user_id: str, request: CheckoutRequestSchema
+    ) -> CheckoutResponse:
+        """Generates a checkout preview with per-store fulfillment details."""
+        async with AsyncSessionLocal() as session:
+            plan = await self.store_selection_service.get_fulfillment_plan(
+                session, user_id, request
+            )
+
+            store_assignments = plan["store_assignments"]
+            unavailable_items = plan["unavailable_items"]
+            cart_groups = plan["cart_groups"]
+            location_obj = plan["location_obj"]
+            fulfillment_result = plan["fulfillment_result"]
+
+            fulfillable_stores = []
+            overall_total = Decimal("0.00")
+            product_pricing_map = {
+                (item.product_id, group.cart_id): item
+                for group in cart_groups
+                for item in group.items
+            }
+
+            for store_id, assigned_items_list in store_assignments.items():
+                store_subtotal = Decimal("0.00")
+                store_items_priced = []
+                for assigned_item in assigned_items_list:
+                    product_id = assigned_item["product_id"]
+                    cart_id = assigned_item["cart_id"]
+                    if (product_id, cart_id) in product_pricing_map:
+                        priced_item = product_pricing_map[(product_id, cart_id)]
+                        store_subtotal += Decimal(str(priced_item.total_price))
+                        checkout_item = CheckoutCartItemPricingSchema(
+                            **priced_item.model_dump(), source_cart_id=cart_id
+                        )
+                        store_items_priced.append(checkout_item)
+
+                delivery_cost = Decimal("0.00")
+                if request.location.mode in [FulfillmentMode.PICKUP.value, FulfillmentMode.FAR_DELIVERY.value]:
+                    is_nearby = fulfillment_result.get("is_nearby_store", True)
+                    store_info = await session.get(Store, store_id)
+
+                    if store_info is None:
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Store with ID {store_id} not found"
+                        )
+
+                    single_store_delivery = [
+                        {
+                            "store_lat": store_info.latitude,
+                            "store_lng": store_info.longitude,
+                            "delivery_lat": location_obj.latitude,
+                            "delivery_lng": location_obj.longitude,
+                        }
+                    ]
+
+                    delivery_cost = self.order_service.calculate_delivery_charge(
+                        store_deliveries=single_store_delivery,
+                        is_nearby_store=is_nearby,
+                        service_level=request.location.delivery_service_level,
+                    )
+
+                store_total = store_subtotal + delivery_cost
+                overall_total += store_total
+                store_info = await session.get(Store, store_id)
+
+                if store_info is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Store with ID {store_id} not found"
+                    )
+
+                fulfillable_stores.append(
+                    StoreFulfillmentResponse(
+                        store_id=store_id,
+                        store_name=store_info.name,
+                        items=store_items_priced,
+                        subtotal=float(store_subtotal),
+                        delivery_cost=float(delivery_cost),
+                        total=float(store_total),
+                    )
+                )
+
+            fulfillable_stores.sort(key=lambda s: len(s.items), reverse=True)
+
+            return CheckoutResponse(
+                fulfillable_stores=fulfillable_stores,
+                overall_total=float(overall_total),
+                unavailable_items=unavailable_items,
+            )
+
+    async def create_order(self, user_id: str, request: CheckoutRequestSchema) -> CheckoutResponse:
+        """Creates one or more orders based on the checkout request."""
+        if request.location.mode == FulfillmentMode.PICKUP.value and request.split_order:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Splitting an order is not supported for pickup.",
+            )
+
+        preview = await self.preview_order(user_id, request)
+
+        if not request.split_order and request.location.mode == FulfillmentMode.DELIVERY.value:
+            if len(preview.fulfillable_stores) > 1:
+                error_response = NonSplitErrorResponse(
+                    detail="No single store can fulfill the entire order. Please review the options below or allow the order to be split.",
+                    fulfillable_stores=preview.fulfillable_stores,
+                    overall_total=preview.overall_total,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=error_response.model_dump(),
+                )
+
+        final_fulfillable_stores = []
+        for store_fulfillment in preview.fulfillable_stores:
+            created_order = await self.order_service.create_single_store_order(
+                user_id=user_id,
+                store_fulfillment=store_fulfillment,
+                location=request.location,
+                cart_ids=request.cart_ids,
+            )
+            # Create a new StoreFulfillmentResponse with the order_id
+            fulfillment_with_order_id = StoreFulfillmentResponse(
+                order_id=created_order.id,
+                **store_fulfillment.model_dump(exclude={"order_id"})
+            )
+            final_fulfillable_stores.append(fulfillment_with_order_id)
+
+        return CheckoutResponse(
+            fulfillable_stores=final_fulfillable_stores,
+            overall_total=preview.overall_total,
+            unavailable_items=preview.unavailable_items,
+        )
