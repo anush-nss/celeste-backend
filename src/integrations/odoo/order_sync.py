@@ -494,6 +494,15 @@ class OdooOrderSync:
             # Create order with all lines in a single call (run in thread pool)
             date_order_str = order.created_at.strftime("%Y-%m-%d %H:%M:%S")
 
+            # Get warehouse_id from store
+            async with AsyncSessionLocal() as session:
+                from src.database.models.store import Store
+
+                store_result = await session.execute(
+                    select(Store).where(Store.id == order.store_id)
+                )
+                store = store_result.scalars().first()
+
             order_values = {
                 "partner_id": odoo_customer_id,
                 "date_order": date_order_str,
@@ -501,6 +510,9 @@ class OdooOrderSync:
                 "state": "draft",  # Will confirm later
                 "order_line": order_lines,  # Include all lines in one call
             }
+
+            if store and store.odoo_warehouse_id:
+                order_values["warehouse_id"] = store.odoo_warehouse_id
 
             self._error_handler.logger.info(
                 f"Creating Odoo sales order with {lines_created} lines (async)..."

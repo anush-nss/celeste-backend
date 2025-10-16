@@ -248,7 +248,8 @@ async def get_all_stores(
             include_distance=include_distance,
         )
         # get_store_ids_by_location returns List[Dict[str, Any]], so return it directly
-        return success_response(stores_list, status_code=status.HTTP_200_OK)
+        stores_schemas = [StoreSchema.model_validate(store) for store in stores_list]
+        return success_response([s.model_dump(mode="json") for s in stores_schemas], status_code=status.HTTP_200_OK)
     else:
         result = await store_service.get_all_stores(query_params)
         # get_all_stores returns StoreLocationResponse, so convert to JSON
