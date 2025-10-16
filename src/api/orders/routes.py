@@ -12,7 +12,12 @@ from fastapi import (
 from sqlalchemy import select
 
 from src.api.auth.models import DecodedToken
-from src.api.orders.models import CreateOrderSchema, OrderSchema, UpdateOrderSchema
+from src.api.orders.models import (
+    CreateOrderSchema,
+    OrderSchema,
+    PaymentCallbackSchema,
+    UpdateOrderSchema,
+)
 from src.api.orders.service import OrderService
 from src.config.constants import OdooSyncStatus, UserRole
 from src.database.connection import AsyncSessionLocal
@@ -94,15 +99,14 @@ async def update_order_status(order_id: int, order_data: UpdateOrderSchema):
     summary="Handle payment gateway callback",
     status_code=status.HTTP_200_OK,
 )
-async def payment_callback(request: Request, background_tasks: BackgroundTasks):
+async def payment_callback(
+    callback_data: PaymentCallbackSchema, background_tasks: BackgroundTasks
+):
     """Handle payment gateway callback (webhook)"""
-
-    # Get callback data from request body
-    callback_data = await request.json()
 
     # Process callback through order service (with background tasks for Odoo sync)
     result = await order_service.process_payment_callback(
-        callback_data, background_tasks
+        callback_data.model_dump(), background_tasks
     )
 
     if result["status"] == "success":
@@ -213,7 +217,7 @@ async def get_failed_odoo_syncs(limit: int = 50, include_pending: bool = False):
     summary="Retry Odoo sync for a specific order (Admin only)",
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def retry_odoo_sync(order_id: int):
+async def retry_odoo_sync(order_id: int, background_tasks: BackgroundTasks):
     """
     Manually retry Odoo sync for an order that previously failed.
 
@@ -245,30 +249,17 @@ async def retry_odoo_sync(order_id: int):
                     detail=f"Order {order_id} is not confirmed. Only confirmed orders can be synced to Odoo.",
                 )
 
-        # Attempt sync
+        # Attempt sync in the background
         odoo_sync = OdooOrderSync()
-        sync_result = await odoo_sync.sync_order_to_odoo(order_id)
+        background_tasks.add_task(odoo_sync.sync_order_to_odoo, order_id)
 
-        if sync_result["success"]:
-            return success_response(
-                {
-                    "message": f"Order {order_id} successfully synced to Odoo",
-                    "order_id": order_id,
-                    "odoo_order_id": sync_result["odoo_order_id"],
-                    "odoo_customer_id": sync_result["odoo_customer_id"],
-                    "sync_status": "synced",
-                }
-            )
-        else:
-            return success_response(
-                {
-                    "message": f"Odoo sync failed for order {order_id}",
-                    "order_id": order_id,
-                    "sync_status": "failed",
-                    "error": sync_result["error"],
-                },
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        return success_response(
+            {
+                "message": f"Odoo sync for order {order_id} has been queued.",
+                "order_id": order_id,
+                "sync_status": "queued",
+            }
+        )
 
     except HTTPException:
         raise

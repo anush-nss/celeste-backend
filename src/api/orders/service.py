@@ -607,57 +607,69 @@ class OrderService:
         if callback_result["status"] == "error":
             return callback_result
 
-        order_id = callback_result["order_id"]
+        cart_ids = callback_result.get("cart_ids")
         payment_status = callback_result["status"]
 
-        if not order_id:
-            return {"status": "error", "message": "Order ID not found in callback"}
+        if not cart_ids:
+            return {"status": "error", "message": "Cart IDs not found in callback"}
 
-        # Update order status based on payment result
-        if payment_status == "success":
-            # Automatically confirm the order (convert holds to reservations)
-            update_schema = UpdateOrderSchema(status=OrderStatus.CONFIRMED)
-            updated_order = await self.update_order_status(order_id, update_schema)
-
-            # Update user statistics for successful payment
-            try:
-                await self.update_user_statistics(
-                    updated_order.user_id, Decimal(str(updated_order.total_amount))
+        # Fetch all orders associated with the cart_ids
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                result = await session.execute(
+                    select(Order).join(OrderItem).filter(OrderItem.source_cart_id.in_(cart_ids))
                 )
-            except Exception as e:
-                # Log but don't fail the payment processing
-                self._error_handler.logger.error(
-                    f"Failed to update user statistics for order {order_id}: {str(e)}"
-                )
+                orders = result.scalars().unique().all()
 
-            # Queue Odoo sync as background task (non-blocking)
-            if background_tasks:
-                background_tasks.add_task(self._background_odoo_sync, order_id)
-                self._error_handler.logger.info(
-                    f"Odoo sync queued as background task for order {order_id}"
-                )
-            else:
-                # Fallback: log warning if BackgroundTasks not provided
-                self._error_handler.logger.warning(
-                    f"BackgroundTasks not provided - Odoo sync skipped for order {order_id}. "
-                    "Use retry endpoint to sync manually."
-                )
+                if not orders:
+                    return {"status": "error", "message": "No orders found for the given carts"}
 
-            return {
-                "status": "success",
-                "order_id": order_id,
-                "order_status": updated_order.status,
-                "payment_reference": callback_result["payment_reference"],
-                "transaction_id": callback_result["transaction_id"],
-            }
-        else:
-            # Payment failed - cancel order and release holds
-            update_schema = UpdateOrderSchema(status=OrderStatus.CANCELLED)
-            updated_order = await self.update_order_status(order_id, update_schema)
+                processed_orders = []
+                for order in orders:
+                    if payment_status == "success":
+                        # Automatically confirm the order (convert holds to reservations)
+                        update_schema = UpdateOrderSchema(status=OrderStatus.CONFIRMED)
+                        updated_order = await self.update_order_status(order.id, update_schema)
 
-            return {
-                "status": "failed",
-                "order_id": order_id,
-                "order_status": updated_order.status,
-                "payment_reference": callback_result["payment_reference"],
-            }
+                        # Update user statistics for successful payment
+                        try:
+                            await self.update_user_statistics(
+                                updated_order.user_id, Decimal(str(updated_order.total_amount))
+                            )
+                        except Exception as e:
+                            # Log but don't fail the payment processing
+                            self._error_handler.logger.error(
+                                f"Failed to update user statistics for order {order.id}: {str(e)}"
+                            )
+
+                        # Queue Odoo sync as background task (non-blocking)
+                        if background_tasks:
+                            background_tasks.add_task(self._background_odoo_sync, order.id)
+                            self._error_handler.logger.info(
+                                f"Odoo sync queued as background task for order {order.id}"
+                            )
+                        else:
+                            # Fallback: log warning if BackgroundTasks not provided
+                            self._error_handler.logger.warning(
+                                f"BackgroundTasks not provided - Odoo sync skipped for order {order.id}. "
+                                "Use retry endpoint to sync manually."
+                            )
+                        processed_orders.append({
+                            "order_id": order.id,
+                            "order_status": updated_order.status,
+                        })
+                    else:
+                        # Payment failed - cancel order and release holds
+                        update_schema = UpdateOrderSchema(status=OrderStatus.CANCELLED)
+                        updated_order = await self.update_order_status(order.id, update_schema)
+                        processed_orders.append({
+                            "order_id": order.id,
+                            "order_status": updated_order.status,
+                        })
+
+        return {
+            "status": "success",
+            "processed_orders": processed_orders,
+            "payment_reference": callback_result["payment_reference"],
+            "transaction_id": callback_result["transaction_id"],
+        }

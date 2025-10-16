@@ -6,7 +6,15 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import select
+
 from src.shared.error_handler import ErrorHandler
+
+
+import uuid
+
+from src.database.connection import AsyncSessionLocal
+from src.database.models.payment import PaymentTransaction
 
 
 class PaymentService:
@@ -21,7 +29,7 @@ class PaymentService:
 
     async def initiate_payment(
         self,
-        order_id: int,
+        cart_ids: List[int],
         total_amount: Decimal,
         user_id: str,
         payment_method: str = "card",
@@ -29,19 +37,29 @@ class PaymentService:
         """Initiate payment process with bank gateway"""
 
         # Generate unique payment reference
-        payment_reference = f"PAY_{order_id}_{int(datetime.now().timestamp())}"
+        payment_reference = str(uuid.uuid4())
+
+        # Create PaymentTransaction record
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                new_transaction = PaymentTransaction(
+                    payment_reference=payment_reference,
+                    cart_ids=cart_ids,
+                    amount=total_amount,
+                )
+                session.add(new_transaction)
+                await session.flush()
 
         # Prepare payment data for bank gateway
         payment_data = {
             "merchant_id": self.merchant_id,
-            "order_id": str(order_id),
             "payment_reference": payment_reference,
             "amount": f"{total_amount:.2f}",
             "currency": "LKR",
             "payment_method": payment_method,
             "customer_id": user_id,
-            "return_url": f"https://yourapp.com/payment/return/{order_id}",
-            "cancel_url": f"https://yourapp.com/payment/cancel/{order_id}",
+            "return_url": f"https://yourapp.com/payment/return/{payment_reference}",
+            "cancel_url": f"https://yourapp.com/payment/cancel/{payment_reference}",
             "notify_url": "https://yourapp.com/api/orders/payment/callback",
             "expires_at": datetime.now() + timedelta(minutes=30),
         }
@@ -58,13 +76,13 @@ class PaymentService:
             "amount": float(total_amount),
             "currency": "LKR",
             "payment_method": payment_method,
-            "order_id": order_id,
+            "cart_ids": cart_ids,
             "user_id": user_id,
         }
 
         # Log payment initiation
         self._error_handler.logger.info(
-            f"Payment initiated for order {order_id} | "
+            f"Payment initiated for carts {cart_ids} | "
             f"Reference: {payment_reference} | "
             f"Amount: LKR {total_amount} | "
             f"User: {user_id} | "
@@ -80,7 +98,6 @@ class PaymentService:
 
         # Extract callback data
         payment_reference = callback_data.get("payment_reference")
-        order_id = callback_data.get("order_id")
         amount = callback_data.get("amount")
         status_code = callback_data.get("status_code")
         transaction_id = callback_data.get("transaction_id")
@@ -90,7 +107,6 @@ class PaymentService:
         self._error_handler.logger.info(
             f"Payment callback received | "
             f"Reference: {payment_reference} | "
-            f"Order: {order_id} | "
             f"Amount: {amount} | "
             f"Status: {status_code} | "
             f"Transaction: {transaction_id}"
@@ -107,19 +123,42 @@ class PaymentService:
             )
             return {"status": "error", "message": "Invalid signature"}
 
-        # Determine payment status
-        payment_status = "success" if status_code == "2" else "failed"
+        # Get payment transaction from DB
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                result = await session.execute(
+                    select(PaymentTransaction).filter(
+                        PaymentTransaction.payment_reference == payment_reference
+                    )
+                )
+                payment_transaction = result.scalars().first()
 
-        callback_result = {
-            "payment_reference": payment_reference,
-            "order_id": int(order_id) if order_id else None,
-            "status": payment_status,
-            "transaction_id": transaction_id,
-            "amount_charged": float(amount) if amount else 0.0,
-            "processed_at": datetime.now(),
-            "signature_valid": is_valid_signature,
-            "raw_callback_data": callback_data,
-        }
+                if not payment_transaction:
+                    self._error_handler.logger.error(
+                        f"Payment transaction not found for reference {payment_reference}"
+                    )
+                    return {
+                        "status": "error",
+                        "message": "Payment transaction not found",
+                    }
+
+                # Determine payment status
+                payment_status = "success" if status_code == "2" else "failed"
+
+                # Update payment transaction status
+                payment_transaction.status = payment_status
+                await session.flush()
+
+                callback_result = {
+                    "payment_reference": payment_reference,
+                    "cart_ids": payment_transaction.cart_ids,
+                    "status": payment_status,
+                    "transaction_id": transaction_id,
+                    "amount_charged": float(amount) if amount else 0.0,
+                    "processed_at": datetime.now(),
+                    "signature_valid": is_valid_signature,
+                    "raw_callback_data": callback_data,
+                }
 
         # Log callback processing result
         self._error_handler.logger.info(

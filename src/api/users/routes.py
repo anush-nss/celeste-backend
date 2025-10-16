@@ -436,6 +436,15 @@ async def create_multi_cart_order(
         raise UnauthorizedException(detail="User ID not found in token")
 
     order_summary = await checkout_service.create_order(user_id, checkout_data)
+
+    # Initiate payment
+    payment_info = await order_service.payment_service.initiate_payment(
+        cart_ids=checkout_data.cart_ids,
+        total_amount=order_summary.overall_total,
+        user_id=user_id,
+    )
+    order_summary.payment_info = payment_info
+
     return success_response(
         order_summary.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )

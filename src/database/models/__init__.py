@@ -15,6 +15,7 @@ from .store_tag import StoreTag
 from .tier import Tier
 from .tier_benefit import Benefit, tier_benefits
 from .tier_price_list import TierPriceList
+from .payment import PaymentTransaction
 from .user import User
 
 __all__ = [
@@ -39,4 +40,5 @@ __all__ = [
     "Inventory",
     "Order",
     "OrderItem",
+    "PaymentTransaction",
 ]

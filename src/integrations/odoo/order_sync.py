@@ -13,6 +13,8 @@ from typing import Any, Dict, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
 from src.config.constants import OdooSyncStatus, DELIVERY_PRODUCT_ODOO_ID
 from src.database.connection import AsyncSessionLocal
 from src.database.models.order import Order, OrderItem
@@ -43,6 +45,11 @@ class OdooOrderSync:
         # Thread pool for blocking Odoo RPC calls
         self._executor = ThreadPoolExecutor(max_workers=4)
 
+    @retry(
+        retry=retry_if_exception_type((OdooConnectionError, OdooAuthenticationError)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+    )
     async def sync_order_to_odoo(self, order_id: int) -> Dict[str, Any]:
         """
         Sync a confirmed order to Odoo
@@ -427,26 +434,19 @@ class OdooOrderSync:
                     lines_skipped += 1
                     continue
 
-                # For the delivery product, the price is dynamic.
-                # Set the price_unit directly to the delivery charge and discount to 0.
-                if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
-                    base_price = float(item.unit_price)
-                    final_price = base_price
-                    discount_percent = 0.0
-                else:
-                    # For regular products, calculate discount based on base vs final price.
-                    base_price = float(product.base_price)
-                    final_price = float(item.unit_price)
+                # For regular products, calculate discount based on base vs final price.
+                base_price = float(product.base_price)
+                final_price = float(item.unit_price)
 
-                    if base_price > 0:
-                        discount_percent = (
-                            (base_price - final_price) / base_price
-                        ) * 100
-                        discount_percent = max(
-                            0.0, min(100.0, discount_percent)
-                        )  # Clamp 0-100
-                    else:
-                        discount_percent = 0.0
+                if base_price > 0:
+                    discount_percent = (
+                        (base_price - final_price) / base_price
+                    ) * 100
+                    discount_percent = max(
+                        0.0, min(100.0, discount_percent)
+                    )  # Clamp 0-100
+                else:
+                    discount_percent = 0.0
 
                 # Prepare order line using Odoo's command syntax: (0, 0, {...})
                 line_values = {
@@ -459,13 +459,28 @@ class OdooOrderSync:
                 self._error_handler.logger.info(
                     f"Prepared order line | Product: {product.ref} | "
                     f"Qty: {item.quantity} | Price: {base_price} | "
-                    f"Final Price: {final_price} | Discount: {discount_percent:.2f}%"
+                    f"Final Price: {final_price} | Discount: {discount_percent:.2f}% | "
+                    f"Odoo Line Values: {line_values}"
                 )
 
                 # Add to order_lines list using (0, 0, values) command
                 order_lines.append((0, 0, line_values))
 
             lines_created = len(order_lines)
+
+            # Add delivery charge as a separate line
+            if order.delivery_charge > 0:
+                delivery_line_values = {
+                    "product_id": DELIVERY_PRODUCT_ODOO_ID,
+                    "product_uom_qty": 1,
+                    "price_unit": float(order.delivery_charge),
+                    "discount": 0.0,
+                }
+                order_lines.append((0, 0, delivery_line_values))
+                self._error_handler.logger.info(
+                    f"Added delivery charge line | Odoo Line Values: {delivery_line_values}"
+                )
+                lines_created += 1
 
             if lines_created == 0:
                 raise OdooSyncError(

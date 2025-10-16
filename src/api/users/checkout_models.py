@@ -79,6 +79,18 @@ class StoreFulfillmentResponse(BaseModel):
     total: float = Field(..., examples=[10650.0])
 
 
+from datetime import datetime
+
+
+class PaymentInfo(BaseModel):
+    payment_reference: str
+    payment_url: str
+    status: str
+    expires_at: datetime
+    amount: float
+    currency: str
+
+
 class CheckoutResponse(BaseModel):
     """Response for checkout preview and successful order creation."""
 
@@ -86,6 +98,7 @@ class CheckoutResponse(BaseModel):
     fulfillable_stores: List[StoreFulfillmentResponse]
     overall_total: float = Field(..., examples=[10650.0])
     unavailable_items: List[dict] = Field(default_factory=list, examples=[[]])
+    payment_info: Optional[PaymentInfo] = None
 
     model_config = ConfigDict(
         json_schema_extra={

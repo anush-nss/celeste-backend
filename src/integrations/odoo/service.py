@@ -17,15 +17,15 @@ from src.shared.error_handler import ErrorHandler
 
 
 class OdooService:
-    """
-    Odoo ERP integration service using XML-RPC
+    _instance = None
+    _uid = None
+    _models = None
+    _common = None
 
-    Provides methods to:
-    - Authenticate with Odoo
-    - Execute CRUD operations on Odoo models
-    - Test connection
-    - Read products and other entities
-    """
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(OdooService, cls).__new__(cls)
+        return cls._instance
 
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
@@ -49,11 +49,6 @@ class OdooService:
         # API endpoints
         self.common_endpoint = f"{self.url}/xmlrpc/2/common"
         self.object_endpoint = f"{self.url}/xmlrpc/2/object"
-
-        # Connection objects (lazy initialized)
-        self._common = None
-        self._models = None
-        self._uid = None
 
         self._error_handler.logger.info(
             f"OdooService initialized | URL: {self.url} | DB: {self.db}"
@@ -92,6 +87,9 @@ class OdooService:
             OdooAuthenticationError: If authentication fails
             OdooConnectionError: If connection fails
         """
+        if self._uid:
+            return self._uid
+
         try:
             common = self._get_common_proxy()
 
@@ -119,7 +117,6 @@ class OdooService:
             )
 
             return int(uid)
-            return uid
 
         except OdooAuthenticationError:
             raise

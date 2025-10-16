@@ -89,3 +89,25 @@ class CreateOrderSchema(BaseModel):
 
 class UpdateOrderSchema(BaseModel):
     status: OrderStatus = Field(..., examples=[OrderStatus.CONFIRMED.value])
+
+
+class PaymentCallbackSchema(BaseModel):
+    payment_reference: str
+    amount: float
+    status_code: str
+    transaction_id: str
+    signature: str
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "payment_reference": "some-uuid-string",
+                    "amount": 10650.0,
+                    "status_code": "2",
+                    "transaction_id": "txn_12345",
+                    "signature": "some-signature-string",
+                }
+            ]
+        }
+    )
