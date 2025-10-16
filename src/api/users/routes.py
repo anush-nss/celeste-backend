@@ -1,4 +1,4 @@
-from typing import Annotated, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -7,11 +7,11 @@ from src.api.carts.service import CartService
 from src.api.orders.service import OrderService
 from src.api.users.models import (
     AddCartItemSchema,
-    AddressSchema,
+    AddressCreationSchema,
+    AddressResponseSchema,
+    AddressWithDeliverySchema,
     CreateCartSchema,
-    MultiCartCheckoutSchema,
     ShareCartSchema,
-    UpdateAddressSchema,
     UpdateCartItemQuantitySchema,
     UpdateCartSchema,
     UpdateUserSchema,
@@ -25,9 +25,14 @@ from src.shared.exceptions import (
 )
 from src.shared.responses import success_response
 
+from src.api.users.checkout_models import CheckoutRequestSchema, CheckoutResponse
+from src.api.users.checkout_service import CheckoutService
+
 users_router = APIRouter(prefix="/users", tags=["Users"])
+
 user_service = UserService()
 order_service = OrderService()
+checkout_service = CheckoutService()
 
 
 @users_router.get("/me", summary="Get current user profile")
@@ -70,9 +75,13 @@ async def update_user_profile(
 
 
 # Address Management Endpoints
-@users_router.post("/me/addresses", summary="Add a new address for the current user")
+@users_router.post(
+    "/me/addresses",
+    summary="Add a new address for the current user",
+    response_model=AddressWithDeliverySchema,
+)
 async def add_address(
-    address_data: AddressSchema,
+    address_data: AddressCreationSchema,
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
     user_id = current_user.uid
@@ -88,7 +97,11 @@ async def add_address(
     )
 
 
-@users_router.get("/me/addresses", summary="Get all addresses for the current user")
+@users_router.get(
+    "/me/addresses",
+    summary="Get all addresses for the current user",
+    response_model=List[AddressResponseSchema],
+)
 async def get_addresses(
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
@@ -101,7 +114,9 @@ async def get_addresses(
 
 
 @users_router.get(
-    "/me/addresses/{address_id}", summary="Get a specific address for the current user"
+    "/me/addresses/{address_id}",
+    summary="Get a specific address for the current user",
+    response_model=AddressResponseSchema,
 )
 async def get_address_by_id(
     address_id: int,
@@ -118,28 +133,6 @@ async def get_address_by_id(
         )
 
     return success_response(address.model_dump(mode="json"))
-
-
-@users_router.put(
-    "/me/addresses/{address_id}",
-    summary="Update a specific address for the current user",
-)
-async def update_address(
-    address_id: int,
-    address_data: UpdateAddressSchema,
-    current_user: Annotated[DecodedToken, Depends(get_current_user)],
-):
-    user_id = current_user.uid
-    if not user_id:
-        raise UnauthorizedException(detail="User ID not found in token")
-
-    updated_address = await user_service.update_address(
-        user_id, address_id, address_data
-    )
-    if not updated_address:
-        raise HTTPException(status_code=500, detail="Failed to update address")
-
-    return success_response(updated_address.model_dump(mode="json"))
 
 
 @users_router.delete(
@@ -164,6 +157,7 @@ async def delete_address(
 @users_router.put(
     "/me/addresses/{address_id}/set_default",
     summary="Set a specific address as default for the current user",
+    response_model=AddressWithDeliverySchema,
 )
 async def set_default_address(
     address_id: int,
@@ -410,16 +404,20 @@ async def get_available_carts_for_checkout(
     return success_response({"available_carts": carts})
 
 
-@users_router.post("/me/checkout/preview", summary="Preview multi-cart order")
+@users_router.post(
+    "/me/checkout/preview",
+    summary="Preview multi-cart order",
+    response_model=CheckoutResponse,
+)
 async def preview_multi_cart_order(
-    checkout_data: MultiCartCheckoutSchema,
+    checkout_data: CheckoutRequestSchema,
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
     user_id = current_user.uid
     if not user_id:
         raise UnauthorizedException(detail="User ID not found in token")
 
-    preview = await CartService.preview_multi_cart_order(user_id, checkout_data)
+    preview = await checkout_service.preview_order(user_id, checkout_data)
     return success_response(preview.model_dump(mode="json"))
 
 
@@ -427,16 +425,26 @@ async def preview_multi_cart_order(
     "/me/checkout/order",
     summary="Create multi-cart order",
     status_code=status.HTTP_201_CREATED,
+    response_model=CheckoutResponse,
 )
 async def create_multi_cart_order(
-    checkout_data: MultiCartCheckoutSchema,
+    checkout_data: CheckoutRequestSchema,
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
     user_id = current_user.uid
     if not user_id:
         raise UnauthorizedException(detail="User ID not found in token")
 
-    order = await order_service.create_multi_cart_order(user_id, checkout_data)
+    order_summary = await checkout_service.create_order(user_id, checkout_data)
+
+    # Initiate payment
+    payment_info = await order_service.payment_service.initiate_payment(
+        cart_ids=checkout_data.cart_ids,
+        total_amount=order_summary.overall_total,
+        user_id=user_id,
+    )
+    order_summary.payment_info = payment_info
+
     return success_response(
-        order.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
+        order_summary.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )

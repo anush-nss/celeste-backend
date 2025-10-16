@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, cast
 
 from src.api.products.models import (
     CreateProductSchema,
@@ -15,6 +15,7 @@ from src.api.products.services import (
     ProductQueryService,
     ProductTagService,
 )
+from src.api.stores.service import StoreService
 from src.api.tags.models import CreateTagSchema
 from src.database.models.product import Tag
 from src.shared.error_handler import ErrorHandler
@@ -30,6 +31,7 @@ class ProductService:
         self.inventory_service = ProductInventoryService()
         self.tag_service = ProductTagService()
         self.bulk_service = ProductBulkService()
+        self.store_service = StoreService()
 
     # Core CRUD operations
     async def get_product_by_id(
@@ -45,9 +47,12 @@ class ProductService:
         )
 
         if product and store_id:
-            product = await self.inventory_service.add_inventory_to_single_product(
-                product, store_id
+            inventory_info = (
+                await self.inventory_service.get_aggregated_inventory_for_product(
+                    product_id, [store_id], is_nearby_store=True
+                )
             )
+            product.inventory = inventory_info
 
         return product
 
@@ -63,10 +68,14 @@ class ProductService:
             product_ref, include_categories, include_tags
         )
 
-        if product and store_id:
-            product = await self.inventory_service.add_inventory_to_single_product(
-                product, store_id
+        if product and store_id and product.id is not None:
+            # We need to get the product ID first to fetch inventory
+            inventory_info = (
+                await self.inventory_service.get_aggregated_inventory_for_product(
+                    product.id, [store_id], is_nearby_store=True
+                )
             )
+            product.inventory = inventory_info
 
         return product
 
@@ -77,6 +86,7 @@ class ProductService:
         include_categories: bool = True,
         include_tags: bool = True,
         include_inventory: bool = True,
+        include_alternatives: bool = False,
         customer_tier: Optional[int] = None,
         store_ids: Optional[List[int]] = None,
         latitude: Optional[float] = None,
@@ -93,6 +103,7 @@ class ProductService:
             include_categories=include_categories,
             include_tags=include_tags,
             include_inventory=include_inventory,
+            include_alternatives=include_alternatives,
             latitude=latitude,
             longitude=longitude,
             store_id=store_ids,
@@ -105,13 +116,29 @@ class ProductService:
             (
                 effective_store_ids,
                 is_nearby_store,
-            ) = await self.inventory_service.get_stores_by_location(latitude, longitude)
+            ) = await self.store_service.get_store_ids_by_location(latitude, longitude)
+            effective_store_ids = cast(List[int], effective_store_ids)
 
         # Use query service to get product with comprehensive SQL
-        # We'll create a custom method for single product retrieval
         product = await self.query_service.get_single_product_by_id(
-            product_id, query_params, customer_tier, effective_store_ids, quantity
+            product_id,
+            query_params,
+            customer_tier,
+            effective_store_ids,
+            quantity,
+            is_nearby_store,
         )
+
+        if product and include_alternatives and product.alternative_product_ids:
+            alternative_products = await self.query_service.get_products_by_ids(
+                product.alternative_product_ids,
+                customer_tier=customer_tier,
+                store_ids=effective_store_ids,
+                is_nearby_store=is_nearby_store,
+                latitude=latitude,
+                longitude=longitude,
+            )
+            product.alternatives = alternative_products
 
         return product
 
@@ -122,6 +149,7 @@ class ProductService:
         include_categories: bool = True,
         include_tags: bool = True,
         include_inventory: bool = True,
+        include_alternatives: bool = False,
         customer_tier: Optional[int] = None,
         store_ids: Optional[List[int]] = None,
         latitude: Optional[float] = None,
@@ -138,6 +166,7 @@ class ProductService:
             include_categories=include_categories,
             include_tags=include_tags,
             include_inventory=include_inventory,
+            include_alternatives=include_alternatives,
             latitude=latitude,
             longitude=longitude,
             store_id=store_ids,
@@ -150,13 +179,29 @@ class ProductService:
             (
                 effective_store_ids,
                 is_nearby_store,
-            ) = await self.inventory_service.get_stores_by_location(latitude, longitude)
+            ) = await self.store_service.get_store_ids_by_location(latitude, longitude)
+            effective_store_ids = cast(List[int], effective_store_ids)
 
         # Use query service to get product with comprehensive SQL
-        # We'll create a custom method for single product retrieval by ref
         product = await self.query_service.get_single_product_by_ref(
-            ref, query_params, customer_tier, effective_store_ids, quantity
+            ref,
+            query_params,
+            customer_tier,
+            effective_store_ids,
+            quantity,
+            is_nearby_store,
         )
+
+        if product and include_alternatives and product.alternative_product_ids:
+            alternative_products = await self.query_service.get_products_by_ids(
+                product.alternative_product_ids,
+                customer_tier=customer_tier,
+                store_ids=effective_store_ids,
+                is_nearby_store=is_nearby_store,
+                latitude=latitude,
+                longitude=longitude,
+            )
+            product.alternatives = alternative_products
 
         return product
 
@@ -203,9 +248,10 @@ class ProductService:
             (
                 effective_store_ids,
                 is_nearby_store,
-            ) = await self.inventory_service.get_stores_by_location(
+            ) = await self.store_service.get_store_ids_by_location(
                 query_params.latitude, query_params.longitude
             )
+            effective_store_ids = cast(List[int], effective_store_ids)
 
         # Single comprehensive query with all data
         return await self.query_service.get_products_with_criteria(
@@ -266,7 +312,8 @@ class ProductService:
             (
                 store_ids,
                 is_nearby_store,
-            ) = await self.inventory_service.get_stores_by_location(latitude, longitude)
+            ) = await self.store_service.get_store_ids_by_location(latitude, longitude)
+        store_ids = cast(Optional[List[int]], store_ids)
 
         # Get recent products using query service
         return await self.query_service.get_recent_products_for_user(

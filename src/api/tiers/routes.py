@@ -17,6 +17,7 @@ from src.api.tiers.models import (
 from src.api.tiers.service import TierService
 from src.config.constants import UserRole
 from src.dependencies.auth import RoleChecker, get_current_user
+from src.dependencies.environment import dev_mode_only
 from src.shared.exceptions import ResourceNotFoundException
 from src.shared.responses import success_response
 
@@ -110,12 +111,12 @@ async def delete_tier(tier_id: int):
 
 @router.post(
     "/initialize-defaults",
-    summary="Initialize default customer tiers",
+    summary="Initialize default customer tiers (DEV MODE ONLY)",
     response_model=List[TierSchema],
-    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+    dependencies=[Depends(dev_mode_only)],
 )
 async def initialize_default_tiers():
-    """Initialize default customer tiers (Admin only)"""
+    """Initialize default customer tiers (DEV MODE ONLY)"""
     tiers = await tier_service.initialize_default_tiers()
     return success_response([tier.model_dump(mode="json") for tier in tiers])
 

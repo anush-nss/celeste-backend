@@ -66,7 +66,9 @@ def sqlalchemy_to_dict(
         is_loaded = _is_relationship_loaded(obj, rel_name)
 
         # Only include if specifically requested or if it's already loaded
-        should_include = (rel_name in include_relationships or not include_relationships) and is_loaded
+        should_include = (
+            rel_name in include_relationships or not include_relationships
+        ) and is_loaded
 
         if should_include:
             try:

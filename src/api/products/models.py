@@ -29,6 +29,7 @@ class ProductSchema(BaseModel):
     image_urls: List[str] = []  # First image is primary
     ecommerce_category_id: Optional[int] = None
     ecommerce_subcategory_id: Optional[int] = None
+    alternative_product_ids: List[int] = []
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -59,6 +60,7 @@ class CreateProductSchema(BaseModel):
     image_urls: List[str] = []
     ecommerce_category_id: Optional[int] = None
     ecommerce_subcategory_id: Optional[int] = None
+    alternative_product_ids: List[int] = []
     category_ids: List[int] = []  # IDs of categories to assign
     tag_ids: List[int] = []  # IDs of tags to assign
 
@@ -75,6 +77,7 @@ class UpdateProductSchema(BaseModel):
     image_urls: Optional[List[str]] = None
     ecommerce_category_id: Optional[int] = None
     ecommerce_subcategory_id: Optional[int] = None
+    alternative_product_ids: Optional[List[int]] = None
     category_ids: Optional[List[int]] = None
     tag_ids: Optional[List[int]] = None
 
@@ -94,16 +97,22 @@ class PricingInfoSchema(BaseModel):
 
 
 class InventoryInfoSchema(BaseModel):
-    """Inventory information for a specific store"""
+    """Aggregated inventory information for a product"""
 
-    store_id: int = Field(..., description="Store ID")
-    in_stock: bool = Field(..., description="Whether product is in stock")
-    quantity_available: int = Field(..., description="Available quantity")
-    quantity_on_hold: int = Field(..., description="Quantity on hold")
-    quantity_reserved: int = Field(..., description="Reserved quantity")
-    is_nearby_store: bool = Field(
-        True,
-        description="False if inventory is from a distant default store, True if from nearby store",
+    can_order: bool = Field(description="Whether the product can be ordered")
+    max_available: int = Field(
+        ge=0,
+        description="Maximum quantity available to order (considering safety stock)",
+    )
+    in_stock: bool = Field(
+        description="Whether product is in stock (at least 1 unit available above safety stock)"
+    )
+    ondemand_delivery_available: bool = Field(
+        description="Whether on-demand delivery is available (nearby stores + has stock)"
+    )
+    reason_unavailable: Optional[str] = Field(
+        None,
+        description="Reason why product is not available (only set when can_order=False)",
     )
 
 
@@ -122,6 +131,7 @@ class EnhancedProductSchema(BaseModel):
     image_urls: List[str] = []  # First image is primary
     ecommerce_category_id: Optional[int] = None
     ecommerce_subcategory_id: Optional[int] = None
+    alternative_product_ids: List[int] = []
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -133,8 +143,11 @@ class EnhancedProductSchema(BaseModel):
     pricing: Optional[PricingInfoSchema] = Field(
         None, description="Pricing information with applied discounts"
     )
-    inventory: Optional[List[InventoryInfoSchema]] = Field(
-        None, description="Inventory information for multiple stores"
+    inventory: Optional[InventoryInfoSchema] = Field(
+        None, description="Aggregated inventory availability information"
+    )
+    alternatives: Optional[List["EnhancedProductSchema"]] = Field(
+        None, description="List of alternative products"
     )
 
     model_config = ConfigDict(from_attributes=True)
@@ -163,6 +176,9 @@ class ProductQuerySchema(BaseModel):
     include_tags: Optional[bool] = Field(
         default=False, description="Whether to include tag information"
     )
+    include_alternatives: Optional[bool] = Field(
+        default=False, description="Whether to include alternative products"
+    )
     category_ids: Optional[List[int]] = None
     tags: Optional[List[str]] = None  # Filter by tags with flexible syntax
     min_price: Optional[float] = None
@@ -170,6 +186,11 @@ class ProductQuerySchema(BaseModel):
     only_discounted: Optional[bool] = Field(
         default=False, description="Return only products with discounts applied"
     )
+    has_inventory: Optional[bool] = Field(
+        default=None,
+        description="Filter products with available inventory (quantity > safety_stock)",
+    )
+
     # Location-based store finding parameters
     latitude: Optional[float] = Field(
         None,

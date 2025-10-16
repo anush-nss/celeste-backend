@@ -68,6 +68,7 @@ async def create_inventory(
     - **quantity_available**: Available quantity (must be >= 0)
     - **quantity_reserved**: Reserved quantity (default: 0)
     - **quantity_on_hold**: On-hold quantity (default: 0)
+    - **safety_stock**: Safety stock level (default: 0)
     """
     is_list = isinstance(payload, list)
     inventory_items_to_create = payload if is_list else [payload]

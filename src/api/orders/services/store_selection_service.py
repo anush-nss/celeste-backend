@@ -2,7 +2,7 @@
 Store selection service with automatic selection and splitting logic
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from sqlalchemy import and_, text
 from sqlalchemy.future import select
@@ -12,6 +12,7 @@ from src.config.constants import (
     DEFAULT_SEARCH_RADIUS_KM,
     DEFAULT_STORE_IDS,
     NEXT_DAY_DELIVERY_ONLY_TAG_ID,
+    FulfillmentMode,
 )
 from src.database.models.address import Address
 from src.database.models.inventory import Inventory
@@ -21,14 +22,92 @@ from src.shared.error_handler import ErrorHandler
 from src.shared.exceptions import ValidationException
 
 
+from src.api.carts.service import CartService
+from src.api.users.checkout_models import CheckoutRequestSchema
+from src.api.users.models import (
+    MultiCartCheckoutSchema,
+    CheckoutLocationSchema,
+)
+
+
 class StoreSelectionService:
     """Automatic store selection with nearest-first and splitting logic"""
 
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
+        self.cart_service = CartService()
+
+    async def get_fulfillment_plan(
+        self, session, user_id: str, request: CheckoutRequestSchema
+    ) -> dict:
+        """Centralized method to get a complete fulfillment plan."""
+
+        location_schema = CheckoutLocationSchema(
+            mode=request.location.mode,
+            store_id=request.location.store_id,
+            address_id=request.location.address_id,
+        )
+        validation_request = MultiCartCheckoutSchema(
+            cart_ids=request.cart_ids, location=location_schema
+        )
+
+        validation_data = await self.cart_service.validate_checkout_data(
+            session, user_id, validation_request
+        )
+        pricing_data = (
+            await self.cart_service.fetch_products_and_calculate_pricing_with_session(
+                session, validation_data
+            )
+        )
+        cart_groups = self.cart_service.build_cart_groups(validation_data, pricing_data)
+
+        location_obj = validation_data["location_obj"]
+        all_items = [
+            {
+                "product_id": item.product_id,
+                "quantity": item.quantity,
+                "cart_id": group.cart_id,
+            }
+            for group in cart_groups
+            for item in group.items
+        ]
+
+        if request.location.mode == FulfillmentMode.PICKUP.value:
+            fulfillment_result = await self.validate_pickup_store(
+                store_id=location_obj.id,
+                cart_items=all_items,
+                session=session,
+            )
+            if not fulfillment_result["all_items_available"]:
+                raise ValidationException(
+                    "Not all items are available at the selected pickup store."
+                )
+            store_assignments = {location_obj.id: all_items}
+            unavailable_items = []
+            fulfillment_result["is_nearby_store"] = True  # Set for pickup
+        else:
+            fulfillment_result = await self.select_stores_for_delivery(
+                address_id=location_obj.id,
+                cart_items=all_items,
+                mode=request.location.mode,
+                session=session,
+            )
+            store_assignments = fulfillment_result["store_assignments"]
+            unavailable_items = fulfillment_result["unavailable_items"]
+
+        if not store_assignments:
+            raise ValidationException("Could not find any stores to fulfill the order.")
+
+        return {
+            "store_assignments": store_assignments,
+            "unavailable_items": unavailable_items,
+            "cart_groups": cart_groups,
+            "location_obj": location_obj,
+            "fulfillment_result": fulfillment_result,
+        }
 
     async def select_stores_for_delivery(
-        self, address_id: int, cart_items: List[Dict[str, Any]], session
+        self, address_id: int, cart_items: List[Dict[str, Any]], mode: str, session
     ) -> Dict[str, Any]:
         """Select optimal stores for delivery with splitting if needed"""
 
@@ -47,12 +126,15 @@ class StoreSelectionService:
             if not address_coords:
                 raise ValidationException(f"Address with ID {address_id} not found")
 
-            # Get all active stores with distances
-            nearby_stores, is_nearby = await self._get_stores_by_distance(
-                address_coords, session
-            )
+            # Get stores based on mode
+            if mode == "far_delivery":
+                stores, is_nearby = await self._get_default_stores(session), False
+            else:  # default to delivery
+                stores, is_nearby = await self._get_stores_by_distance(
+                    address_coords, session
+                )
 
-            if not nearby_stores:
+            if not stores:
                 raise ValidationException("No active stores found for delivery")
 
             # Update tracking flag
@@ -88,7 +170,7 @@ class StoreSelectionService:
                 selection_result["unavailable_items"] = excluded_items
 
             # Try to fulfill from nearest store first
-            nearest_store = nearby_stores[0]
+            nearest_store = stores[0]
             availability = await self._check_store_availability(
                 nearest_store["store_id"], cart_items, session
             )
@@ -106,7 +188,7 @@ class StoreSelectionService:
             else:
                 # Need to split across multiple stores
                 split_result = await self._split_items_across_stores(
-                    cart_items, nearby_stores, session
+                    cart_items, stores, session
                 )
 
                 # Merge unavailable items from excluded products and stock unavailability
@@ -320,7 +402,7 @@ class StoreSelectionService:
     async def _check_store_availability(
         self, store_id: int, cart_items: List[Dict[str, Any]], session
     ) -> Dict[str, Any]:
-        """Check if all items are available at specific store (bulk optimized)"""
+        """Check if all items are available at specific store (bulk optimized, respects safety stock)"""
 
         availability_result = {
             "all_available": True,
@@ -343,14 +425,17 @@ class StoreSelectionService:
         result = await session.execute(inventory_query)
         inventories = result.scalars().all()
 
-        # Build inventory map: product_id -> available quantity
-        inventory_map = {inv.product_id: inv.quantity_available for inv in inventories}
+        # Build inventory map: product_id -> usable quantity (considering safety stock)
+        inventory_map = {}
+        for inv in inventories:
+            usable_qty = max(0, inv.quantity_available - (inv.safety_stock or 0))
+            inventory_map[inv.product_id] = usable_qty
 
         # Check availability for each item
         for item in cart_items:
-            available_qty = inventory_map.get(item["product_id"], 0)
+            usable_qty = inventory_map.get(item["product_id"], 0)
 
-            if available_qty >= item["quantity"]:
+            if usable_qty >= item["quantity"]:
                 availability_result["available_items"].append(item)
             else:
                 availability_result["unavailable_items"].append(item)
@@ -409,23 +494,19 @@ class StoreSelectionService:
         Returns dict with per-product fulfillment info.
         """
         # Reuse StoreService to get nearby stores
-        from src.api.stores.models import StoreQuerySchema
         from src.api.stores.service import StoreService
 
         store_service = StoreService()
-        query_params = StoreQuerySchema(
-            latitude=latitude,
-            longitude=longitude,
-            radius=radius_km,
-            is_active=True,
-            include_distance=True,
-            limit=10,
-            tags=None,
-            include_tags=False,
-        )
 
         # Get stores sorted by distance (closest first)
-        stores_data = await store_service.get_stores_by_location(query_params)
+        stores_data, is_nearby_store = await store_service.get_store_ids_by_location(
+            latitude=latitude,
+            longitude=longitude,
+            radius_km=radius_km,
+            return_full_stores=True,
+            include_distance=True,
+        )
+        stores_data = cast(Optional[List[Dict[str, Any]]], stores_data)
 
         if not stores_data:
             return {
@@ -455,7 +536,7 @@ class StoreSelectionService:
             key = (inv.product_id, inv.store_id)
             inventory_map[key] = inv
 
-        # Check each cart item
+        # Check each cart item (respecting safety stock)
         fulfillment_info = []
         can_fulfill_all = True
 
@@ -463,7 +544,7 @@ class StoreSelectionService:
             product_id = item["product_id"]
             quantity_needed = item["quantity"]
 
-            # Find closest store with sufficient stock
+            # Find closest store with sufficient usable stock (considering safety stock)
             fulfilled_store = None
             quantity_available = 0
 
@@ -471,13 +552,19 @@ class StoreSelectionService:
                 inv_key = (product_id, store_id)
                 inv = inventory_map.get(inv_key)
 
-                if inv and inv.quantity_available >= quantity_needed:
-                    # Found store with enough stock
-                    fulfilled_store = stores_by_id[store_id]
-                    quantity_available = inv.quantity_available
-                    break
+                if inv:
+                    # Calculate usable quantity (respecting safety stock)
+                    usable_qty = max(
+                        0, inv.quantity_available - (inv.safety_stock or 0)
+                    )
 
-            # If not fully available, find store with maximum available quantity
+                    if usable_qty >= quantity_needed:
+                        # Found store with enough usable stock
+                        fulfilled_store = stores_by_id[store_id]
+                        quantity_available = usable_qty
+                        break
+
+            # If not fully available, find store with maximum usable quantity
             if not fulfilled_store:
                 max_available = 0
                 best_store = None
@@ -486,9 +573,15 @@ class StoreSelectionService:
                     inv_key = (product_id, store_id)
                     inv = inventory_map.get(inv_key)
 
-                    if inv and inv.quantity_available > max_available:
-                        max_available = inv.quantity_available
-                        best_store = stores_by_id[store_id]
+                    if inv:
+                        # Calculate usable quantity (respecting safety stock)
+                        usable_qty = max(
+                            0, inv.quantity_available - (inv.safety_stock or 0)
+                        )
+
+                        if usable_qty > max_available:
+                            max_available = usable_qty
+                            best_store = stores_by_id[store_id]
 
                 quantity_available = max_available
                 fulfilled_store = best_store

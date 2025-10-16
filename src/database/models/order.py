@@ -16,7 +16,12 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.config.constants import FulfillmentMode, OdooSyncStatus, OrderStatus
+from src.config.constants import (
+    DeliveryServiceLevel,
+    FulfillmentMode,
+    OdooSyncStatus,
+    OrderStatus,
+)
 from src.database.base import Base
 
 if TYPE_CHECKING:
@@ -97,6 +102,15 @@ class Order(Base):
             name="fulfillmentmode",
         ),
         default=FulfillmentMode.PICKUP.value,
+        nullable=False,
+    )
+    delivery_service_level: Mapped[str] = mapped_column(
+        Enum(
+            DeliveryServiceLevel,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="deliveryservicelevel",
+        ),
+        server_default=DeliveryServiceLevel.STANDARD.value,
         nullable=False,
     )
     status: Mapped[str] = mapped_column(

@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # Enums for validation
@@ -16,17 +16,19 @@ class DiscountType(str, Enum):
     PERCENTAGE = "percentage"
 
 
-# Benefit Schema (now a separate entity with many-to-many relationship to tiers)
+# Benefit Schema
 class BenefitSchema(BaseModel):
-    id: Optional[int] = None
-    benefit_type: BenefitType  # order_discount or delivery_discount
-    discount_type: DiscountType  # flat or percentage
-    discount_value: float  # required
-    max_discount_amount: Optional[float] = None  # used for percentage discounts
-    min_order_value: float = 0.0  # minimum order value required
-    min_items: int = 0  # minimum items required
-    is_active: bool = True
+    id: Optional[int] = Field(None, examples=[1])
+    benefit_type: BenefitType = Field(..., examples=[BenefitType.ORDER_DISCOUNT])
+    discount_type: DiscountType = Field(..., examples=[DiscountType.PERCENTAGE])
+    discount_value: float = Field(..., examples=[10.0])
+    max_discount_amount: Optional[float] = Field(None, examples=[500.0])
+    min_order_value: float = Field(0.0, examples=[2000.0])
+    min_items: int = Field(0, examples=[3])
+    is_active: bool = Field(True)
     created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CreateBenefitSchema(BaseModel):
@@ -49,7 +51,7 @@ class UpdateBenefitSchema(BaseModel):
     is_active: Optional[bool] = None
 
 
-# Price List Schemas
+# Price List Schemas (Skipping examples for now as they are complex)
 class PriceListSchema(BaseModel):
     id: Optional[int] = None
     name: str = Field(..., min_length=1)
@@ -79,47 +81,43 @@ class PriceListLineSchema(BaseModel):
 
 # Updated Tier Schema
 class TierSchema(BaseModel):
-    id: Optional[int] = None
-    name: str = Field(..., min_length=1, description="Tier name")
-    description: Optional[str] = None
-    sort_order: int = 0
-    is_active: bool = True
-
-    # Requirements
-    min_total_spent: float = 0.0
-    min_orders_count: int = 0
-    min_monthly_spent: float = 0.0
-    min_monthly_orders: int = 0
-
+    id: Optional[int] = Field(None, examples=[2])
+    name: str = Field(..., min_length=1, description="Tier name", examples=["Gold"])
+    description: Optional[str] = Field(
+        None, examples=["Gold tier members get exclusive benefits"]
+    )
+    sort_order: int = Field(0, examples=[2])
+    is_active: bool = Field(True)
+    min_total_spent: float = Field(0.0, examples=[50000.0])
+    min_orders_count: int = Field(0, examples=[10])
+    min_monthly_spent: float = Field(0.0, examples=[10000.0])
+    min_monthly_orders: int = Field(0, examples=[2])
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-
-    # Related data
     benefits: List[BenefitSchema] = Field(default_factory=list)
     price_lists: List[PriceListSchema] = Field(default_factory=list)
 
+    model_config = ConfigDict(from_attributes=True)
+
 
 class CreateTierSchema(BaseModel):
-    name: str = Field(..., min_length=1, description="Tier name")
-    description: Optional[str] = None
-    sort_order: int = 0
-    is_active: bool = True
-
-    # Requirements
-    min_total_spent: float = 0.0
-    min_orders_count: int = 0
-    min_monthly_spent: float = 0.0
-    min_monthly_orders: int = 0
-
-    # Benefit IDs to associate with the tier
+    name: str = Field(..., min_length=1, description="Tier name", examples=["Platinum"])
+    description: Optional[str] = Field(None, examples=["Top-level customer tier"])
+    sort_order: int = Field(0, examples=[1])
+    is_active: bool = Field(True)
+    min_total_spent: float = Field(0.0, examples=[100000.0])
+    min_orders_count: int = Field(0, examples=[25])
+    min_monthly_spent: float = Field(0.0, examples=[20000.0])
+    min_monthly_orders: int = Field(0, examples=[5])
     benefits: List[int] = Field(
         default_factory=list,
         description="List of benefit IDs to associate with this tier",
+        examples=[[1, 2]],
     )
-    # Price list IDs to associate with the tier
     price_lists: List[int] = Field(
         default_factory=list,
         description="List of price list IDs to associate with this tier",
+        examples=[[101]],
     )
 
 
@@ -128,19 +126,14 @@ class UpdateTierSchema(BaseModel):
     description: Optional[str] = None
     sort_order: Optional[int] = None
     is_active: Optional[bool] = None
-
-    # Requirements
     min_total_spent: Optional[float] = None
     min_orders_count: Optional[int] = None
     min_monthly_spent: Optional[float] = None
     min_monthly_orders: Optional[int] = None
-
-    # Benefit IDs to associate with the tier
     benefits: List[int] = Field(
         default_factory=list,
         description="List of benefit IDs to associate with this tier",
     )
-    # Price list IDs to associate with the tier
     price_lists: List[int] = Field(
         default_factory=list,
         description="List of price list IDs to associate with this tier",

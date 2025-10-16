@@ -50,6 +50,7 @@ class StoreSchema(BaseModel):
     email: Optional[str] = Field(None, description="Store email address")
     phone: Optional[str] = Field(None, description="Store phone number")
     is_active: bool = Field(True, description="Whether the store is active")
+    odoo_warehouse_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -80,6 +81,7 @@ class CreateStoreSchema(BaseModel):
     phone: Optional[str] = Field(None, description="Store phone number")
     tag_ids: List[int] = Field(default=[], description="IDs of tags to assign")
     is_active: Optional[bool] = Field(True, description="Whether the store is active")
+    odoo_warehouse_id: Optional[int] = None
 
 
 class UpdateStoreSchema(BaseModel):
@@ -102,6 +104,7 @@ class UpdateStoreSchema(BaseModel):
     phone: Optional[str] = Field(None, description="Store phone number")
     tag_ids: Optional[List[int]] = None
     is_active: Optional[bool] = None
+    odoo_warehouse_id: Optional[int] = None
 
 
 class StoreQuerySchema(BaseModel):

@@ -9,6 +9,7 @@ from src.api.products.models import (
     ProductQuerySchema,
 )
 from src.api.tags.service import TagService
+from src.config.cache_config import CacheConfig
 from src.database.connection import AsyncSessionLocal
 from src.shared.cache_service import cache_service
 from src.shared.error_handler import ErrorHandler
@@ -21,6 +22,12 @@ class ProductQueryService:
         self._error_handler = ErrorHandler(__name__)
         self.tag_service = TagService(entity_type="product")
         self.cache = cache_service
+        # Import here to avoid circular dependency
+        from src.api.products.services.inventory_service import (
+            ProductInventoryService,
+        )
+
+        self.inventory_service = ProductInventoryService()
 
     async def get_products_with_criteria(
         self,
@@ -31,39 +38,85 @@ class ProductQueryService:
     ) -> PaginatedProductsResponse:
         """Execute comprehensive product query with integrated pricing and inventory data"""
 
-        # Generate cache key
-        cache_key = self._generate_cache_key(
-            query_params, customer_tier, store_ids, is_nearby_store
+        # Create a query without inventory for caching
+        query_without_inventory = ProductQuerySchema(
+            **{**query_params.model_dump(), "include_inventory": False}
         )
 
-        # Try cache first
+        # Generate cache key for products without inventory
+        cache_key = self._generate_cache_key(
+            query_without_inventory, customer_tier, None, is_nearby_store
+        )
+
+        # Try cache first for product data
         cached_result = await self.cache.get(cache_key)
         if cached_result:
-            return PaginatedProductsResponse.model_validate(cached_result)
+            products = [EnhancedProductSchema(**p) for p in cached_result["products"]]
+            pagination = cached_result["pagination"]
+        else:
+            async with AsyncSessionLocal() as session:
+                # Build comprehensive SQL query without inventory
+                sql_query, params = self._build_comprehensive_sql(
+                    query_without_inventory, customer_tier, None
+                )
 
-        async with AsyncSessionLocal() as session:
-            # Build comprehensive SQL query with joins
-            sql_query, params = self._build_comprehensive_sql(
-                query_params, customer_tier, store_ids
+                # Execute single query
+                result = await session.execute(text(sql_query), params)
+                rows = result.fetchall()
+
+                # Process results efficiently
+                products, pagination = await self._process_results_fast(
+                    rows, query_without_inventory, is_nearby_store
+                )
+
+            # Cache product data (without inventory)
+            cache_data = {
+                "products": [p.model_dump(mode="json") for p in products],
+                "pagination": pagination,
+            }
+            await self.cache.set(
+                cache_key, cache_data, ttl=CacheConfig.PRODUCT_DATA_TTL
             )
 
-            # Execute single query
-            result = await session.execute(text(sql_query), params)
-            rows = result.fetchall()
+        # Add real-time inventory if requested OR if filters require it
+        needs_inventory = query_params.include_inventory or query_params.has_inventory
 
-            # Process results efficiently
-            products, pagination = await self._process_results_fast(
-                rows, query_params, is_nearby_store
+        # Determine if we need to apply inventory filtering
+        has_inventory_filter = query_params.has_inventory is not None
+
+        if needs_inventory and store_ids:
+            products = await self.inventory_service.add_inventory_to_products_bulk(
+                products=products,
+                store_ids=store_ids,
+                is_nearby_store=is_nearby_store,
+                latitude=query_params.latitude,
+                longitude=query_params.longitude,
             )
 
-            response = PaginatedProductsResponse(
-                products=products, pagination=pagination
-            )
+            # Apply inventory filters only if we're filtering by has_inventory
+            if has_inventory_filter:
+                products = [
+                    p
+                    for p in products
+                    if p.inventory
+                    and (
+                        p.inventory.can_order
+                        if query_params.has_inventory
+                        else not p.inventory.can_order
+                    )
+                ]
 
-            # Cache result for 5 minutes
-            await self.cache.set(cache_key, response.model_dump(mode="json"), ttl=300)
+            # Update pagination total_returned after filtering
+            pagination["total_returned"] = len(products)
 
-            return response
+        # Remove inventory from response if not explicitly requested
+        if not query_params.include_inventory:
+            for product in products:
+                product.inventory = None
+
+        response = PaginatedProductsResponse(products=products, pagination=pagination)
+
+        return response
 
     def _build_comprehensive_sql(
         self,
@@ -85,6 +138,7 @@ class ProductQueryService:
             "p.image_urls",
             "p.ecommerce_category_id",
             "p.ecommerce_subcategory_id",
+            "p.alternative_product_ids",
             "p.created_at",
             "p.updated_at",
         ]
@@ -105,13 +159,7 @@ class ProductQueryService:
                 ]
             )
 
-        # Add inventory fields if requested
-        if query_params.include_inventory and store_ids:
-            select_fields.extend(
-                [
-                    "STRING_AGG(DISTINCT CONCAT(inv.store_id, '|', inv.quantity_available, '|', inv.quantity_on_hold, '|', inv.quantity_reserved), ';') as inventory_data"
-                ]
-            )
+        # Note: Inventory is handled separately by ProductInventoryService (not in SQL)
 
         # Add pricing fields if requested
         if query_params.include_pricing and customer_tier:
@@ -135,10 +183,7 @@ class ProductQueryService:
             joins.append("LEFT JOIN product_tags pt ON p.id = pt.product_id")
             joins.append("LEFT JOIN tags t ON pt.tag_id = t.id")
 
-        if query_params.include_inventory and store_ids:
-            joins.append(
-                f"LEFT JOIN inventory inv ON p.id = inv.product_id AND inv.store_id = ANY(ARRAY{store_ids})"
-            )
+        # Note: Inventory JOIN removed - handled separately by ProductInventoryService
 
         if query_params.include_pricing and customer_tier:
             # Integrated pricing calculation subquery
@@ -259,7 +304,7 @@ class ProductQueryService:
         {where_clause}
         GROUP BY p.id, p.ref, p.name, p.description, p.brand, p.base_price,
                  p.unit_measure, p.image_urls, p.ecommerce_category_id,
-                 p.ecommerce_subcategory_id, p.created_at, p.updated_at
+                 p.ecommerce_subcategory_id, p.alternative_product_ids, p.created_at, p.updated_at
                  {", pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names" if query_params.include_pricing and customer_tier else ""}
         ORDER BY p.id
         LIMIT :limit
@@ -324,12 +369,7 @@ class ProductQueryService:
     ) -> List[EnhancedProductSchema]:
         """Process a batch of rows efficiently"""
 
-        # If using default stores (not nearby), check for excluded products
-        excluded_product_ids = set()
-        if not is_nearby_store and query_params.include_inventory:
-            product_ids = [row.id for row in rows if hasattr(row, "id")]
-            if product_ids:
-                excluded_product_ids = await self._get_excluded_products(product_ids)
+        # Note: Inventory is handled separately, no need to check for excluded products here
 
         products = []
 
@@ -346,6 +386,7 @@ class ProductQueryService:
                 "image_urls": row.image_urls or [],
                 "ecommerce_category_id": row.ecommerce_category_id,
                 "ecommerce_subcategory_id": row.ecommerce_subcategory_id,
+                "alternative_product_ids": row.alternative_product_ids or [],
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
                 "categories": [],
@@ -414,46 +455,7 @@ class ProductQueryService:
                                     continue
                 product_data["product_tags"] = tags
 
-            # Parse inventory efficiently
-            if query_params.include_inventory:
-                # Check if product is excluded when using default stores
-                if not is_nearby_store and row.id in excluded_product_ids:
-                    product_data["inventory"] = None
-                elif hasattr(row, "inventory_data") and row.inventory_data:
-                    inventory = []
-                    for inv_data in row.inventory_data.split(";"):
-                        if inv_data:
-                            parts = inv_data.split("|")
-                            if len(parts) >= 4:
-                                try:
-                                    store_id = (
-                                        int(parts[0]) if parts[0].strip() else None
-                                    )
-                                    quantity_available = (
-                                        int(parts[1]) if parts[1].strip() else 0
-                                    )
-                                    quantity_on_hold = (
-                                        int(parts[2]) if parts[2].strip() else 0
-                                    )
-                                    quantity_reserved = (
-                                        int(parts[3]) if parts[3].strip() else 0
-                                    )
-
-                                    if store_id is not None:
-                                        inventory.append(
-                                            {
-                                                "store_id": store_id,
-                                                "in_stock": quantity_available > 0,
-                                                "quantity_available": quantity_available,
-                                                "quantity_on_hold": quantity_on_hold,
-                                                "quantity_reserved": quantity_reserved,
-                                                "is_nearby_store": is_nearby_store,
-                                            }
-                                        )
-                                except (ValueError, IndexError):
-                                    # Skip malformed inventory data
-                                    continue
-                    product_data["inventory"] = inventory
+            # Note: Inventory is added separately by ProductInventoryService, not parsed here
 
             # Parse pricing efficiently
             if query_params.include_pricing and hasattr(row, "final_price"):
@@ -558,16 +560,22 @@ class ProductQueryService:
         customer_tier: Optional[int] = None,
         store_ids: Optional[List[int]] = None,
         quantity: int = 1,
+        is_nearby_store: bool = True,
     ) -> Optional[EnhancedProductSchema]:
         """Get single product by ID using the same comprehensive SQL as bulk query"""
 
+        # Create query without inventory for fetching product data
+        query_without_inventory = ProductQuerySchema(
+            **{**query_params.model_dump(), "include_inventory": False}
+        )
+
         async with AsyncSessionLocal() as session:
-            # Build SQL query with product ID filter
+            # Build SQL query with product ID filter (without inventory)
             sql_query, params = self._build_single_product_sql(
                 product_id=product_id,
-                query_params=query_params,
+                query_params=query_without_inventory,
                 customer_tier=customer_tier,
-                store_ids=store_ids,
+                store_ids=None,
                 quantity=quantity,
             )
 
@@ -579,8 +587,26 @@ class ProductQueryService:
                 return None
 
             # Process single result using same logic as bulk
-            products = await self._process_single_row(row, query_params)
-            return products[0] if products else None
+            products = await self._process_single_row(row, query_without_inventory)
+            if not products:
+                return None
+
+            product = products[0]
+
+        # Add real-time inventory if requested
+        if query_params.include_inventory and store_ids:
+            products_with_inventory = (
+                await self.inventory_service.add_inventory_to_products_bulk(
+                    products=[product],
+                    store_ids=store_ids,
+                    is_nearby_store=is_nearby_store,
+                    latitude=query_params.latitude,
+                    longitude=query_params.longitude,
+                )
+            )
+            product = products_with_inventory[0] if products_with_inventory else product
+
+        return product
 
     async def get_single_product_by_ref(
         self,
@@ -589,16 +615,22 @@ class ProductQueryService:
         customer_tier: Optional[int] = None,
         store_ids: Optional[List[int]] = None,
         quantity: int = 1,
+        is_nearby_store: bool = True,
     ) -> Optional[EnhancedProductSchema]:
         """Get single product by ref using the same comprehensive SQL as bulk query"""
 
+        # Create query without inventory for fetching product data
+        query_without_inventory = ProductQuerySchema(
+            **{**query_params.model_dump(), "include_inventory": False}
+        )
+
         async with AsyncSessionLocal() as session:
-            # Build SQL query with product ref filter
+            # Build SQL query with product ref filter (without inventory)
             sql_query, params = self._build_single_product_sql(
                 product_ref=ref,
-                query_params=query_params,
+                query_params=query_without_inventory,
                 customer_tier=customer_tier,
-                store_ids=store_ids,
+                store_ids=None,
                 quantity=quantity,
             )
 
@@ -610,8 +642,26 @@ class ProductQueryService:
                 return None
 
             # Process single result using same logic as bulk
-            products = await self._process_single_row(row, query_params)
-            return products[0] if products else None
+            products = await self._process_single_row(row, query_without_inventory)
+            if not products:
+                return None
+
+            product = products[0]
+
+        # Add real-time inventory if requested
+        if query_params.include_inventory and store_ids:
+            products_with_inventory = (
+                await self.inventory_service.add_inventory_to_products_bulk(
+                    products=[product],
+                    store_ids=store_ids,
+                    is_nearby_store=is_nearby_store,
+                    latitude=query_params.latitude,
+                    longitude=query_params.longitude,
+                )
+            )
+            product = products_with_inventory[0] if products_with_inventory else product
+
+        return product
 
     def _build_single_product_sql(
         self,
@@ -636,6 +686,7 @@ class ProductQueryService:
             "p.image_urls",
             "p.ecommerce_category_id",
             "p.ecommerce_subcategory_id",
+            "p.alternative_product_ids",
             "p.created_at",
             "p.updated_at",
         ]
@@ -656,13 +707,7 @@ class ProductQueryService:
                 ]
             )
 
-        # Add inventory fields if requested
-        if query_params.include_inventory and store_ids:
-            select_fields.extend(
-                [
-                    "STRING_AGG(DISTINCT CONCAT(inv.store_id, '|', inv.quantity_available, '|', inv.quantity_on_hold, '|', inv.quantity_reserved), ';') as inventory_data"
-                ]
-            )
+        # Note: Inventory is handled separately by ProductInventoryService (not in SQL)
 
         # Add pricing fields if requested
         if query_params.include_pricing and customer_tier:
@@ -686,10 +731,7 @@ class ProductQueryService:
             joins.append("LEFT JOIN product_tags pt ON p.id = pt.product_id")
             joins.append("LEFT JOIN tags t ON pt.tag_id = t.id")
 
-        if query_params.include_inventory and store_ids:
-            joins.append(
-                f"LEFT JOIN inventory inv ON p.id = inv.product_id AND inv.store_id = ANY(ARRAY{store_ids})"
-            )
+        # Note: Inventory JOIN removed - handled separately by ProductInventoryService
 
         if query_params.include_pricing and customer_tier:
             # Use same pricing CTE as bulk query
@@ -781,7 +823,7 @@ class ProductQueryService:
         {where_clause}
         GROUP BY p.id, p.ref, p.name, p.description, p.brand, p.base_price,
                  p.unit_measure, p.image_urls, p.ecommerce_category_id,
-                 p.ecommerce_subcategory_id, p.created_at, p.updated_at
+                 p.ecommerce_subcategory_id, p.alternative_product_ids, p.created_at, p.updated_at
                  {", pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names" if query_params.include_pricing and customer_tier else ""}
         """
 
@@ -792,6 +834,62 @@ class ProductQueryService:
     ) -> List[EnhancedProductSchema]:
         """Process single row result using same logic as bulk processing"""
         return await self._process_row_batch([row], query_params)
+
+    async def get_products_by_ids(
+        self,
+        product_ids: List[int],
+        customer_tier: Optional[int] = None,
+        store_ids: Optional[List[int]] = None,
+        is_nearby_store: bool = True,
+        include_pricing: bool = True,
+        include_categories: bool = False,
+        include_tags: bool = False,
+        include_inventory: bool = False,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+    ) -> List[EnhancedProductSchema]:
+        """Get products by a list of IDs."""
+
+        if not product_ids:
+            return []
+
+        async with AsyncSessionLocal() as session:
+            # Step 1: Build comprehensive SQL for these products using existing infrastructure
+            sql_query, params = self._build_recent_products_sql(
+                product_ids=product_ids,
+                customer_tier=customer_tier,
+                store_ids=store_ids,
+                include_pricing=include_pricing,
+                include_categories=include_categories,
+                include_tags=include_tags,
+                include_inventory=include_inventory,
+            )
+
+            # Step 2: Execute query
+            result = await session.execute(text(sql_query), params)
+            rows = result.fetchall()
+
+            if not rows:
+                return []
+
+            # Step 3: Process results using existing logic
+            from src.api.products.models import ProductQuerySchema
+
+            query_params = ProductQuerySchema(
+                limit=len(product_ids),
+                cursor=None,
+                store_id=store_ids,
+                include_pricing=include_pricing,
+                include_inventory=include_inventory,
+                include_categories=include_categories,
+                include_tags=include_tags,
+                latitude=latitude,
+                longitude=longitude,
+            )
+
+            products = await self._process_row_batch(rows, query_params)
+
+            return products
 
     async def get_recent_products_for_user(
         self,
@@ -899,6 +997,7 @@ class ProductQueryService:
             "p.image_urls",
             "p.ecommerce_category_id",
             "p.ecommerce_subcategory_id",
+            "p.alternative_product_ids",
             "p.created_at",
             "p.updated_at",
         ]
@@ -1031,7 +1130,7 @@ class ProductQueryService:
         {where_clause}
         GROUP BY p.id, p.ref, p.name, p.description, p.brand, p.base_price,
                  p.unit_measure, p.image_urls, p.ecommerce_category_id,
-                 p.ecommerce_subcategory_id, p.created_at, p.updated_at
+                 p.ecommerce_subcategory_id, p.alternative_product_ids, p.created_at, p.updated_at
                  {", pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names" if include_pricing and customer_tier else ""}
         """
 

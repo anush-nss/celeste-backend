@@ -25,6 +25,7 @@ class CacheConfig:
     PRODUCT_DATA_TTL = int(os.getenv("CACHE_PRODUCT_DATA_TTL", "600"))  # 10 minutes
     USER_DATA_TTL = int(os.getenv("CACHE_USER_DATA_TTL", "900"))  # 15 minutes
     CATEGORY_DATA_TTL = int(os.getenv("CACHE_CATEGORY_DATA_TTL", "1800"))  # 30 minutes
+    STORE_LOCATION_TTL = int(os.getenv("CACHE_STORE_LOCATION_TTL", "600"))  # 10 minutes
     STATIC_DATA_TTL = int(os.getenv("CACHE_STATIC_DATA_TTL", "3600"))  # 1 hour
 
     # Cache cleanup and maintenance
@@ -70,6 +71,7 @@ class CacheConfig:
             "products": cls.PRODUCT_DATA_TTL,
             "users": cls.USER_DATA_TTL,
             "categories": cls.CATEGORY_DATA_TTL,
+            "store_location": cls.STORE_LOCATION_TTL,
             "static": cls.STATIC_DATA_TTL,
             "default": cls.DEFAULT_TTL,
         }
@@ -101,6 +103,7 @@ class CacheConfig:
                 "product_data": cls.PRODUCT_DATA_TTL,
                 "user_data": cls.USER_DATA_TTL,
                 "category_data": cls.CATEGORY_DATA_TTL,
+                "store_location": cls.STORE_LOCATION_TTL,
             },
             "lru_sizes": {
                 "price_lists": cls.LRU_PRICE_LISTS_SIZE,

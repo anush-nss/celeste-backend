@@ -41,6 +41,7 @@ class InventoryTransactionService:
         new_available = inventory.quantity_available + adjustment_data.available_change
         new_on_hold = inventory.quantity_on_hold + adjustment_data.on_hold_change
         new_reserved = inventory.quantity_reserved + adjustment_data.reserved_change
+        new_safety_stock = inventory.safety_stock + adjustment_data.safety_stock_change
 
         # Validate that no quantity goes below zero
         if new_available < 0:
@@ -49,11 +50,14 @@ class InventoryTransactionService:
             raise ValidationException("Cannot release more items than are on hold.")
         if new_reserved < 0:
             raise ValidationException("Cannot release more items than are reserved.")
+        if new_safety_stock < 0:
+            raise ValidationException("Safety stock cannot go below zero.")
 
         # Apply changes
         inventory.quantity_available = new_available
         inventory.quantity_on_hold = new_on_hold
         inventory.quantity_reserved = new_reserved
+        inventory.safety_stock = new_safety_stock
 
         # Note: session.commit() should be handled by the caller
         # Don't refresh here - it would undo changes before commit!
@@ -71,6 +75,7 @@ class InventoryTransactionService:
             store_id=store_id,
             available_change=-quantity,
             on_hold_change=quantity,
+            safety_stock_change=0,
         )
         return await self.adjust_inventory_stock(adjustment, session)
 
@@ -86,6 +91,7 @@ class InventoryTransactionService:
             store_id=store_id,
             available_change=quantity,
             on_hold_change=-quantity,
+            safety_stock_change=0,
         )
         return await self.adjust_inventory_stock(adjustment, session)
 
@@ -101,6 +107,7 @@ class InventoryTransactionService:
             store_id=store_id,
             on_hold_change=-quantity,
             reserved_change=quantity,
+            safety_stock_change=0,
         )
         return await self.adjust_inventory_stock(adjustment, session)
 
@@ -112,7 +119,10 @@ class InventoryTransactionService:
             raise ValidationException("Quantity must be positive.")
 
         adjustment = AdjustInventorySchema(
-            product_id=product_id, store_id=store_id, reserved_change=-quantity
+            product_id=product_id,
+            store_id=store_id,
+            reserved_change=-quantity,
+            safety_stock_change=0,
         )
         return await self.adjust_inventory_stock(adjustment, session)
 

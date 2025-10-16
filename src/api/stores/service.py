@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_, text
-from sqlalchemy.exc import IntegrityError, ProgrammingError, StatementError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
@@ -14,16 +14,16 @@ from src.api.stores.models import (
 )
 from src.api.tags.models import CreateTagSchema
 from src.api.tags.service import TagService
+from src.config.cache_config import CacheConfig
 from src.config.constants import (
     DEFAULT_SEARCH_RADIUS_KM,
-    DEFAULT_STORES_LIMIT,
-    MAX_SEARCH_RADIUS_KM,
-    MAX_STORES_LIMIT,
+    DEFAULT_STORE_IDS,
 )
 from src.database.connection import AsyncSessionLocal
 from src.database.models.product import Tag
 from src.database.models.store import Store
 from src.database.models.store_tag import StoreTag
+from src.shared.cache_service import cache_service
 from src.shared.error_handler import ErrorHandler, handle_service_errors
 from src.shared.exceptions import ConflictException, ValidationException
 from src.shared.geo_utils import GeoUtils
@@ -34,6 +34,7 @@ class StoreService:
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
         self.tag_service = TagService(entity_type="store")
+        self.cache = cache_service
 
     def calculate_bounding_box(self, lat: float, lng: float, radius_km: float) -> dict:
         """Calculate bounding box for efficient spatial filtering"""
@@ -142,164 +143,168 @@ class StoreService:
 
             return self._build_location_response(stores, query_params)
 
-    @handle_service_errors("retrieving stores by location")
-    async def get_stores_by_location(
-        self, query_params: StoreQuerySchema
-    ) -> List[Dict[str, Any]]:
-        """Get stores within radius of specified location using lat/lng filtering"""
-        if not query_params.latitude or not query_params.longitude:
-            raise ValidationException(
-                detail="Latitude and longitude are required for location-based search"
-            )
+    @handle_service_errors("retrieving store IDs by location")
+    async def get_store_ids_by_location(
+        self,
+        latitude: float,
+        longitude: float,
+        radius_km: Optional[float] = DEFAULT_SEARCH_RADIUS_KM,
+        return_full_stores: Optional[bool] = False,
+        include_distance: Optional[bool] = False,
+    ) -> tuple[List[int] | List[Dict[str, Any]], bool]:
+        """
+        Get store IDs (or full store data) near location using PostGIS spatial query with caching and default fallback.
 
+        This method is optimized for inventory queries where only store IDs are needed,
+        but can also return full store objects for store listing endpoints.
+
+        Args:
+            latitude: User's latitude
+            longitude: User's longitude
+            radius_km: Search radius in kilometers (default from constants)
+            return_full_stores: If True, returns full store data instead of just IDs
+            include_distance: If True and return_full_stores=True, includes distance field
+
+        Returns:
+            tuple: (stores_data, is_nearby_store)
+                - stores_data: List of store IDs (default) or List of store dicts (if return_full_stores=True)
+                - is_nearby_store: True if stores found within radius, False if using default fallback
+        """
         # Validate coordinates
-        if not GeoUtils.validate_coordinates(
-            query_params.latitude, query_params.longitude
-        ):
+        if not GeoUtils.validate_coordinates(latitude, longitude):
             raise ValidationException(detail="Invalid coordinates provided")
 
-        radius = query_params.radius or DEFAULT_SEARCH_RADIUS_KM
-        radius = min(radius, MAX_SEARCH_RADIUS_KM)
+        # Generate cache key (different for IDs vs full stores)
+        cache_key_suffix = "full" if return_full_stores else "ids"
+        cache_key = f"stores:location:{latitude:.6f}:{longitude:.6f}:{radius_km}:{cache_key_suffix}"
+
+        # Try cache first (10 minutes TTL)
+        cached_result = await self.cache.get(cache_key)
+        if cached_result:
+            return cached_result
 
         async with AsyncSessionLocal() as session:
-            # Calculate bounding box for pre-filtering
-            bbox = self.calculate_bounding_box(
-                query_params.latitude, query_params.longitude, radius
+            # Use PostGIS spatial query for accurate distance calculation
+            if return_full_stores:
+                # Query with full store data and distance
+                query = """
+                SELECT
+                    id,
+                    name,
+                    description,
+                    address,
+                    latitude,
+                    longitude,
+                    email,
+                    phone,
+                    is_active,
+                    created_at,
+                    updated_at,
+                    ST_Distance(
+                        ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                        ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography
+                    ) / 1000.0 as distance_km
+                FROM stores
+                WHERE is_active = true
+                  AND ST_DWithin(
+                      ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                      ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
+                      :radius_meters
+                  )
+                ORDER BY distance_km
+                LIMIT 20
+                """
+            else:
+                # Query with just IDs
+                query = """
+                SELECT id
+                FROM stores
+                WHERE is_active = true
+                  AND ST_DWithin(
+                      ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                      ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
+                      :radius_meters
+                  )
+                ORDER BY ST_Distance(
+                    ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                    ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography
+                )
+                LIMIT 20
+                """
+
+            result = await session.execute(
+                text(query),
+                {
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "radius_meters": (radius_km or DEFAULT_SEARCH_RADIUS_KM)
+                    * 1000,  # Convert km to meters
+                },
             )
 
-            # Build base query with bounding box
-            query = select(Store).where(
-                Store.is_active
-                == (
-                    query_params.is_active
-                    if query_params.is_active is not None
-                    else True
-                ),
-                Store.latitude.between(bbox["lat_min"], bbox["lat_max"]),
-                Store.longitude.between(bbox["lng_min"], bbox["lng_max"]),
-            )
+            rows = result.fetchall()
 
-            # Include tag relationships if needed
-            if query_params.include_tags or query_params.tags:
-                query = query.options(
-                    selectinload(Store.store_tags).selectinload(StoreTag.tag)
-                )
+            # Process results based on mode
+            if return_full_stores:
+                stores_data = []
+                for row in rows:
+                    store_dict = {
+                        "id": row.id,
+                        "name": row.name,
+                        "description": row.description,
+                        "address": row.address,
+                        "latitude": float(row.latitude),
+                        "longitude": float(row.longitude),
+                        "email": row.email,
+                        "phone": row.phone,
+                        "is_active": row.is_active,
+                        "created_at": row.created_at,
+                        "updated_at": row.updated_at,
+                    }
+                    if include_distance:
+                        store_dict["distance"] = round(float(row.distance_km), 1)
+                    stores_data.append(store_dict)
+            else:
+                stores_data = [row.id for row in rows]
 
-            # Handle new tag filtering
-            tag_params = {}
-            if query_params.tags:
-                # Validate tags parameter
-                if not isinstance(query_params.tags, list):
-                    raise ValidationException(detail="Tags parameter must be a list")
+            # If no stores found nearby, use default stores as fallback
+            is_nearby_store = True
+            if not stores_data and DEFAULT_STORE_IDS:
+                if return_full_stores:
+                    # Fetch full data for default stores
+                    default_query = select(Store).where(Store.id.in_(DEFAULT_STORE_IDS))
+                    default_result = await session.execute(default_query)
+                    default_stores = default_result.scalars().all()
 
-                # Filter out invalid tag values
-                valid_tags = [
-                    tag
-                    for tag in query_params.tags
-                    if tag and isinstance(tag, str) and tag.strip()
-                ]
-                if not valid_tags:
-                    raise ValidationException(
-                        detail="At least one valid tag must be provided"
-                    )
-
-                tag_filter_result = self.tag_service.parse_tag_filters(valid_tags)
-                if tag_filter_result["needs_joins"] and tag_filter_result["conditions"]:
-                    # Join with store_tags and tags tables
-                    query = query.join(Store.store_tags).join(StoreTag.tag)
-                    # Replace table alias 't' with 'tags' in conditions
-                    tag_conditions = []
-                    for condition in tag_filter_result["conditions"]:
-                        # Replace 't.' with 'tags.' in SQL conditions
-                        fixed_condition = condition.replace("t.", "tags.")
-                        tag_conditions.append(fixed_condition)
-
-                    tag_conditions_str = " OR ".join(tag_conditions)
-                    query = query.filter(text(f"({tag_conditions_str})"))
-                    tag_params.update(tag_filter_result["params"])
-
-            # Execute query with error handling
-            try:
-                result = await session.execute(query, tag_params)
-                store_models = result.scalars().unique().all()
-            except (ProgrammingError, StatementError) as e:
-                # Convert SQL errors to validation errors
-                error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
-                if (
-                    "missing FROM-clause entry" in error_msg
-                    or "UndefinedTableError" in error_msg
-                ):
-                    raise ValidationException(
-                        detail="Invalid tag filter parameters provided"
-                    )
-                elif "syntax error" in error_msg.lower():
-                    raise ValidationException(
-                        detail="Invalid filter syntax in tag parameters"
-                    )
-                else:
-                    raise ValidationException(
-                        detail="Invalid query parameters provided"
-                    )
-
-            # Calculate exact distances and filter by radius
-            stores_with_distance = []
-            for store_model in store_models:
-                distance = GeoUtils.calculate_distance(
-                    query_params.latitude,
-                    query_params.longitude,
-                    store_model.latitude,
-                    store_model.longitude,
-                )
-                if distance <= radius:
-                    stores_with_distance.append(
-                        {"store": store_model, "distance": distance}
-                    )
-
-            # Sort by distance and apply limit
-            stores_with_distance.sort(key=lambda x: x["distance"])
-            limit = query_params.limit or DEFAULT_STORES_LIMIT
-            limit = min(limit, MAX_STORES_LIMIT)
-            stores_with_distance = stores_with_distance[:limit]
-
-            # Convert to schemas
-            stores = []
-            for item in stores_with_distance:
-                store_model = item["store"]
-                store_dict = {
-                    "id": store_model.id,
-                    "name": store_model.name,
-                    "description": store_model.description,
-                    "address": store_model.address,
-                    "latitude": store_model.latitude,
-                    "longitude": store_model.longitude,
-                    "email": store_model.email,
-                    "phone": store_model.phone,
-                    "is_active": store_model.is_active,
-                    "created_at": store_model.created_at,
-                    "updated_at": store_model.updated_at,
-                }
-
-                # Add distance
-                if query_params.include_distance:
-                    store_dict["distance"] = round(item["distance"], 1)
-
-                # Add tags if requested
-                if query_params.include_tags:
-                    store_dict["store_tags"] = [
-                        {
-                            "id": st.tag.id,
-                            "tag_type": st.tag.tag_type,
-                            "name": st.tag.name,
-                            "slug": st.tag.slug,
-                            "description": st.tag.description,
-                            "value": st.value,
+                    stores_data = []
+                    for store in default_stores:
+                        store_dict = {
+                            "id": store.id,
+                            "name": store.name,
+                            "description": store.description,
+                            "address": store.address,
+                            "latitude": float(store.latitude),
+                            "longitude": float(store.longitude),
+                            "email": store.email,
+                            "phone": store.phone,
+                            "is_active": store.is_active,
+                            "created_at": store.created_at,
+                            "updated_at": store.updated_at,
                         }
-                        for st in store_model.store_tags
-                    ]
+                        # Don't include distance for default stores
+                        stores_data.append(store_dict)
+                else:
+                    stores_data = DEFAULT_STORE_IDS
+                is_nearby_store = False
 
-                stores.append(StoreSchema(**store_dict))
+            result_tuple = (stores_data, is_nearby_store)
 
-            return [store.model_dump(mode="json") for store in stores]
+            # Cache result
+            await self.cache.set(
+                cache_key, result_tuple, ttl=CacheConfig.STORE_LOCATION_TTL
+            )
+
+            return result_tuple
 
     def _build_location_response(
         self,

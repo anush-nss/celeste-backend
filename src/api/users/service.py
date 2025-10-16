@@ -7,9 +7,9 @@ from src.api.tiers.service import TierService
 
 # Import all models to ensure relationships are properly registered
 from src.api.users.models import (
-    AddressSchema,
+    AddressCreationSchema,
+    AddressResponseSchema,
     CreateUserSchema,
-    UpdateAddressSchema,
     UserSchema,
 )
 from src.api.users.services import UserAddressService
@@ -50,7 +50,8 @@ def _user_to_dict(
                 and user.addresses is not None
             ):
                 user_dict["addresses"] = [
-                    AddressSchema.model_validate(addr) for addr in user.addresses
+                    AddressResponseSchema.model_validate(addr)
+                    for addr in user.addresses
                 ]
             else:
                 user_dict["addresses"] = []
@@ -82,13 +83,20 @@ class UserService:
             if existing_user.scalars().first():
                 raise ConflictException(detail=f"User with UID {uid} already exists")
 
-            # Try to set default customer tier when creating user, but allow null if no tiers exist
+            # Set default customer tier when creating user
+            # First try to get the system default tier, fall back to DEFAULT_FALLBACK_TIER_ID
             default_tier = None
             try:
                 default_tier = await self.tier_service.get_default_tier()
             except Exception:
-                # If no tiers exist, leave tier_id as None
+                # If there's an error getting default tier, use the fallback tier
                 pass
+
+            # If no default tier was found from the system, use the fallback tier
+            if default_tier is None:
+                from src.config.constants import DEFAULT_FALLBACK_TIER_ID
+
+                default_tier = DEFAULT_FALLBACK_TIER_ID
 
             new_user = User(
                 firebase_uid=uid.strip(),
@@ -153,28 +161,20 @@ class UserService:
 
     # Address management - delegated to UserAddressService
     async def add_address(
-        self, user_id: str, address_data: AddressSchema
-    ) -> AddressSchema:
+        self, user_id: str, address_data: AddressCreationSchema
+    ) -> AddressResponseSchema:
         """Add a new address for a user"""
         return await self.address_service.add_address(user_id, address_data)
 
-    async def get_addresses(self, user_id: str) -> List[AddressSchema]:
+    async def get_addresses(self, user_id: str) -> List[AddressResponseSchema]:
         """Get all addresses for a user"""
         return await self.address_service.get_addresses(user_id)
 
     async def get_address_by_id(
         self, user_id: str, address_id: int
-    ) -> AddressSchema | None:
+    ) -> AddressResponseSchema | None:
         """Get a specific address by ID for a user"""
         return await self.address_service.get_address_by_id(user_id, address_id)
-
-    async def update_address(
-        self, user_id: str, address_id: int, address_data: UpdateAddressSchema
-    ) -> AddressSchema | None:
-        """Update an existing address"""
-        return await self.address_service.update_address(
-            user_id, address_id, address_data
-        )
 
     async def delete_address(self, user_id: str, address_id: int) -> bool:
         """Delete an address"""
@@ -182,6 +182,6 @@ class UserService:
 
     async def set_default_address(
         self, user_id: str, address_id: int
-    ) -> AddressSchema | None:
+    ) -> AddressResponseSchema | None:
         """Set an address as the default for a user"""
         return await self.address_service.set_default_address(user_id, address_id)

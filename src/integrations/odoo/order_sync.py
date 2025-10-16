@@ -13,6 +13,8 @@ from typing import Any, Dict, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
 from src.config.constants import OdooSyncStatus, DELIVERY_PRODUCT_ODOO_ID
 from src.database.connection import AsyncSessionLocal
 from src.database.models.order import Order, OrderItem
@@ -43,6 +45,11 @@ class OdooOrderSync:
         # Thread pool for blocking Odoo RPC calls
         self._executor = ThreadPoolExecutor(max_workers=4)
 
+    @retry(
+        retry=retry_if_exception_type((OdooConnectionError, OdooAuthenticationError)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+    )
     async def sync_order_to_odoo(self, order_id: int) -> Dict[str, Any]:
         """
         Sync a confirmed order to Odoo
@@ -241,7 +248,7 @@ class OdooOrderSync:
                     [("firebase_uid", "=", user.firebase_uid)],
                     fields=["id", "name", "email"],
                     limit=1,
-                )
+                ),
             )
 
             if existing_customers:
@@ -273,7 +280,7 @@ class OdooOrderSync:
 
                 customer_id = await loop.run_in_executor(
                     self._executor,
-                    lambda: self.odoo.create("res.partner", customer_values)
+                    lambda: self.odoo.create("res.partner", customer_values),
                 )
                 self._error_handler.logger.info(
                     f"Created new Odoo customer {customer_id} for user {user.firebase_uid}"
@@ -325,7 +332,7 @@ class OdooOrderSync:
                     [("client_order_ref", "=", client_ref)],
                     fields=["id", "name", "state"],
                     limit=1,
-                )
+                ),
             )
 
             if existing_orders:
@@ -393,7 +400,7 @@ class OdooOrderSync:
                         "product.product",
                         [("default_code", "in", padded_refs)],
                         fields=["id", "name", "default_code"],
-                    )
+                    ),
                 )
 
             # Create a map: padded_ref -> odoo_product_id
@@ -427,26 +434,19 @@ class OdooOrderSync:
                     lines_skipped += 1
                     continue
 
-                # For the delivery product, the price is dynamic.
-                # Set the price_unit directly to the delivery charge and discount to 0.
-                if item.product_id == DELIVERY_PRODUCT_ODOO_ID:
-                    base_price = float(item.unit_price)
-                    final_price = base_price
-                    discount_percent = 0.0
-                else:
-                    # For regular products, calculate discount based on base vs final price.
-                    base_price = float(product.base_price)
-                    final_price = float(item.unit_price)
+                # For regular products, calculate discount based on base vs final price.
+                base_price = float(product.base_price)
+                final_price = float(item.unit_price)
 
-                    if base_price > 0:
-                        discount_percent = (
-                            (base_price - final_price) / base_price
-                        ) * 100
-                        discount_percent = max(
-                            0.0, min(100.0, discount_percent)
-                        )  # Clamp 0-100
-                    else:
-                        discount_percent = 0.0
+                if base_price > 0:
+                    discount_percent = (
+                        (base_price - final_price) / base_price
+                    ) * 100
+                    discount_percent = max(
+                        0.0, min(100.0, discount_percent)
+                    )  # Clamp 0-100
+                else:
+                    discount_percent = 0.0
 
                 # Prepare order line using Odoo's command syntax: (0, 0, {...})
                 line_values = {
@@ -459,13 +459,28 @@ class OdooOrderSync:
                 self._error_handler.logger.info(
                     f"Prepared order line | Product: {product.ref} | "
                     f"Qty: {item.quantity} | Price: {base_price} | "
-                    f"Final Price: {final_price} | Discount: {discount_percent:.2f}%"
+                    f"Final Price: {final_price} | Discount: {discount_percent:.2f}% | "
+                    f"Odoo Line Values: {line_values}"
                 )
 
                 # Add to order_lines list using (0, 0, values) command
                 order_lines.append((0, 0, line_values))
 
             lines_created = len(order_lines)
+
+            # Add delivery charge as a separate line
+            if order.delivery_charge > 0:
+                delivery_line_values = {
+                    "product_id": DELIVERY_PRODUCT_ODOO_ID,
+                    "product_uom_qty": 1,
+                    "price_unit": float(order.delivery_charge),
+                    "discount": 0.0,
+                }
+                order_lines.append((0, 0, delivery_line_values))
+                self._error_handler.logger.info(
+                    f"Added delivery charge line | Odoo Line Values: {delivery_line_values}"
+                )
+                lines_created += 1
 
             if lines_created == 0:
                 raise OdooSyncError(
@@ -479,6 +494,15 @@ class OdooOrderSync:
             # Create order with all lines in a single call (run in thread pool)
             date_order_str = order.created_at.strftime("%Y-%m-%d %H:%M:%S")
 
+            # Get warehouse_id from store
+            async with AsyncSessionLocal() as session:
+                from src.database.models.store import Store
+
+                store_result = await session.execute(
+                    select(Store).where(Store.id == order.store_id)
+                )
+                store = store_result.scalars().first()
+
             order_values = {
                 "partner_id": odoo_customer_id,
                 "date_order": date_order_str,
@@ -487,13 +511,15 @@ class OdooOrderSync:
                 "order_line": order_lines,  # Include all lines in one call
             }
 
+            if store and store.odoo_warehouse_id:
+                order_values["warehouse_id"] = store.odoo_warehouse_id
+
             self._error_handler.logger.info(
                 f"Creating Odoo sales order with {lines_created} lines (async)..."
             )
             loop = asyncio.get_event_loop()
             order_id = await loop.run_in_executor(
-                self._executor,
-                lambda: self.odoo.create("sale.order", order_values)
+                self._executor, lambda: self.odoo.create("sale.order", order_values)
             )
 
             self._error_handler.logger.info(
@@ -533,7 +559,7 @@ class OdooOrderSync:
                     [("id", "=", odoo_order_id)],
                     fields=["state"],
                     limit=1,
-                )
+                ),
             )
 
             if order_info and order_info[0]["state"] == "sale":
@@ -549,7 +575,7 @@ class OdooOrderSync:
                     "sale.order",
                     "action_confirm",
                     [[odoo_order_id]],
-                )
+                ),
             )
 
             self._error_handler.logger.info(

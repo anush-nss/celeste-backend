@@ -24,6 +24,7 @@ class Inventory(Base):
         CheckConstraint(
             "quantity_on_hold >= 0", name="check_quantity_on_hold_non_negative"
         ),
+        CheckConstraint("safety_stock >= 0", name="check_safety_stock_non_negative"),
         # Primary lookup indexes
         Index("idx_inventory_product_store", "product_id", "store_id", unique=True),
         Index("idx_inventory_store_product", "store_id", "product_id"),
@@ -83,6 +84,7 @@ class Inventory(Base):
     quantity_available: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     quantity_reserved: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     quantity_on_hold: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    safety_stock: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

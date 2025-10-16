@@ -84,6 +84,21 @@ async def apply_pricing_optimizations():
         print("This is not critical for database initialization.")
 
 
+async def main(drop_tables: bool = False):
+    """Main function that runs all initialization steps in a single event loop"""
+    try:
+        # Initialize database tables
+        await init_db(drop_tables=drop_tables)
+
+        # Apply pricing optimizations
+        await apply_pricing_optimizations()
+
+        print("Database initialization complete.")
+    finally:
+        # Properly dispose of the engine to close all connections
+        await engine.dispose()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Initialize the database.")
     parser.add_argument(
@@ -93,8 +108,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    asyncio.run(init_db(drop_tables=args.drop))
-
-    # Apply pricing optimizations
-    asyncio.run(apply_pricing_optimizations())
-    print("Database initialization complete.")
+    # Run everything in a single event loop
+    asyncio.run(main(drop_tables=args.drop))

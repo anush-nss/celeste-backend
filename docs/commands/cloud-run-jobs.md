@@ -32,7 +32,9 @@ gcloud run jobs execute db-init-job \
 gcloud run jobs create promote-user-job \
   --image gcr.io/celeste-470811/celeste-api:latest \
   --command python \
-  --args scripts/promote_user.py
+  --args scripts/promote_user.py \
+  --set-env-vars DATABASE_URL="postgresql+asyncpg://test:asdASD123-@/celeste?host=/cloudsql/celeste-470811:asia-south1:sql-primary" \
+  --set-cloudsql-instances celeste-470811:asia-south1:sql-primary
 ```
 
 ### Execute the Job

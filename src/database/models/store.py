@@ -71,6 +71,9 @@ class Store(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False, index=True
     )
+    odoo_warehouse_id: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("NOW()"), nullable=False
