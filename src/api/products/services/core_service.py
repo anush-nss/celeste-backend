@@ -205,6 +205,16 @@ class ProductCoreService:
     ) -> ProductSchema | None:
         """Update an existing product"""
         async with AsyncSessionLocal() as session:
+            if product_data.alternative_product_ids is not None:
+                # Validate alternative_product_ids
+                result = await session.execute(select(Product.id))
+                existing_product_ids = {row[0] for row in result}
+                invalid_ids = set(product_data.alternative_product_ids) - existing_product_ids
+                if invalid_ids:
+                    raise ValidationException(
+                        detail=f"Alternative products with IDs {list(invalid_ids)} not found"
+                    )
+
             try:
                 result = await session.execute(
                     select(Product).filter(Product.id == product_id)

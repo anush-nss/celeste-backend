@@ -138,6 +138,7 @@ class ProductQueryService:
             "p.image_urls",
             "p.ecommerce_category_id",
             "p.ecommerce_subcategory_id",
+            "p.alternative_product_ids",
             "p.created_at",
             "p.updated_at",
         ]
@@ -303,7 +304,7 @@ class ProductQueryService:
         {where_clause}
         GROUP BY p.id, p.ref, p.name, p.description, p.brand, p.base_price,
                  p.unit_measure, p.image_urls, p.ecommerce_category_id,
-                 p.ecommerce_subcategory_id, p.created_at, p.updated_at
+                 p.ecommerce_subcategory_id, p.alternative_product_ids, p.created_at, p.updated_at
                  {", pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names" if query_params.include_pricing and customer_tier else ""}
         ORDER BY p.id
         LIMIT :limit
@@ -385,6 +386,7 @@ class ProductQueryService:
                 "image_urls": row.image_urls or [],
                 "ecommerce_category_id": row.ecommerce_category_id,
                 "ecommerce_subcategory_id": row.ecommerce_subcategory_id,
+                "alternative_product_ids": row.alternative_product_ids or [],
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
                 "categories": [],
@@ -684,6 +686,7 @@ class ProductQueryService:
             "p.image_urls",
             "p.ecommerce_category_id",
             "p.ecommerce_subcategory_id",
+            "p.alternative_product_ids",
             "p.created_at",
             "p.updated_at",
         ]
@@ -820,7 +823,7 @@ class ProductQueryService:
         {where_clause}
         GROUP BY p.id, p.ref, p.name, p.description, p.brand, p.base_price,
                  p.unit_measure, p.image_urls, p.ecommerce_category_id,
-                 p.ecommerce_subcategory_id, p.created_at, p.updated_at
+                 p.ecommerce_subcategory_id, p.alternative_product_ids, p.created_at, p.updated_at
                  {", pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names" if query_params.include_pricing and customer_tier else ""}
         """
 
@@ -831,6 +834,62 @@ class ProductQueryService:
     ) -> List[EnhancedProductSchema]:
         """Process single row result using same logic as bulk processing"""
         return await self._process_row_batch([row], query_params)
+
+    async def get_products_by_ids(
+        self,
+        product_ids: List[int],
+        customer_tier: Optional[int] = None,
+        store_ids: Optional[List[int]] = None,
+        is_nearby_store: bool = True,
+        include_pricing: bool = True,
+        include_categories: bool = False,
+        include_tags: bool = False,
+        include_inventory: bool = False,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+    ) -> List[EnhancedProductSchema]:
+        """Get products by a list of IDs."""
+
+        if not product_ids:
+            return []
+
+        async with AsyncSessionLocal() as session:
+            # Step 1: Build comprehensive SQL for these products using existing infrastructure
+            sql_query, params = self._build_recent_products_sql(
+                product_ids=product_ids,
+                customer_tier=customer_tier,
+                store_ids=store_ids,
+                include_pricing=include_pricing,
+                include_categories=include_categories,
+                include_tags=include_tags,
+                include_inventory=include_inventory,
+            )
+
+            # Step 2: Execute query
+            result = await session.execute(text(sql_query), params)
+            rows = result.fetchall()
+
+            if not rows:
+                return []
+
+            # Step 3: Process results using existing logic
+            from src.api.products.models import ProductQuerySchema
+
+            query_params = ProductQuerySchema(
+                limit=len(product_ids),
+                cursor=None,
+                store_id=store_ids,
+                include_pricing=include_pricing,
+                include_inventory=include_inventory,
+                include_categories=include_categories,
+                include_tags=include_tags,
+                latitude=latitude,
+                longitude=longitude,
+            )
+
+            products = await self._process_row_batch(rows, query_params)
+
+            return products
 
     async def get_recent_products_for_user(
         self,
@@ -938,6 +997,7 @@ class ProductQueryService:
             "p.image_urls",
             "p.ecommerce_category_id",
             "p.ecommerce_subcategory_id",
+            "p.alternative_product_ids",
             "p.created_at",
             "p.updated_at",
         ]
@@ -1070,7 +1130,7 @@ class ProductQueryService:
         {where_clause}
         GROUP BY p.id, p.ref, p.name, p.description, p.brand, p.base_price,
                  p.unit_measure, p.image_urls, p.ecommerce_category_id,
-                 p.ecommerce_subcategory_id, p.created_at, p.updated_at
+                 p.ecommerce_subcategory_id, p.alternative_product_ids, p.created_at, p.updated_at
                  {", pricing.final_price, pricing.savings, pricing.discount_percentage, pricing.price_list_names" if include_pricing and customer_tier else ""}
         """
 

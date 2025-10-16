@@ -360,6 +360,9 @@ async def get_product_by_ref(
     include_inventory: Optional[bool] = Query(
         True, description="Include inventory information"
     ),
+    include_alternatives: Optional[bool] = Query(
+        False, description="Include alternative products"
+    ),
     quantity: Optional[int] = Query(1, description="Quantity for bulk pricing"),
     store_id: Optional[List[int]] = Query(
         None, description="Store IDs for inventory info"
@@ -391,6 +394,7 @@ async def get_product_by_ref(
         else False,
         include_tags=include_tags if include_tags is not None else False,
         include_inventory=include_inventory if include_inventory is not None else False,
+        include_alternatives=include_alternatives if include_alternatives is not None else False,
         customer_tier=user_tier,
         store_ids=store_id,
         latitude=latitude,
@@ -420,6 +424,9 @@ async def get_product_by_id(
     include_tags: Optional[bool] = Query(True, description="Include tag information"),
     include_inventory: Optional[bool] = Query(
         True, description="Include inventory information"
+    ),
+    include_alternatives: Optional[bool] = Query(
+        False, description="Include alternative products"
     ),
     quantity: Optional[int] = Query(1, description="Quantity for bulk pricing"),
     store_id: Optional[List[int]] = Query(
@@ -452,6 +459,7 @@ async def get_product_by_id(
         else False,
         include_tags=include_tags if include_tags is not None else False,
         include_inventory=include_inventory if include_inventory is not None else False,
+        include_alternatives=include_alternatives if include_alternatives is not None else False,
         customer_tier=user_tier,
         store_ids=store_id,
         latitude=latitude,

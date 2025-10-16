@@ -86,6 +86,7 @@ class ProductService:
         include_categories: bool = True,
         include_tags: bool = True,
         include_inventory: bool = True,
+        include_alternatives: bool = False,
         customer_tier: Optional[int] = None,
         store_ids: Optional[List[int]] = None,
         latitude: Optional[float] = None,
@@ -102,6 +103,7 @@ class ProductService:
             include_categories=include_categories,
             include_tags=include_tags,
             include_inventory=include_inventory,
+            include_alternatives=include_alternatives,
             latitude=latitude,
             longitude=longitude,
             store_id=store_ids,
@@ -127,6 +129,17 @@ class ProductService:
             is_nearby_store,
         )
 
+        if product and include_alternatives and product.alternative_product_ids:
+            alternative_products = await self.query_service.get_products_by_ids(
+                product.alternative_product_ids,
+                customer_tier=customer_tier,
+                store_ids=effective_store_ids,
+                is_nearby_store=is_nearby_store,
+                latitude=latitude,
+                longitude=longitude,
+            )
+            product.alternatives = alternative_products
+
         return product
 
     async def get_enhanced_product_by_ref(
@@ -136,6 +149,7 @@ class ProductService:
         include_categories: bool = True,
         include_tags: bool = True,
         include_inventory: bool = True,
+        include_alternatives: bool = False,
         customer_tier: Optional[int] = None,
         store_ids: Optional[List[int]] = None,
         latitude: Optional[float] = None,
@@ -152,6 +166,7 @@ class ProductService:
             include_categories=include_categories,
             include_tags=include_tags,
             include_inventory=include_inventory,
+            include_alternatives=include_alternatives,
             latitude=latitude,
             longitude=longitude,
             store_id=store_ids,
@@ -176,6 +191,17 @@ class ProductService:
             quantity,
             is_nearby_store,
         )
+
+        if product and include_alternatives and product.alternative_product_ids:
+            alternative_products = await self.query_service.get_products_by_ids(
+                product.alternative_product_ids,
+                customer_tier=customer_tier,
+                store_ids=effective_store_ids,
+                is_nearby_store=is_nearby_store,
+                latitude=latitude,
+                longitude=longitude,
+            )
+            product.alternatives = alternative_products
 
         return product
 

@@ -97,6 +97,9 @@ class Product(Base):
     ecommerce_subcategory_id: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True, index=True
     )
+    alternative_product_ids: Mapped[List[int]] = mapped_column(
+        ARRAY(Integer), default=list, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("NOW()"), nullable=False
     )

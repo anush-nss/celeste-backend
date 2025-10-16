@@ -29,6 +29,7 @@ class ProductSchema(BaseModel):
     image_urls: List[str] = []  # First image is primary
     ecommerce_category_id: Optional[int] = None
     ecommerce_subcategory_id: Optional[int] = None
+    alternative_product_ids: List[int] = []
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -59,6 +60,7 @@ class CreateProductSchema(BaseModel):
     image_urls: List[str] = []
     ecommerce_category_id: Optional[int] = None
     ecommerce_subcategory_id: Optional[int] = None
+    alternative_product_ids: List[int] = []
     category_ids: List[int] = []  # IDs of categories to assign
     tag_ids: List[int] = []  # IDs of tags to assign
 
@@ -75,6 +77,7 @@ class UpdateProductSchema(BaseModel):
     image_urls: Optional[List[str]] = None
     ecommerce_category_id: Optional[int] = None
     ecommerce_subcategory_id: Optional[int] = None
+    alternative_product_ids: Optional[List[int]] = None
     category_ids: Optional[List[int]] = None
     tag_ids: Optional[List[int]] = None
 
@@ -128,6 +131,7 @@ class EnhancedProductSchema(BaseModel):
     image_urls: List[str] = []  # First image is primary
     ecommerce_category_id: Optional[int] = None
     ecommerce_subcategory_id: Optional[int] = None
+    alternative_product_ids: List[int] = []
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -141,6 +145,9 @@ class EnhancedProductSchema(BaseModel):
     )
     inventory: Optional[InventoryInfoSchema] = Field(
         None, description="Aggregated inventory availability information"
+    )
+    alternatives: Optional[List["EnhancedProductSchema"]] = Field(
+        None, description="List of alternative products"
     )
 
     model_config = ConfigDict(from_attributes=True)
@@ -168,6 +175,9 @@ class ProductQuerySchema(BaseModel):
     )
     include_tags: Optional[bool] = Field(
         default=False, description="Whether to include tag information"
+    )
+    include_alternatives: Optional[bool] = Field(
+        default=False, description="Whether to include alternative products"
     )
     category_ids: Optional[List[int]] = None
     tags: Optional[List[str]] = None  # Filter by tags with flexible syntax
