@@ -23,7 +23,13 @@ from src.shared.exceptions import ValidationException
 
 
 from src.api.carts.service import CartService
-from src.api.users.checkout_models import CheckoutRequestSchema
+from src.api.products.models import ProductSchema
+from src.api.products.service import ProductService
+from src.api.products.services import ProductInventoryService
+from src.api.users.checkout_models import (
+    CheckoutRequestSchema,
+    UnavailableItemSchema,
+)
 from src.api.users.models import (
     MultiCartCheckoutSchema,
     CheckoutLocationSchema,
@@ -36,6 +42,8 @@ class StoreSelectionService:
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
         self.cart_service = CartService()
+        self.product_service = ProductService()
+        self.inventory_service = ProductInventoryService()
 
     async def get_fulfillment_plan(
         self, session, user_id: str, request: CheckoutRequestSchema
@@ -78,12 +86,8 @@ class StoreSelectionService:
                 cart_items=all_items,
                 session=session,
             )
-            if not fulfillment_result["all_items_available"]:
-                raise ValidationException(
-                    "Not all items are available at the selected pickup store."
-                )
-            store_assignments = {location_obj.id: all_items}
-            unavailable_items = []
+            store_assignments = {location_obj.id: fulfillment_result["available_items"]}
+            unavailable_items = fulfillment_result["unavailable_items"]
             fulfillment_result["is_nearby_store"] = True  # Set for pickup
         else:
             fulfillment_result = await self.select_stores_for_delivery(
@@ -167,7 +171,11 @@ class StoreSelectionService:
 
                 # Update cart_items to only include available items
                 cart_items = available_items
-                selection_result["unavailable_items"] = excluded_items
+                
+                excluded_items_response = await self._build_unavailable_items_response(
+                    excluded_items, "far_delivery_unavailable", session
+                )
+                selection_result["unavailable_items"] = excluded_items_response
 
             # Try to fulfill from nearest store first
             nearest_store = stores[0]
@@ -192,9 +200,16 @@ class StoreSelectionService:
                 )
 
                 # Merge unavailable items from excluded products and stock unavailability
+                stock_unavailable_items = await self._build_unavailable_items_response(
+                    split_result["unavailable_items"],
+                    "out_of_stock",
+                    session,
+                    store_ids=[s["store_id"] for s in stores],
+                )
+
                 all_unavailable = (
                     selection_result["unavailable_items"]
-                    + split_result["unavailable_items"]
+                    + stock_unavailable_items
                 )
 
                 selection_result.update(
@@ -222,6 +237,7 @@ class StoreSelectionService:
             "store_valid": False,
             "store_info": None,
             "all_items_available": False,
+            "available_items": [],
             "unavailable_items": [],
             "estimated_pickup_time": "30 minutes",
         }
@@ -250,10 +266,19 @@ class StoreSelectionService:
             availability = await self._check_store_availability(
                 store_id, cart_items, session
             )
+
+            unavailable_items_response = await self._build_unavailable_items_response(
+                availability["unavailable_items"],
+                "out_of_stock",
+                session,
+                store_ids=[store_id],
+            )
+
             pickup_result.update(
                 {
                     "all_items_available": availability["all_available"],
-                    "unavailable_items": availability["unavailable_items"],
+                    "available_items": availability["available_items"],
+                    "unavailable_items": unavailable_items_response,
                 }
             )
 
@@ -478,6 +503,48 @@ class StoreSelectionService:
         split_result["unavailable_items"] = remaining_items
 
         return split_result
+
+    async def _build_unavailable_items_response(
+        self,
+        unavailable_items: List[Dict[str, Any]],
+        reason: str,
+        session,
+        store_ids: Optional[List[int]] = None,
+    ) -> List[UnavailableItemSchema]:
+        if not unavailable_items:
+            return []
+
+        product_ids = [item["product_id"] for item in unavailable_items]
+        products = await self.product_service.query_service.get_products_by_ids(
+            product_ids
+        )
+
+        if reason == "out_of_stock" and store_ids:
+            products = await self.inventory_service.add_inventory_to_products_bulk(
+                products=products,
+                store_ids=store_ids,
+                is_nearby_store=True,
+            )
+
+        product_map = {product.id: product for product in products}
+
+        unavailable_items_response = []
+        for item in unavailable_items:
+            product = product_map.get(item["product_id"])
+            if product:
+                max_available = None
+                if product.inventory:
+                    max_available = product.inventory.max_available
+
+                unavailable_items_response.append(
+                    UnavailableItemSchema(
+                        product=ProductSchema.model_validate(product.model_dump()),
+                        quantity=item["quantity"],
+                        reason=reason,
+                        max_available=max_available,
+                    )
+                )
+        return unavailable_items_response
 
     async def check_inventory_at_nearby_stores(
         self,

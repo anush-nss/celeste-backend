@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -25,7 +26,11 @@ from src.shared.exceptions import (
 )
 from src.shared.responses import success_response
 
-from src.api.users.checkout_models import CheckoutRequestSchema, CheckoutResponse
+from src.api.users.checkout_models import (
+    CheckoutRequestSchema,
+    CheckoutResponse,
+    PaymentInfo,
+)
 from src.api.users.checkout_service import CheckoutService
 
 users_router = APIRouter(prefix="/users", tags=["Users"])
@@ -438,12 +443,12 @@ async def create_multi_cart_order(
     order_summary = await checkout_service.create_order(user_id, checkout_data)
 
     # Initiate payment
-    payment_info = await order_service.payment_service.initiate_payment(
+    payment_info_dict = await order_service.payment_service.initiate_payment(
         cart_ids=checkout_data.cart_ids,
-        total_amount=order_summary.overall_total,
+        total_amount=Decimal(order_summary.overall_total),
         user_id=user_id,
     )
-    order_summary.payment_info = payment_info
+    order_summary.payment_info = PaymentInfo(**payment_info_dict)
 
     return success_response(
         order_summary.model_dump(mode="json"), status_code=status.HTTP_201_CREATED

@@ -89,7 +89,7 @@ class OrderService:
                     order_items_to_create.append(
                         OrderItem(
                             order_id=new_order.id,
-                            product_id=item.product_id,
+                            product_id=item.product.id,
                             store_id=store_id,
                             quantity=item.quantity,
                             unit_price=Decimal(str(item.final_price)),
@@ -99,7 +99,7 @@ class OrderService:
                     )
                     holds_to_place.append(
                         {
-                            "product_id": item.product_id,
+                            "product_id": item.product.id,
                             "store_id": store_id,
                             "quantity": item.quantity,
                         }
