@@ -43,11 +43,23 @@ class SearchService:
     - Search suggestions
     """
 
+    _instance: Optional['SearchService'] = None
+    _model_loaded: bool = False
+
+    def __new__(cls):
+        """Singleton pattern to ensure only one instance with shared model"""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self):
-        self._error_handler = ErrorHandler(__name__)
-        self._model: Optional[SentenceTransformer] = None
-        self.product_service = ProductService()
-        self.logger = logging.getLogger(__name__)
+        # Only initialize once
+        if not hasattr(self, '_initialized'):
+            self._error_handler = ErrorHandler(__name__)
+            self._model: Optional[SentenceTransformer] = None
+            self.product_service = ProductService()
+            self.logger = logging.getLogger(__name__)
+            self._initialized = True
 
     def _load_model(self):
         """Lazy load the sentence transformer model with memory optimization"""
@@ -63,8 +75,23 @@ class SearchService:
                 cache_folder=None,  # Use default cache
                 local_files_only=True  # CRITICAL: Never contact HuggingFace API
             )
+            SearchService._model_loaded = True
             self.logger.info("Model loaded successfully from local cache")
         return self._model
+
+    def warmup(self):
+        """
+        Warm up the search service by pre-loading the model.
+        Call this at application startup to avoid cold start delays.
+        """
+        if not SearchService._model_loaded:
+            self.logger.info("Warming up search service...")
+            self._load_model()
+            # Test encode to ensure model is fully initialized
+            self._model.encode("warmup query", convert_to_numpy=True)
+            self.logger.info("Search service warmup complete!")
+        else:
+            self.logger.info("Search service already warmed up")
 
     async def search_products(
         self,
