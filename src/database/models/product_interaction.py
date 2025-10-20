@@ -24,9 +24,7 @@ class ProductInteraction(Base):
         Index("idx_product_interactions_timestamp", "timestamp"),
         Index("idx_product_interactions_type", "interaction_type"),
         Index("idx_product_interactions_user_time", "user_id", "timestamp"),
-        Index(
-            "idx_product_interactions_user_product", "user_id", "product_id"
-        ),
+        Index("idx_product_interactions_user_product", "user_id", "product_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)

@@ -1,9 +1,7 @@
-import asyncio
 import gc
 import logging
 from typing import List, Optional
 
-import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sqlalchemy import text
@@ -13,7 +11,6 @@ from src.config.constants import (
     NEXT_DAY_DELIVERY_ONLY_TAG_ID,
     SEARCH_TFIDF_MAX_FEATURES,
     SEARCH_VECTOR_DIM,
-    SENTENCE_TRANSFORMER_BATCH_SIZE,
     SENTENCE_TRANSFORMER_MODEL,
 )
 from src.database.connection import AsyncSessionLocal
@@ -50,9 +47,9 @@ class VectorService:
             # local_files_only=True prevents any internet access to HuggingFace Hub
             self._model = SentenceTransformer(
                 SENTENCE_TRANSFORMER_MODEL,
-                device='cpu',  # Force CPU to avoid GPU memory issues
+                device="cpu",  # Force CPU to avoid GPU memory issues
                 cache_folder=None,  # Use default cache (~/.cache/huggingface or container cache)
-                local_files_only=True  # CRITICAL: Never contact HuggingFace API
+                local_files_only=True,  # CRITICAL: Never contact HuggingFace API
             )
             self.logger.info("Model loaded successfully from local cache")
         return self._model
@@ -78,9 +75,7 @@ class VectorService:
             )
         return self._tfidf_vectorizer
 
-    async def _build_product_text(
-        self, product_id: int, session
-    ) -> Optional[str]:
+    async def _build_product_text(self, product_id: int, session) -> Optional[str]:
         """
         Build comprehensive searchable text for a product.
 
@@ -150,9 +145,7 @@ class VectorService:
 
         return combined_text if combined_text else None
 
-    async def vectorize_product(
-        self, product_id: int, version: int = 1
-    ) -> bool:
+    async def vectorize_product(self, product_id: int, version: int = 1) -> bool:
         """
         Create or update vector embedding for a single product.
 
@@ -189,9 +182,7 @@ class VectorService:
 
                 # Check if vector already exists
                 result = await session.execute(
-                    select(ProductVector).where(
-                        ProductVector.product_id == product_id
-                    )
+                    select(ProductVector).where(ProductVector.product_id == product_id)
                 )
                 existing_vector = result.scalars().first()
 
@@ -246,12 +237,14 @@ class VectorService:
                 # Process in smaller chunks to avoid memory issues
                 chunk_size = 50  # Process 50 products at a time
                 for chunk_start in range(0, len(product_ids), chunk_size):
-                    chunk_ids = product_ids[chunk_start:chunk_start + chunk_size]
+                    chunk_ids = product_ids[chunk_start : chunk_start + chunk_size]
 
                     # Build text for chunk
                     text_data = []
                     for product_id in chunk_ids:
-                        text_content = await self._build_product_text(product_id, session)
+                        text_content = await self._build_product_text(
+                            product_id, session
+                        )
                         if text_content:
                             text_data.append((product_id, text_content))
                         else:
@@ -265,6 +258,7 @@ class VectorService:
                         batch = text_data[i : i + batch_size]
                         batch_ids = [item[0] for item in batch]
                         batch_texts = [item[1] for item in batch]
+                        batch_len = len(batch)  # Store length before potential deletion
 
                         try:
                             # Generate embeddings for batch
@@ -290,7 +284,9 @@ class VectorService:
                                     existing_vector = result.scalars().first()
 
                                     if existing_vector:
-                                        existing_vector.vector_embedding = embedding.tolist()
+                                        existing_vector.vector_embedding = (
+                                            embedding.tolist()
+                                        )
                                         existing_vector.text_content = text_content
                                         existing_vector.version = version
                                     else:
@@ -318,13 +314,15 @@ class VectorService:
 
                             total_processed = results["success"] + results["failed"]
                             if total_processed % 20 == 0:
-                                self.logger.info(f"Processed {total_processed} products...")
+                                self.logger.info(
+                                    f"Processed {total_processed} products..."
+                                )
                                 # Periodic garbage collection
                                 gc.collect()
 
                         except Exception as e:
                             self.logger.error(f"Error processing batch: {e}")
-                            results["failed"] += len(batch)
+                            results["failed"] += batch_len
                             await session.rollback()
 
                     # Clear chunk data
@@ -398,9 +396,7 @@ class VectorService:
         try:
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
-                    select(ProductVector).where(
-                        ProductVector.product_id == product_id
-                    )
+                    select(ProductVector).where(ProductVector.product_id == product_id)
                 )
                 vector = result.scalars().first()
 
@@ -410,11 +406,82 @@ class VectorService:
                     self.logger.info(f"Deleted vector for product {product_id}")
                     return True
                 else:
-                    self.logger.warning(
-                        f"No vector found for product {product_id}"
-                    )
+                    self.logger.warning(f"No vector found for product {product_id}")
                     return False
 
         except Exception as e:
             self.logger.error(f"Error deleting vector for product {product_id}: {e}")
             return False
+
+    async def find_similar_products(
+        self,
+        product_id: int,
+        limit: int = 10,
+        min_similarity: float = 0.5,
+    ) -> List[tuple]:
+        """
+        Find products similar to a given product using vector similarity.
+
+        Uses cosine similarity with pgvector for efficient similarity search.
+
+        Args:
+            product_id: Product ID to find similar products for
+            limit: Maximum number of similar products to return
+            min_similarity: Minimum similarity threshold (0.0 to 1.0)
+
+        Returns:
+            List of tuples: (product_id, similarity_score)
+            Sorted by similarity score descending
+        """
+        try:
+            async with AsyncSessionLocal() as session:
+                # Get the vector for the source product
+                result = await session.execute(
+                    select(ProductVector).where(ProductVector.product_id == product_id)
+                )
+                source_vector = result.scalars().first()
+
+                if not source_vector:
+                    self.logger.warning(f"No vector found for product {product_id}")
+                    return []
+
+                # Find similar products using cosine similarity
+                # <=> is the cosine distance operator (1 - cosine similarity)
+                # So we calculate similarity as 1 - distance
+                similarity_query = text("""
+                    SELECT
+                        pv.product_id,
+                        1 - (pv.vector_embedding <=> CAST(:query_vector AS vector)) AS similarity
+                    FROM product_vectors pv
+                    WHERE pv.product_id != :product_id
+                        AND (1 - (pv.vector_embedding <=> CAST(:query_vector AS vector))) >= :min_similarity
+                    ORDER BY similarity DESC
+                    LIMIT :limit
+                """)
+
+                result = await session.execute(
+                    similarity_query,
+                    {
+                        "query_vector": str(source_vector.vector_embedding),
+                        "product_id": product_id,
+                        "min_similarity": min_similarity,
+                        "limit": limit,
+                    },
+                )
+
+                # Return list of (product_id, similarity_score) tuples
+                similar_products = [
+                    (row.product_id, float(row.similarity)) for row in result.fetchall()
+                ]
+
+                self.logger.info(
+                    f"Found {len(similar_products)} similar products for product {product_id}"
+                )
+                return similar_products
+
+        except Exception as e:
+            self.logger.error(
+                f"Error finding similar products for product {product_id}: {e}",
+                exc_info=True,
+            )
+            return []

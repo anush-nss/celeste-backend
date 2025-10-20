@@ -7,6 +7,7 @@ from sqlalchemy import update
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
+from src.api.interactions.service import InteractionService
 from src.api.inventory.service import InventoryService
 from src.api.orders.models import (
     CreateOrderSchema,
@@ -40,6 +41,7 @@ from src.shared.exceptions import ResourceNotFoundException, ValidationException
 class OrderService:
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
+        self.interaction_service = InteractionService()
         self.inventory_service = InventoryService()
         self.pricing_service = PricingService()
         self.payment_service = PaymentService()
@@ -637,6 +639,30 @@ class OrderService:
                         updated_order = await self.update_order_status(
                             order.id, update_schema
                         )
+
+                        # Track order interactions for all products
+                        try:
+                            # Get order items
+                            order_items = [
+                                (item.product_id, item.quantity, item.unit_price)
+                                for item in updated_order.items
+                            ]
+
+                            # Track bulk order interactions
+                            await self.interaction_service.track_bulk_orders(
+                                user_id=updated_order.user_id,
+                                order_id=updated_order.id,
+                                products=order_items,
+                                auto_update=True,  # Auto-update popularity and preferences
+                            )
+                            self._error_handler.logger.info(
+                                f"Tracked {len(order_items)} product interactions for order {order.id}"
+                            )
+                        except Exception as e:
+                            # Log but don't fail the payment processing
+                            self._error_handler.logger.error(
+                                f"Failed to track interactions for order {order.id}: {str(e)}"
+                            )
 
                         # Update user statistics for successful payment
                         try:

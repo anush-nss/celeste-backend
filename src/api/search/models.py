@@ -37,10 +37,16 @@ class SearchMetadataSchema(BaseModel):
     """Metadata about the search operation"""
 
     query: str = Field(..., description="The search query")
-    search_time_ms: float = Field(..., description="Search execution time in milliseconds")
+    search_time_ms: float = Field(
+        ..., description="Search execution time in milliseconds"
+    )
     mode: str = Field(..., description="Search mode: dropdown or full")
-    method: Optional[str] = Field(None, description="Search method used: hybrid, semantic, keyword")
-    filters_applied: Optional[dict] = Field(None, description="Filters that were applied")
+    method: Optional[str] = Field(
+        None, description="Search method used: hybrid, semantic, keyword"
+    )
+    filters_applied: Optional[dict] = Field(
+        None, description="Filters that were applied"
+    )
     error: Optional[str] = Field(None, description="Error message if search failed")
 
 
@@ -85,11 +91,19 @@ class SearchQuerySchema(BaseModel):
         le=SEARCH_FULL_MAX_LIMIT,
         description=f"Maximum results (default: {SEARCH_FULL_DEFAULT_LIMIT} for full, {SEARCH_DROPDOWN_LIMIT} for dropdown)",
     )
-    include_pricing: bool = Field(default=True, description="Include pricing information")
-    include_categories: bool = Field(default=False, description="Include category information")
+    include_pricing: bool = Field(
+        default=True, description="Include pricing information"
+    )
+    include_categories: bool = Field(
+        default=False, description="Include category information"
+    )
     include_tags: bool = Field(default=False, description="Include tag information")
-    include_inventory: bool = Field(default=True, description="Include inventory information")
-    category_ids: Optional[List[int]] = Field(None, description="Filter by category IDs")
+    include_inventory: bool = Field(
+        default=True, description="Include inventory information"
+    )
+    category_ids: Optional[List[int]] = Field(
+        None, description="Filter by category IDs"
+    )
     min_price: Optional[float] = Field(None, ge=0, description="Minimum price filter")
     max_price: Optional[float] = Field(None, ge=0, description="Maximum price filter")
     latitude: Optional[float] = Field(

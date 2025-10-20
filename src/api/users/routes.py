@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.api.auth.models import DecodedToken
 from src.api.carts.service import CartService
+from src.api.interactions.service import InteractionService
 from src.api.orders.service import OrderService
 from src.api.users.models import (
     AddCartItemSchema,
@@ -38,6 +39,7 @@ users_router = APIRouter(prefix="/users", tags=["Users"])
 user_service = UserService()
 order_service = OrderService()
 checkout_service = CheckoutService()
+interaction_service = InteractionService()
 
 
 @users_router.get("/me", summary="Get current user profile")
@@ -275,6 +277,15 @@ async def add_cart_item(
         raise UnauthorizedException(detail="User ID not found in token")
 
     item = await CartService.add_cart_item(user_id, cart_id, item_data)
+
+    # Track cart add interaction (background task)
+    await interaction_service.track_cart_add(
+        user_id=user_id,
+        product_id=item_data.product_id,
+        quantity=item_data.quantity,
+        auto_update=True,  # Auto-update popularity
+    )
+
     return success_response(
         item.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )

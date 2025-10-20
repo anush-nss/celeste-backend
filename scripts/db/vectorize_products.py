@@ -62,15 +62,16 @@ async def vectorize_all(force: bool = False, batch_size: int = 8):
         print(f"⏭️  Skipped (no text):      {results['skipped']} products")
         print()
 
-        total = results['success'] + results['failed'] + results['skipped']
+        total = results["success"] + results["failed"] + results["skipped"]
         if total > 0:
-            success_rate = (results['success'] / total) * 100
+            success_rate = (results["success"] / total) * 100
             print(f"Success rate: {success_rate:.1f}%")
         print()
 
     except Exception as e:
         print(f"❌ ERROR: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
@@ -203,4 +204,6 @@ Memory Optimization:
     args = parser.parse_args()
 
     # Run vectorization
-    asyncio.run(main(force=args.force, product_id=args.product_id, batch_size=args.batch_size))
+    asyncio.run(
+        main(force=args.force, product_id=args.product_id, batch_size=args.batch_size)
+    )

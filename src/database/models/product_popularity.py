@@ -30,7 +30,10 @@ class ProductPopularity(Base):
 
     # Product ID (unique constraint)
     product_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, unique=True
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
     )
 
     # Count of times product appeared in search results

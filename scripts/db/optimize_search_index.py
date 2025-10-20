@@ -23,6 +23,7 @@ import asyncio
 import math
 import sys
 import os
+from typing import Optional
 
 # Add project root to path
 sys.path.append(
@@ -36,11 +37,9 @@ from src.database.connection import AsyncSessionLocal, engine
 async def get_vector_count():
     """Get the number of vectors in the database"""
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            text("SELECT COUNT(*) FROM product_vectors")
-        )
+        result = await session.execute(text("SELECT COUNT(*) FROM product_vectors"))
         count = result.scalar()
-        return count
+        return count if count is not None else 0
 
 
 async def calculate_optimal_lists(row_count: int) -> int:
@@ -82,9 +81,9 @@ async def rebuild_index(lists: int, dry_run: bool = False):
             print(f"\n[DRY RUN] Would rebuild index with lists={lists}")
             print("\nSQL commands that would be executed:")
             print("  1. DROP INDEX IF EXISTS idx_product_vectors_embedding;")
-            print(f"  2. CREATE INDEX idx_product_vectors_embedding")
-            print(f"       ON product_vectors")
-            print(f"       USING ivfflat (vector_embedding vector_cosine_ops)")
+            print("  2. CREATE INDEX idx_product_vectors_embedding")
+            print("       ON product_vectors")
+            print("       USING ivfflat (vector_embedding vector_cosine_ops)")
             print(f"       WITH (lists = {lists});")
             return
 
@@ -121,14 +120,16 @@ async def show_index_info():
     """Display current index information"""
     async with AsyncSessionLocal() as session:
         # Check if index exists
-        result = await session.execute(text("""
+        result = await session.execute(
+            text("""
             SELECT
                 indexname,
                 indexdef
             FROM pg_indexes
             WHERE tablename = 'product_vectors'
                 AND indexname = 'idx_product_vectors_embedding'
-        """))
+        """)
+        )
         row = result.fetchone()
 
         if row:
@@ -138,19 +139,22 @@ async def show_index_info():
 
             # Try to extract lists parameter
             import re
-            lists_match = re.search(r'lists\s*=\s*(\d+)', row.indexdef)
+
+            lists_match = re.search(r"lists\s*=\s*(\d+)", row.indexdef)
             if lists_match:
                 current_lists = int(lists_match.group(1))
                 print(f"  Current lists parameter: {current_lists}")
                 return current_lists
         else:
             print("\n⚠️  Index 'idx_product_vectors_embedding' does not exist!")
-            print("   Run the migration first: migrations/001_search_personalization_tables.sql")
+            print(
+                "   Run the migration first: migrations/001_search_personalization_tables.sql"
+            )
 
         return None
 
 
-async def main(dry_run: bool = False, force_lists: int = None):
+async def main(dry_run: bool = False, force_lists: Optional[int] = None):
     """
     Main function to optimize the search index.
 
@@ -189,6 +193,7 @@ async def main(dry_run: bool = False, force_lists: int = None):
         print("  No action needed!")
         return
 
+    improvement = 0.0  # Initialize for type checker
     if current_lists is not None:
         improvement = abs(optimal_lists - current_lists) / current_lists * 100
         print(f"\n  Current: {current_lists} lists")
@@ -210,7 +215,10 @@ async def main(dry_run: bool = False, force_lists: int = None):
         print("OPTIMIZATION COMPLETE!")
         print("=" * 80)
         print(f"\n✓ Index optimized with lists={optimal_lists}")
-        print(f"✓ Search performance should improve by ~{improvement:.0f}%" if current_lists else "✓ Index created successfully")
+        if current_lists is not None:
+            print(f"✓ Search performance should improve by ~{improvement:.0f}%")
+        else:
+            print("✓ Index created successfully")
         print("\nNext steps:")
         print("  1. Test search performance:")
         print("     GET /products/search?q=milk&mode=full")
@@ -244,19 +252,17 @@ Index Parameter Guidelines:
   - Medium catalog (1k-10k): lists = 30-100
   - Large catalog (10k-100k): lists = 100-300
   - Very large (>100k): lists = 300-1000
-        """
+        """,
     )
 
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Preview changes without applying them"
+        "--dry-run", action="store_true", help="Preview changes without applying them"
     )
 
     parser.add_argument(
         "--lists",
         type=int,
-        help="Force specific lists value instead of calculating optimal"
+        help="Force specific lists value instead of calculating optimal",
     )
 
     args = parser.parse_args()

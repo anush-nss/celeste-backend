@@ -122,7 +122,10 @@ class Product(Base):
         "Inventory", back_populates="product", cascade="all, delete-orphan"
     )
     vector: Mapped[Optional["ProductVector"]] = relationship(
-        "ProductVector", back_populates="product", uselist=False, cascade="all, delete-orphan"
+        "ProductVector",
+        back_populates="product",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
 
 

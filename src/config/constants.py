@@ -137,6 +137,7 @@ class CacheScopes(str, Enum):
 # SEARCH & PERSONALIZATION CONSTANTS
 # ============================================================================
 
+
 # Search modes
 class SearchMode(str, Enum):
     DROPDOWN = "dropdown"
@@ -158,7 +159,9 @@ SEARCH_HYBRID_WEIGHT_SEMANTIC = 0.7  # Weight for semantic similarity
 
 # Sentence transformer model
 SENTENCE_TRANSFORMER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-SENTENCE_TRANSFORMER_BATCH_SIZE = 8  # Batch size for vectorization (low-memory optimized)
+SENTENCE_TRANSFORMER_BATCH_SIZE = (
+    8  # Batch size for vectorization (low-memory optimized)
+)
 
 
 # Interaction types and scoring
@@ -186,10 +189,12 @@ INTERACTION_DECAY_DAYS = 30  # Apply time decay after 30 days
 
 # Popularity modes
 class PopularityMode(str, Enum):
-    BEST_SELLERS = "best_sellers"
-    MOST_SEARCHED = "most_searched"
-    TRENDING = "trending"
-    MOST_ADDED_TO_CART = "most_added_to_cart"
+    TRENDING = "trending"  # Time-decayed recent activity
+    MOST_VIEWED = "most_viewed"  # Most viewed products
+    MOST_CARTED = "most_carted"  # Most added to cart
+    MOST_ORDERED = "most_ordered"  # Best sellers
+    MOST_SEARCHED = "most_searched"  # Most searched products
+    OVERALL = "overall"  # Overall popularity score
 
 
 # Time windows for popularity
@@ -208,21 +213,24 @@ TIME_WINDOW_HOURS = {
     TimeWindow.ALL_TIME: None,  # No time limit
 }
 
-# Popularity calculation weights
-POPULARITY_WEIGHT_ORDERS = 10.0
-POPULARITY_WEIGHT_CART_ADDS = 5.0
-POPULARITY_WEIGHT_VIEWS = 2.0
+# Popularity calculation settings
+POPULARITY_MIN_INTERACTIONS = 5  # Minimum interactions to be considered popular
+POPULARITY_TIME_DECAY_HOURS = 72  # Half-life for trending score (3 days)
+TRENDING_RECENT_DAYS = 7  # Consider last 7 days for trending
+POPULARITY_DEFAULT_LIMIT = 20  # Default number of popular products
+POPULARITY_MAX_LIMIT = 100  # Maximum popular products per request
 POPULARITY_WEIGHT_SEARCHES = 1.0
 
 # Trending score decay (exponential decay factor)
 TRENDING_DECAY_HALF_LIFE_HOURS = 72  # Half-life of 3 days
 
 
-# Personalization weights
-PERSONALIZATION_CATEGORY_WEIGHT = 0.4
-PERSONALIZATION_BRAND_WEIGHT = 0.3
-PERSONALIZATION_VECTOR_WEIGHT = 0.2
-PERSONALIZATION_RECENCY_WEIGHT = 0.1
+# Personalization settings
+PERSONALIZATION_MIN_INTERACTIONS = 5  # Minimum interactions before personalizing
+PERSONALIZATION_CATEGORY_WEIGHT = 1.0  # Weight for category affinity
+PERSONALIZATION_BRAND_WEIGHT = 0.5  # Weight for brand affinity
+PERSONALIZATION_SEARCH_WEIGHT = 0.3  # Weight for search keyword matching
+PERSONALIZATION_DIVERSITY_THRESHOLD = 0.7  # Threshold for diversity filtering
 
 # Final product ranking weights (when personalizing)
 RANKING_BASE_RELEVANCE_WEIGHT = 0.5  # Price, inventory, etc.
@@ -231,7 +239,9 @@ RANKING_POPULARITY_WEIGHT = 0.2  # Global popularity
 
 # Diversity settings
 MAX_PRODUCTS_PER_CATEGORY_IN_RESULTS = 3  # Max products from same category in top 20
-RECENT_ORDER_PENALTY_MULTIPLIER = 0.3  # Reduce score by 70% for recently ordered items
+PERSONALIZATION_RECENT_ORDER_MULTIPLIER = (
+    0.3  # Reduce score by 70% for recently ordered items
+)
 RECENT_ORDER_DAYS_THRESHOLD = 30  # Consider orders in last 30 days as "recent"
 
 # Collaborative filtering

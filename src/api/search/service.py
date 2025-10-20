@@ -3,10 +3,8 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 
-import numpy as np
-from pgvector.sqlalchemy import Vector
 from sentence_transformers import SentenceTransformer
-from sqlalchemy import and_, desc, func, or_, text
+from sqlalchemy import and_, desc, text
 from sqlalchemy.future import select
 
 from src.api.products.models import EnhancedProductSchema
@@ -24,9 +22,7 @@ from src.config.constants import (
     SearchMode,
 )
 from src.database.connection import AsyncSessionLocal
-from src.database.models.product import Product
 from src.database.models.product_interaction import ProductInteraction
-from src.database.models.product_vector import ProductVector
 from src.database.models.search_interaction import SearchInteraction
 from src.database.models.search_suggestion import SearchSuggestion
 from src.shared.error_handler import ErrorHandler
@@ -43,7 +39,7 @@ class SearchService:
     - Search suggestions
     """
 
-    _instance: Optional['SearchService'] = None
+    _instance: Optional["SearchService"] = None
     _model_loaded: bool = False
 
     def __new__(cls):
@@ -54,7 +50,7 @@ class SearchService:
 
     def __init__(self):
         # Only initialize once
-        if not hasattr(self, '_initialized'):
+        if not hasattr(self, "_initialized"):
             self._error_handler = ErrorHandler(__name__)
             self._model: Optional[SentenceTransformer] = None
             self.product_service = ProductService()
@@ -71,9 +67,9 @@ class SearchService:
             # local_files_only=True prevents any internet access to HuggingFace Hub
             self._model = SentenceTransformer(
                 SENTENCE_TRANSFORMER_MODEL,
-                device='cpu',  # Force CPU for consistency
+                device="cpu",  # Force CPU for consistency
                 cache_folder=None,  # Use default cache
-                local_files_only=True  # CRITICAL: Never contact HuggingFace API
+                local_files_only=True,  # CRITICAL: Never contact HuggingFace API
             )
             SearchService._model_loaded = True
             self.logger.info("Model loaded successfully from local cache")
@@ -86,9 +82,10 @@ class SearchService:
         """
         if not SearchService._model_loaded:
             self.logger.info("Warming up search service...")
-            self._load_model()
+            model = self._load_model()
             # Test encode to ensure model is fully initialized
-            self._model.encode("warmup query", convert_to_numpy=True)
+            if model:
+                model.encode("warmup query", convert_to_numpy=True)
             self.logger.info("Search service warmup complete!")
         else:
             self.logger.info("Search service already warmed up")
@@ -252,9 +249,7 @@ class SearchService:
                 "image_url": p.image_urls[0] if p.image_urls else None,
                 "base_price": float(p.base_price),
                 "final_price": (
-                    float(p.pricing.final_price)
-                    if p.pricing
-                    else float(p.base_price)
+                    float(p.pricing.final_price) if p.pricing else float(p.base_price)
                 ),
             }
             for p in products
@@ -308,7 +303,7 @@ class SearchService:
 
         # Convert Pydantic models to dicts for JSON serialization
         # mode='json' handles datetime, Decimal, and other special types
-        serialized_products = [p.model_dump(mode='json') for p in products]
+        serialized_products = [p.model_dump(mode="json") for p in products]
 
         return {
             "products": serialized_products,
@@ -374,7 +369,9 @@ class SearchService:
                 result = await session.execute(
                     text(search_query),
                     {
-                        "query_vector": str(query_embedding.tolist()),  # Convert to string for CAST
+                        "query_vector": str(
+                            query_embedding.tolist()
+                        ),  # Convert to string for CAST
                         "query": query,
                         "semantic_weight": SEARCH_HYBRID_WEIGHT_SEMANTIC,
                         "keyword_weight": SEARCH_HYBRID_WEIGHT_TFIDF,
@@ -415,18 +412,10 @@ class SearchService:
                     ]
 
                 if min_price is not None:
-                    products = [
-                        p
-                        for p in products
-                        if float(p.base_price) >= min_price
-                    ]
+                    products = [p for p in products if float(p.base_price) >= min_price]
 
                 if max_price is not None:
-                    products = [
-                        p
-                        for p in products
-                        if float(p.base_price) <= max_price
-                    ]
+                    products = [p for p in products if float(p.base_price) <= max_price]
 
                 # Maintain search ranking order
                 product_order_map = {pid: idx for idx, pid in enumerate(product_ids)}
@@ -441,9 +430,7 @@ class SearchService:
             self.logger.error(f"Error in hybrid search: {e}", exc_info=True)
             return []
 
-    async def _get_search_suggestions(
-        self, query: str, limit: int = 5
-    ) -> List[dict]:
+    async def _get_search_suggestions(self, query: str, limit: int = 5) -> List[dict]:
         """
         Get search suggestions based on query.
 

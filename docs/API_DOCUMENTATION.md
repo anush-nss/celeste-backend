@@ -217,6 +217,53 @@ Get recently bought products for the current user.
 #### GET `/products/{id}`
 Get a product by ID with smart pricing and location support.
 
+#### GET `/products/{id}/similar`
+Get similar products using AI-powered vector similarity.
+
+**Path Parameters:**
+- `id`: integer (required) - Product ID to find similar products for
+
+**Query Parameters:**
+- `limit`: integer (default: 10, max: 50) - Number of similar products to return
+- `min_similarity`: float (default: 0.5, range: 0.0-1.0) - Minimum similarity threshold
+- `include_pricing`: boolean (default: true) - Include tier-based pricing
+- `include_categories`: boolean (default: true) - Include category details
+- `include_tags`: boolean (default: true) - Include product tags
+- `include_inventory`: boolean (default: true) - Include inventory info
+- `store_id`: integer[] (optional) - Filter by store IDs
+- `latitude`: float (optional) - User location latitude
+- `longitude`: float (optional) - User location longitude
+- `quantity`: integer (default: 1) - Quantity for bulk pricing
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 42,
+      "name": "Similar Product",
+      "description": "Similar to the original",
+      "price": 15.99,
+      "similarity_score": 0.87,
+      "category_ids": [1, 3],
+      "tags": ["organic", "healthy"],
+      "inventory": {
+        "available": true,
+        "quantity": 100
+      }
+    }
+  ]
+}
+```
+
+**Features:**
+- Uses 384-dimension vector embeddings for semantic similarity
+- Cosine similarity calculation with pgvector
+- Enriched with pricing, categories, tags, and inventory (just like GET /products/{id})
+- Returns products ranked by similarity score (highest first)
+- Includes all product enrichment features (tier pricing, location-based inventory, etc.)
+
 #### GET `/products/ref/{ref}`
 Get a product by reference/SKU with smart pricing and location support.
 
@@ -254,6 +301,220 @@ Assign a tag to a product.
 
 ##### DELETE `/{product_id}/tags/{tag_id}` (Admin Only)
 Remove a tag from a product.
+
+---
+
+### AI-Powered Search & Personalization (`/search`, `/products`)
+
+#### GET `/search/products`
+AI-powered hybrid search combining semantic and keyword matching.
+
+**Query Parameters:**
+- `q`: string (required) - Search query
+- `limit`: integer (default: 20, max: 100) - Number of results
+- `include_pricing`: boolean (default: false) - Include tier-based pricing
+- `include_categories`: boolean (default: false) - Include category details
+- `include_tags`: boolean (default: false) - Include product tags
+- `include_inventory`: boolean (default: false) - Include inventory info
+- `store_id`: integer (optional) - Filter by store ID
+- `latitude`: float (optional) - User location latitude
+- `longitude`: float (optional) - User location longitude
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "products": [
+      {
+        "id": 1,
+        "name": "Product Name",
+        "description": "Description",
+        "price": 100.0,
+        "search_score": 0.85,
+        "category_ids": [1, 2],
+        "tags": ["tag1", "tag2"]
+      }
+    ],
+    "total": 10,
+    "limit": 20,
+    "search_query": "your query"
+  }
+}
+```
+
+**Features:**
+- Semantic search using 384-dimension vector embeddings (all-MiniLM-L6-v2 model)
+- Hybrid algorithm: 70% semantic similarity + 30% keyword matching
+- PostgreSQL full-text search for keyword matching
+- Results ranked by combined relevance score
+
+---
+
+#### GET `/products/popular`
+Get popular products with various ranking modes.
+
+**Query Parameters:**
+- `mode`: string (default: "overall") - Ranking mode
+  - `overall`: Overall popularity (all-time)
+  - `trending`: Time-decayed trending (72-hour half-life)
+  - `most_viewed`: Most viewed products
+  - `most_carted`: Most added to cart
+  - `most_ordered`: Most ordered products
+  - `most_searched`: Most searched/clicked products
+- `limit`: integer (default: 20, max: 100) - Number of results
+- `days`: integer (default: 30) - Time window for trending mode
+- `include_pricing`: boolean (default: false) - Include tier-based pricing
+- `include_categories`: boolean (default: false) - Include category details
+- `include_tags`: boolean (default: false) - Include product tags
+- `include_inventory`: boolean (default: false) - Include inventory info
+- `store_id`: integer (optional) - Filter by store ID
+- `latitude`: float (optional) - User location latitude
+- `longitude`: float (optional) - User location longitude
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "products": [
+      {
+        "id": 1,
+        "name": "Product Name",
+        "popularity_score": 0.92,
+        "view_count": 1500,
+        "cart_add_count": 450,
+        "order_count": 120,
+        "trending_score": 8.5
+      }
+    ],
+    "total": 10,
+    "limit": 20,
+    "mode": "trending"
+  }
+}
+```
+
+**Features:**
+- 6 different ranking modes for different use cases
+- Time-decay algorithm for trending items (exponential decay with 72-hour half-life)
+- Weighted interaction scores (ORDER=10, CART_ADD=5, VIEW=2, etc.)
+- Automatic background updates when users interact with products
+
+---
+
+#### GET `/products/?enable_personalization=true`
+Get personalized product recommendations (requires authentication).
+
+**Query Parameters:**
+- `enable_personalization`: boolean (default: true) - Enable personalized ranking
+- All standard product query parameters (limit, cursor, category_ids, etc.)
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "products": [
+      {
+        "id": 1,
+        "name": "Product Name",
+        "personalization_score": 0.88,
+        "category_affinity": 0.75,
+        "brand_affinity": 0.60
+      }
+    ],
+    "total": 50,
+    "is_personalized": true
+  }
+}
+```
+
+**Features:**
+- Personalization based on 4 signals:
+  1. Vector similarity (semantic preference matching)
+  2. Category affinity (preferred categories)
+  3. Brand loyalty (preferred brands)
+  4. Search keyword matching (search history)
+- Diversity filtering to prevent filter bubble (max 3 consecutive same-category products)
+- Minimum 5 interactions required for personalization
+- Automatic preference updates after orders
+
+---
+
+#### POST `/dev/triggers` (Development Only)
+Manual triggers for testing search and personalization features.
+
+**Request Body:**
+```json
+{
+  "action": "update_popularity | update_all_popularity | update_preferences | track_interaction",
+  "user_id": "firebase_uid (optional)",
+  "product_id": 123 (optional),
+  "interaction_type": "view | cart_add | wishlist_add | order | search_click (optional)",
+  "quantity": 1 (optional),
+  "order_id": 456 (optional)
+}
+```
+
+**Examples:**
+
+Update popularity for a single product:
+```json
+{
+  "action": "update_popularity",
+  "product_id": 123
+}
+```
+
+Track a cart addition:
+```json
+{
+  "action": "track_interaction",
+  "user_id": "firebase_uid_here",
+  "product_id": 123,
+  "interaction_type": "cart_add",
+  "quantity": 2
+}
+```
+
+Update user preferences:
+```json
+{
+  "action": "update_preferences",
+  "user_id": "firebase_uid_here"
+}
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "action": "track_interaction",
+    "user_id": "firebase_uid_here",
+    "product_id": 123,
+    "interaction_type": "cart_add",
+    "success": true,
+    "message": "Interaction tracked (popularity/preferences updating in background)"
+  }
+}
+```
+
+**Available Actions:**
+1. `update_popularity` - Update popularity scores for a product (requires: product_id)
+2. `update_all_popularity` - Update popularity for all products (slow!)
+3. `update_preferences` - Update user preferences (requires: user_id)
+4. `track_interaction` - Manually track an interaction (requires: user_id, product_id, interaction_type)
+
+**Interaction Types:**
+- `view`: Product view (score: 2.0)
+- `cart_add`: Add to cart (score: 5.0, requires: quantity)
+- `wishlist_add`: Add to wishlist (score: 3.0)
+- `order`: Product order (score: 10.0, requires: order_id, quantity)
+- `search_click`: Search result click (score: 1.0)
 
 ---
 

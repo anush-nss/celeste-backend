@@ -1,10 +1,15 @@
 from datetime import datetime
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, HTTPException, status
 from google.cloud.firestore import SERVER_TIMESTAMP
+from pydantic import BaseModel, Field
 
 from src.api.auth.service import AuthService
+from src.api.interactions.service import InteractionService
+from src.api.personalization.service import PersonalizationService
+from src.api.products.services.popularity_service import PopularityService
+from src.config.constants import InteractionType
 from src.integrations.odoo import (
     OdooService,
     OdooTestRequest,
@@ -19,6 +24,29 @@ from src.shared.responses import success_response
 dev_router = APIRouter(prefix="/dev", tags=["Development"])
 auth_service = AuthService()
 odoo_service = OdooService()
+interaction_service = InteractionService()
+popularity_service = PopularityService()
+personalization_service = PersonalizationService()
+
+
+class TriggerRequest(BaseModel):
+    """Request body for manual triggers"""
+
+    action: str = Field(
+        ...,
+        description="Action to perform: update_popularity, update_preferences, track_interaction, update_all_popularity",
+    )
+    user_id: Optional[str] = Field(
+        None, description="Firebase UID (for preferences/interactions)"
+    )
+    product_id: Optional[int] = Field(
+        None, description="Product ID (for popularity/interactions)"
+    )
+    interaction_type: Optional[str] = Field(
+        None, description="Interaction type: view, cart_add, order, etc."
+    )
+    quantity: Optional[int] = Field(1, description="Quantity (for cart_add)")
+    order_id: Optional[int] = Field(None, description="Order ID (for order tracking)")
 
 
 @dev_router.post("/auth/token", summary="Generate dev ID token for existing user")
@@ -44,6 +72,231 @@ async def create_dev_token(uid: str):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
             )
+
+
+@dev_router.post(
+    "/triggers", summary="Manual trigger for search/personalization updates"
+)
+async def manual_trigger(request: TriggerRequest):
+    """
+    Manual triggers for testing search & personalization features.
+
+    **Actions:**
+
+    1. **update_popularity** - Update popularity scores for a product
+       - Required: `product_id`
+       ```json
+       {"action": "update_popularity", "product_id": 123}
+       ```
+
+    2. **update_all_popularity** - Update popularity for all products (slow!)
+       ```json
+       {"action": "update_all_popularity"}
+       ```
+
+    3. **update_preferences** - Update user preferences
+       - Required: `user_id`
+       ```json
+       {"action": "update_preferences", "user_id": "firebase_uid"}
+       ```
+
+    4. **track_interaction** - Manually track an interaction
+       - Required: `user_id`, `product_id`, `interaction_type`
+       - Optional: `quantity`, `order_id`
+       ```json
+       {
+         "action": "track_interaction",
+         "user_id": "firebase_uid",
+         "product_id": 123,
+         "interaction_type": "cart_add",
+         "quantity": 2
+       }
+       ```
+
+       Available interaction types: `view`, `cart_add`, `wishlist_add`, `order`, `search_click`
+    """
+    try:
+        action = request.action.lower()
+
+        # Action: Update popularity for a single product
+        if action == "update_popularity":
+            if not request.product_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="product_id is required for update_popularity",
+                )
+
+            success = await popularity_service.update_product_popularity(
+                request.product_id
+            )
+
+            if success:
+                # Get updated metrics
+                metrics = await popularity_service.get_popularity_metrics(
+                    request.product_id
+                )
+                return success_response(
+                    {
+                        "action": "update_popularity",
+                        "product_id": request.product_id,
+                        "success": True,
+                        "metrics": metrics,
+                    }
+                )
+            else:
+                return success_response(
+                    {
+                        "action": "update_popularity",
+                        "product_id": request.product_id,
+                        "success": False,
+                        "message": "No interactions found for this product",
+                    }
+                )
+
+        # Action: Update popularity for all products
+        elif action == "update_all_popularity":
+            results = await popularity_service.update_all_popularity_scores()
+            return success_response(
+                {
+                    "action": "update_all_popularity",
+                    "results": results,
+                    "message": f"Updated {results['success']} products, {results['failed']} failed",
+                }
+            )
+
+        # Action: Update user preferences
+        elif action == "update_preferences":
+            if not request.user_id:
+                raise HTTPException(
+                    status_code=400, detail="user_id is required for update_preferences"
+                )
+
+            success = await personalization_service.update_user_preferences(
+                request.user_id
+            )
+
+            if success:
+                # Get updated preferences
+                preferences = await personalization_service.get_user_preferences(
+                    request.user_id
+                )
+                return success_response(
+                    {
+                        "action": "update_preferences",
+                        "user_id": request.user_id,
+                        "success": True,
+                        "preferences": {
+                            "total_interactions": preferences.total_interactions
+                            if preferences
+                            else 0,
+                            "category_scores": preferences.category_scores
+                            if preferences
+                            else {},
+                            "brand_scores": preferences.brand_scores
+                            if preferences
+                            else {},
+                            "search_keywords": preferences.search_keywords
+                            if preferences
+                            else {},
+                        },
+                    }
+                )
+            else:
+                return success_response(
+                    {
+                        "action": "update_preferences",
+                        "user_id": request.user_id,
+                        "success": False,
+                        "message": "Not enough interactions (minimum 5 required)",
+                    }
+                )
+
+        # Action: Track interaction
+        elif action == "track_interaction":
+            if (
+                not request.user_id
+                or not request.product_id
+                or not request.interaction_type
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="user_id, product_id, and interaction_type are required for track_interaction",
+                )
+
+            # Validate interaction type
+            try:
+                interaction_type = InteractionType(request.interaction_type.lower())
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid interaction_type. Must be one of: {[t.value for t in InteractionType]}",
+                )
+
+            # Track the interaction
+            if interaction_type == InteractionType.CART_ADD:
+                success = await interaction_service.track_cart_add(
+                    user_id=request.user_id,
+                    product_id=request.product_id,
+                    quantity=request.quantity or 1,
+                    auto_update=True,
+                )
+            elif interaction_type == InteractionType.ORDER:
+                if not request.order_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="order_id is required for order interaction",
+                    )
+                success = await interaction_service.track_order(
+                    user_id=request.user_id,
+                    product_id=request.product_id,
+                    order_id=request.order_id,
+                    quantity=request.quantity or 1,
+                    auto_update=True,
+                )
+            elif interaction_type == InteractionType.WISHLIST_ADD:
+                success = await interaction_service.track_wishlist_add(
+                    user_id=request.user_id,
+                    product_id=request.product_id,
+                    auto_update=True,
+                )
+            elif interaction_type == InteractionType.VIEW:
+                success = await interaction_service.track_view(
+                    user_id=request.user_id,
+                    product_id=request.product_id,
+                    auto_update=False,
+                )
+            else:
+                success = await interaction_service.track_interaction(
+                    user_id=request.user_id,
+                    product_id=request.product_id,
+                    interaction_type=interaction_type,
+                    auto_update_popularity=True,
+                    auto_update_preferences=False,
+                )
+
+            return success_response(
+                {
+                    "action": "track_interaction",
+                    "user_id": request.user_id,
+                    "product_id": request.product_id,
+                    "interaction_type": request.interaction_type,
+                    "success": success,
+                    "message": "Interaction tracked (popularity/preferences updating in background)",
+                }
+            )
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid action: {action}. Must be one of: update_popularity, update_all_popularity, update_preferences, track_interaction",
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error executing trigger: {str(e)}"
+        )
 
 
 @dev_router.post("/db/add", summary="Add data to database collection")

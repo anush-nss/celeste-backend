@@ -24,6 +24,7 @@ initialize_firebase()
 
 logger = get_logger(__name__)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown: Cleanup (if needed in future)
     logger.info("Application shutdown")
+
 
 app = FastAPI(
     title="Celeste API",

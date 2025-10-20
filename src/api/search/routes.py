@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional, Union
+from typing import Annotated, List, Optional, Union, Dict, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -8,7 +8,6 @@ from src.api.search.models import (
     SearchClickSchema,
     SearchDropdownResponse,
     SearchFullResponse,
-    SearchQuerySchema,
 )
 from src.api.search.service import SearchService
 from src.config.constants import (
@@ -51,7 +50,9 @@ async def search_products(
     include_categories: bool = Query(False, description="Include category information"),
     include_tags: bool = Query(False, description="Include tag information"),
     include_inventory: bool = Query(True, description="Include inventory information"),
-    category_ids: Optional[List[int]] = Query(None, description="Filter by category IDs"),
+    category_ids: Optional[List[int]] = Query(
+        None, description="Filter by category IDs"
+    ),
     min_price: Optional[float] = Query(None, ge=0, description="Minimum price filter"),
     max_price: Optional[float] = Query(None, ge=0, description="Maximum price filter"),
     latitude: Optional[float] = Query(
@@ -113,12 +114,29 @@ async def search_products(
     user_id = current_user.uid if current_user else None
 
     # Get store IDs from location if provided
-    store_ids = None
+    store_ids: Optional[List[int]] = None
     if include_inventory and latitude and longitude:
         from src.api.stores.service import StoreService
 
         store_service = StoreService()
-        store_ids, _ = await store_service.get_store_ids_by_location(latitude, longitude)
+        result_tuple = await store_service.get_store_ids_by_location(
+            latitude, longitude
+        )
+        if result_tuple and result_tuple[0]:
+            potential_store_ids = result_tuple[0]
+            if isinstance(potential_store_ids, list):
+                if all(isinstance(x, int) for x in potential_store_ids):
+                    store_ids = cast(List[int], potential_store_ids)
+                elif all(
+                    isinstance(x, dict) and "id" in x and isinstance(x["id"], int)
+                    for x in potential_store_ids
+                ):
+                    store_ids = [
+                        cast(int, item["id"])
+                        for item in cast(List[Dict[str, Any]], potential_store_ids)
+                    ]
+            else:
+                store_ids = None
 
     # Perform search
     result = await search_service.search_products(
