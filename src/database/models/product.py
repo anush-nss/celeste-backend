@@ -23,6 +23,7 @@ from src.database.models.associations import product_categories
 if TYPE_CHECKING:
     from src.database.models.category import Category
     from src.database.models.inventory import Inventory
+    from src.database.models.product_vector import ProductVector
 
 
 class Product(Base):
@@ -119,6 +120,9 @@ class Product(Base):
     )
     inventory_levels: Mapped[List["Inventory"]] = relationship(
         "Inventory", back_populates="product", cascade="all, delete-orphan"
+    )
+    vector: Mapped[Optional["ProductVector"]] = relationship(
+        "ProductVector", back_populates="product", uselist=False, cascade="all, delete-orphan"
     )
 
 

@@ -8,6 +8,7 @@ from src.api.inventory.routes import inventory_router
 from src.api.orders.routes import orders_router
 from src.api.pricing.routes import pricing_router
 from src.api.products.routes import products_router
+from src.api.search.routes import search_router
 from src.api.stores.routes import stores_router
 from src.api.tags.routes import tags_router
 from src.api.tiers.routes import router as tiers_router
@@ -31,6 +32,9 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(categories_router)
 app.include_router(ecommerce_categories_router)
+# IMPORTANT: Register search_router BEFORE products_router
+# to prevent /products/{id} from catching /products/search
+app.include_router(search_router)
 app.include_router(products_router)
 app.include_router(orders_router)
 app.include_router(inventory_router)

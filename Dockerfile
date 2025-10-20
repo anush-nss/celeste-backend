@@ -10,6 +10,10 @@ COPY requirements.txt .
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download sentence-transformers model to avoid runtime downloads
+# This prevents HuggingFace rate limiting issues
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+
 # Copy the rest of the application's source code from the current directory to the working directory
 COPY . .
 

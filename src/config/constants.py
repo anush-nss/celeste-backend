@@ -131,3 +131,131 @@ class CacheScopes(str, Enum):
     DOMAIN = "domain"
     CROSS_DOMAIN = "cross_domain"
     GLOBAL = "global"
+
+
+# ============================================================================
+# SEARCH & PERSONALIZATION CONSTANTS
+# ============================================================================
+
+# Search modes
+class SearchMode(str, Enum):
+    DROPDOWN = "dropdown"
+    FULL = "full"
+
+
+# Search configuration
+SEARCH_VECTOR_DIM = 384  # MiniLM embedding dimension
+SEARCH_TFIDF_MAX_FEATURES = 5000  # Maximum features for TF-IDF vectorizer
+SEARCH_MIN_QUERY_LENGTH = 2  # Minimum query length for search
+SEARCH_MAX_QUERY_LENGTH = 200  # Maximum query length
+SEARCH_DROPDOWN_LIMIT = 5  # Max results for dropdown mode
+SEARCH_FULL_DEFAULT_LIMIT = 20  # Default limit for full search
+SEARCH_FULL_MAX_LIMIT = 100  # Max limit for full search
+
+# Hybrid search weights
+SEARCH_HYBRID_WEIGHT_TFIDF = 0.3  # Weight for TF-IDF score
+SEARCH_HYBRID_WEIGHT_SEMANTIC = 0.7  # Weight for semantic similarity
+
+# Sentence transformer model
+SENTENCE_TRANSFORMER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+SENTENCE_TRANSFORMER_BATCH_SIZE = 8  # Batch size for vectorization (low-memory optimized)
+
+
+# Interaction types and scoring
+class InteractionType(str, Enum):
+    SEARCH_CLICK = "search_click"
+    VIEW = "view"
+    CART_ADD = "cart_add"
+    WISHLIST_ADD = "wishlist_add"
+    ORDER = "order"
+
+
+# Interaction scores (weighted importance)
+INTERACTION_SCORES = {
+    InteractionType.SEARCH_CLICK: 1.0,
+    InteractionType.VIEW: 2.0,
+    InteractionType.CART_ADD: 5.0,
+    InteractionType.WISHLIST_ADD: 3.0,
+    InteractionType.ORDER: 10.0,
+}
+
+# User interaction tracking
+MAX_USER_INTERACTIONS = 100  # Keep last 100 interactions for personalization
+INTERACTION_DECAY_DAYS = 30  # Apply time decay after 30 days
+
+
+# Popularity modes
+class PopularityMode(str, Enum):
+    BEST_SELLERS = "best_sellers"
+    MOST_SEARCHED = "most_searched"
+    TRENDING = "trending"
+    MOST_ADDED_TO_CART = "most_added_to_cart"
+
+
+# Time windows for popularity
+class TimeWindow(str, Enum):
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+    ALL_TIME = "all_time"
+
+
+# Time window to hours mapping
+TIME_WINDOW_HOURS = {
+    TimeWindow.DAY: 24,
+    TimeWindow.WEEK: 168,
+    TimeWindow.MONTH: 720,
+    TimeWindow.ALL_TIME: None,  # No time limit
+}
+
+# Popularity calculation weights
+POPULARITY_WEIGHT_ORDERS = 10.0
+POPULARITY_WEIGHT_CART_ADDS = 5.0
+POPULARITY_WEIGHT_VIEWS = 2.0
+POPULARITY_WEIGHT_SEARCHES = 1.0
+
+# Trending score decay (exponential decay factor)
+TRENDING_DECAY_HALF_LIFE_HOURS = 72  # Half-life of 3 days
+
+
+# Personalization weights
+PERSONALIZATION_CATEGORY_WEIGHT = 0.4
+PERSONALIZATION_BRAND_WEIGHT = 0.3
+PERSONALIZATION_VECTOR_WEIGHT = 0.2
+PERSONALIZATION_RECENCY_WEIGHT = 0.1
+
+# Final product ranking weights (when personalizing)
+RANKING_BASE_RELEVANCE_WEIGHT = 0.5  # Price, inventory, etc.
+RANKING_PERSONALIZATION_WEIGHT = 0.3  # User preferences
+RANKING_POPULARITY_WEIGHT = 0.2  # Global popularity
+
+# Diversity settings
+MAX_PRODUCTS_PER_CATEGORY_IN_RESULTS = 3  # Max products from same category in top 20
+RECENT_ORDER_PENALTY_MULTIPLIER = 0.3  # Reduce score by 70% for recently ordered items
+RECENT_ORDER_DAYS_THRESHOLD = 30  # Consider orders in last 30 days as "recent"
+
+# Collaborative filtering
+COLLABORATIVE_MIN_COMMON_USERS = 3  # Min users who interacted with both products
+COLLABORATIVE_TOP_SIMILAR_PRODUCTS = 20  # Store top 20 similar products per product
+COLLABORATIVE_RECOMMENDATION_LIMIT = 10  # Default recommendations to return
+
+# Cold start handling
+COLD_START_MIN_INTERACTIONS = 5  # Min interactions before personalization kicks in
+COLD_START_FALLBACK_TO_POPULAR = True  # Show popular items for new users
+
+# Background task schedules (in seconds for APScheduler)
+TASK_UPDATE_POPULARITY_INTERVAL = 1800  # 30 minutes
+TASK_UPDATE_USER_PREFERENCES_INTERVAL = 300  # 5 minutes
+TASK_CALCULATE_ITEM_SIMILARITY_INTERVAL = 86400  # 24 hours
+TASK_CLEANUP_OLD_INTERACTIONS_INTERVAL = 3600  # 1 hour
+
+# Cache TTLs (in seconds)
+CACHE_TTL_PRODUCT_VECTORS = 3600  # 1 hour
+CACHE_TTL_POPULAR_PRODUCTS = 900  # 15 minutes
+CACHE_TTL_SEARCH_SUGGESTIONS = 1800  # 30 minutes
+CACHE_TTL_USER_PREFERENCES = 300  # 5 minutes
+CACHE_TTL_ITEM_SIMILARITY = 7200  # 2 hours
+
+# Search suggestions
+MIN_SEARCH_COUNT_FOR_SUGGESTION = 5  # Min times searched to become a suggestion
+MIN_SUCCESS_RATE_FOR_SUGGESTION = 0.1  # Min 10% click-through rate
