@@ -38,13 +38,13 @@ class StoreService:
         self.cache = cache_service
 
     @handle_service_errors("retrieving stores by ids")
-    async def get_stores_by_ids(self, session: AsyncSession, store_ids: List[int]) -> List[Store]:
+    async def get_stores_by_ids(
+        self, session: AsyncSession, store_ids: List[int]
+    ) -> List[Store]:
         """Retrieves stores by their IDs."""
         if not store_ids:
             return []
-        result = await session.execute(
-            select(Store).where(Store.id.in_(store_ids))
-        )
+        result = await session.execute(select(Store).where(Store.id.in_(store_ids)))
         return list(result.scalars().all())
 
     def calculate_bounding_box(self, lat: float, lng: float, radius_km: float) -> dict:

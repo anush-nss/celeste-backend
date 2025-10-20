@@ -44,7 +44,8 @@ async def get_recent_products(
     include_categories: bool = Query(False, description="Include category information"),
     include_tags: bool = Query(False, description="Include tag information"),
     include_inventory: bool = Query(
-        True, description="Include inventory information (requires store_id or location)"
+        True,
+        description="Include inventory information (requires store_id or location)",
     ),
     latitude: Optional[float] = Query(
         None, ge=-90, le=90, description="User latitude for location-based inventory"
@@ -394,7 +395,9 @@ async def get_product_by_ref(
         else False,
         include_tags=include_tags if include_tags is not None else False,
         include_inventory=include_inventory if include_inventory is not None else False,
-        include_alternatives=include_alternatives if include_alternatives is not None else False,
+        include_alternatives=include_alternatives
+        if include_alternatives is not None
+        else False,
         customer_tier=user_tier,
         store_ids=store_id,
         latitude=latitude,
@@ -459,7 +462,9 @@ async def get_product_by_id(
         else False,
         include_tags=include_tags if include_tags is not None else False,
         include_inventory=include_inventory if include_inventory is not None else False,
-        include_alternatives=include_alternatives if include_alternatives is not None else False,
+        include_alternatives=include_alternatives
+        if include_alternatives is not None
+        else False,
         customer_tier=user_tier,
         store_ids=store_id,
         latitude=latitude,

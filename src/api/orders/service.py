@@ -617,24 +617,32 @@ class OrderService:
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 result = await session.execute(
-                    select(Order).join(OrderItem).filter(OrderItem.source_cart_id.in_(cart_ids))
+                    select(Order)
+                    .join(OrderItem)
+                    .filter(OrderItem.source_cart_id.in_(cart_ids))
                 )
                 orders = result.scalars().unique().all()
 
                 if not orders:
-                    return {"status": "error", "message": "No orders found for the given carts"}
+                    return {
+                        "status": "error",
+                        "message": "No orders found for the given carts",
+                    }
 
                 processed_orders = []
                 for order in orders:
                     if payment_status == "success":
                         # Automatically confirm the order (convert holds to reservations)
                         update_schema = UpdateOrderSchema(status=OrderStatus.CONFIRMED)
-                        updated_order = await self.update_order_status(order.id, update_schema)
+                        updated_order = await self.update_order_status(
+                            order.id, update_schema
+                        )
 
                         # Update user statistics for successful payment
                         try:
                             await self.update_user_statistics(
-                                updated_order.user_id, Decimal(str(updated_order.total_amount))
+                                updated_order.user_id,
+                                Decimal(str(updated_order.total_amount)),
                             )
                         except Exception as e:
                             # Log but don't fail the payment processing
@@ -644,7 +652,9 @@ class OrderService:
 
                         # Queue Odoo sync as background task (non-blocking)
                         if background_tasks:
-                            background_tasks.add_task(self._background_odoo_sync, order.id)
+                            background_tasks.add_task(
+                                self._background_odoo_sync, order.id
+                            )
                             self._error_handler.logger.info(
                                 f"Odoo sync queued as background task for order {order.id}"
                             )
@@ -654,18 +664,24 @@ class OrderService:
                                 f"BackgroundTasks not provided - Odoo sync skipped for order {order.id}. "
                                 "Use retry endpoint to sync manually."
                             )
-                        processed_orders.append({
-                            "order_id": order.id,
-                            "order_status": updated_order.status,
-                        })
+                        processed_orders.append(
+                            {
+                                "order_id": order.id,
+                                "order_status": updated_order.status,
+                            }
+                        )
                     else:
                         # Payment failed - cancel order and release holds
                         update_schema = UpdateOrderSchema(status=OrderStatus.CANCELLED)
-                        updated_order = await self.update_order_status(order.id, update_schema)
-                        processed_orders.append({
-                            "order_id": order.id,
-                            "order_status": updated_order.status,
-                        })
+                        updated_order = await self.update_order_status(
+                            order.id, update_schema
+                        )
+                        processed_orders.append(
+                            {
+                                "order_id": order.id,
+                                "order_status": updated_order.status,
+                            }
+                        )
 
         return {
             "status": "success",

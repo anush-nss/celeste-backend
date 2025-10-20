@@ -171,7 +171,7 @@ class StoreSelectionService:
 
                 # Update cart_items to only include available items
                 cart_items = available_items
-                
+
                 excluded_items_response = await self._build_unavailable_items_response(
                     excluded_items, "far_delivery_unavailable", session
                 )
@@ -208,8 +208,7 @@ class StoreSelectionService:
                 )
 
                 all_unavailable = (
-                    selection_result["unavailable_items"]
-                    + stock_unavailable_items
+                    selection_result["unavailable_items"] + stock_unavailable_items
                 )
 
                 selection_result.update(

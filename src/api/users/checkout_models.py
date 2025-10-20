@@ -79,8 +79,6 @@ class StoreFulfillmentResponse(BaseModel):
     total: float = Field(..., examples=[10650.0])
 
 
-
-
 class PaymentInfo(BaseModel):
     payment_reference: str
     payment_url: str
@@ -103,7 +101,9 @@ class CheckoutResponse(BaseModel):
     fulfillment_mode: str = Field(..., examples=["far_delivery"])
     fulfillable_stores: List[StoreFulfillmentResponse]
     overall_total: float = Field(..., examples=[10650.0])
-    unavailable_items: List[UnavailableItemSchema] = Field(default_factory=list, examples=[[]])
+    unavailable_items: List[UnavailableItemSchema] = Field(
+        default_factory=list, examples=[[]]
+    )
     payment_info: Optional[PaymentInfo] = None
 
     model_config = ConfigDict(

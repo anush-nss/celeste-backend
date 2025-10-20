@@ -67,7 +67,9 @@ class CheckoutService:
 
             # Fetch all stores at once
             store_ids = store_assignments.keys()
-            stores = await self.store_service.get_stores_by_ids(session, list(store_ids))
+            stores = await self.store_service.get_stores_by_ids(
+                session, list(store_ids)
+            )
             store_map = {store.id: store for store in stores}
 
             for store_id, assigned_items_list in store_assignments.items():
@@ -183,7 +185,7 @@ class CheckoutService:
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_response.model_dump(mode='json'),
+                detail=error_response.model_dump(mode="json"),
             )
 
         if (
