@@ -325,4 +325,7 @@ class ProductService:
             include_categories=include_categories,
             include_tags=include_tags,
             include_inventory=include_inventory,
+            is_nearby_store=is_nearby_store,
+            latitude=latitude,
+            longitude=longitude,
         )

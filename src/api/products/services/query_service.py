@@ -901,6 +901,9 @@ class ProductQueryService:
         include_categories: bool = False,
         include_tags: bool = False,
         include_inventory: bool = False,
+        is_nearby_store: bool = True,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
     ) -> List[EnhancedProductSchema]:
         """Get recently bought products for a user from ordered carts"""
 
@@ -961,13 +964,23 @@ class ProductQueryService:
                 min_price=None,
                 max_price=None,
                 only_discounted=False,
-                latitude=None,
-                longitude=None,
+                latitude=latitude,
+                longitude=longitude,
             )
 
             products = await self._process_row_batch(rows, query_params)
 
-            # Step 5: Reorder products to match the original recent order
+            # Step 5: Add inventory if requested (consistent with get_products_with_criteria)
+            if include_inventory and store_ids:
+                products = await self.inventory_service.add_inventory_to_products_bulk(
+                    products=products,
+                    store_ids=store_ids,
+                    is_nearby_store=is_nearby_store,
+                    latitude=latitude,
+                    longitude=longitude,
+                )
+
+            # Step 6: Reorder products to match the original recent order
             product_order_map = {pid: idx for idx, pid in enumerate(product_ids)}
             products.sort(key=lambda p: product_order_map.get(p.id, len(product_ids)))
 
