@@ -462,7 +462,7 @@ class VectorService:
 
                 # Convert vector to list for JSON serialization
                 vector_data = source_vector.vector_embedding
-                if hasattr(vector_data, 'tolist'):
+                if hasattr(vector_data, "tolist"):
                     vector_list = vector_data.tolist()  # type: ignore
                 else:
                     vector_list = vector_data

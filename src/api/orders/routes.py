@@ -42,9 +42,7 @@ async def get_orders(
     include_products: bool = Query(
         False, description="Include full product details in order items"
     ),
-    include_stores: bool = Query(
-        False, description="Include full store details"
-    ),
+    include_stores: bool = Query(False, description="Include full store details"),
     include_addresses: bool = Query(
         False, description="Include full delivery address details"
     ),
@@ -84,9 +82,7 @@ async def get_order_by_id(
     include_products: bool = Query(
         True, description="Include full product details in order items"
     ),
-    include_stores: bool = Query(
-        True, description="Include full store details"
-    ),
+    include_stores: bool = Query(True, description="Include full store details"),
     include_addresses: bool = Query(
         True, description="Include full delivery address details"
     ),

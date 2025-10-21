@@ -341,13 +341,15 @@ class OrderService:
         # Fetch all products in a single bulk query (reuses products module)
         products_map = {}
         if include_products and all_product_ids:
-            products_list = await self.product_service.query_service.get_products_by_ids(
-                product_ids=list(all_product_ids),
-                customer_tier=None,  # No tier-specific pricing for order history
-                include_pricing=False,  # Order already has final prices
-                include_categories=False,
-                include_tags=False,
-                include_inventory=False,
+            products_list = (
+                await self.product_service.query_service.get_products_by_ids(
+                    product_ids=list(all_product_ids),
+                    customer_tier=None,  # No tier-specific pricing for order history
+                    include_pricing=False,  # Order already has final prices
+                    include_categories=False,
+                    include_tags=False,
+                    include_inventory=False,
+                )
             )
             products_map = {p.id: p.model_dump(mode="json") for p in products_list}
 
@@ -370,8 +372,12 @@ class OrderService:
                         "phone": s.phone,
                         "email": s.email,
                         "is_active": s.is_active,
-                        "created_at": s.created_at.isoformat() if s.created_at else None,
-                        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+                        "created_at": s.created_at.isoformat()
+                        if s.created_at
+                        else None,
+                        "updated_at": s.updated_at.isoformat()
+                        if s.updated_at
+                        else None,
                     }
                     for s in stores
                 }
@@ -419,7 +425,9 @@ class OrderService:
                 "updated_at": order.updated_at,
                 "items": filtered_items,
                 "store": stores_map.get(order.store_id),  # Attach store
-                "address": addresses_map.get(order.address_id) if order.address_id else None,  # Attach address
+                "address": addresses_map.get(order.address_id)
+                if order.address_id
+                else None,  # Attach address
             }
             order_schemas.append(OrderSchema.model_validate(order_dict))
 
