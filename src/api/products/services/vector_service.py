@@ -1,4 +1,5 @@
 import gc
+import json
 import logging
 from typing import List, Optional
 
@@ -459,10 +460,17 @@ class VectorService:
                     LIMIT :limit
                 """)
 
+                # Convert vector to list for JSON serialization
+                vector_data = source_vector.vector_embedding
+                if hasattr(vector_data, 'tolist'):
+                    vector_list = vector_data.tolist()  # type: ignore
+                else:
+                    vector_list = vector_data
+
                 result = await session.execute(
                     similarity_query,
                     {
-                        "query_vector": str(source_vector.vector_embedding),
+                        "query_vector": json.dumps(vector_list),
                         "product_id": product_id,
                         "min_similarity": min_similarity,
                         "limit": limit,

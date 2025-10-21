@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional, Union
+from typing import Annotated, List, Optional, Union, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -20,6 +20,7 @@ from src.api.products.service import ProductService
 from src.api.products.services.popularity_service import PopularityService
 from src.api.products.services.vector_service import VectorService
 from src.api.personalization.service import PersonalizationService
+from src.api.stores.service import StoreService
 from src.api.tags.models import CreateTagSchema, TagSchema, UpdateTagSchema
 from src.config.constants import UserRole
 from src.database.connection import AsyncSessionLocal
@@ -34,6 +35,7 @@ pricing_service = PricingService()
 popularity_service = PopularityService()
 personalization_service = PersonalizationService()
 vector_service = VectorService()
+store_service = StoreService()
 
 
 @products_router.get(
@@ -751,50 +753,44 @@ async def get_similar_products(
         # Return empty list if no similar products found
         return success_response([])
 
-    # Extract product IDs
+    # Extract product IDs and similarity scores
     similar_product_ids = [p[0] for p in similar_product_data]
     similarity_scores = {p[0]: p[1] for p in similar_product_data}
 
-    # Get enhanced product data for all similar products
+    # Determine store_ids if inventory requested with location
+    effective_store_ids = store_id
+    is_nearby_store = True
+    if include_inventory and not store_id and latitude and longitude:
+        (
+            effective_store_ids,
+            is_nearby_store,
+        ) = await store_service.get_store_ids_by_location(latitude, longitude)
+        effective_store_ids = cast(list[int], effective_store_ids)
+
+    # Get all products in a single bulk query (avoid N+1)
+    enhanced_products_list = await product_service.query_service.get_products_by_ids(
+        product_ids=similar_product_ids,
+        customer_tier=user_tier,
+        store_ids=effective_store_ids,
+        is_nearby_store=is_nearby_store,
+        include_pricing=include_pricing if include_pricing is not None else False,
+        include_categories=include_categories
+        if include_categories is not None
+        else False,
+        include_tags=include_tags if include_tags is not None else False,
+        include_inventory=include_inventory if include_inventory is not None else False,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+    # Add similarity scores to products and maintain order
     enhanced_products = []
-    for product_id in similar_product_ids:
-        try:
-            product = await product_service.get_enhanced_product_by_id(
-                product_id=product_id,
-                include_pricing=include_pricing
-                if include_pricing is not None
-                else False,
-                include_categories=include_categories
-                if include_categories is not None
-                else False,
-                include_tags=include_tags if include_tags is not None else False,
-                include_inventory=include_inventory
-                if include_inventory is not None
-                else False,
-                include_alternatives=False,  # Don't include alternatives for similar products
-                customer_tier=user_tier,
-                store_ids=store_id,
-                latitude=latitude,
-                longitude=longitude,
-                quantity=quantity or 1,
-            )
+    for product in enhanced_products_list:
+        product_dict = product.model_dump(mode="json")
+        product_dict["similarity_score"] = similarity_scores.get(product.id, 0.0)
+        enhanced_products.append(product_dict)
 
-            if product:
-                # Add similarity score to product
-                product_dict = product.model_dump(mode="json")
-                product_dict["similarity_score"] = similarity_scores[product_id]
-                enhanced_products.append(product_dict)
-
-        except Exception as e:
-            # Log error but continue with other products
-            import logging
-
-            logging.getLogger(__name__).warning(
-                f"Error fetching similar product {product_id}: {e}"
-            )
-            continue
-
-    # Sort by similarity score (already sorted, but ensure order maintained)
+    # Sort by similarity score (maintain ranking from vector search)
     enhanced_products.sort(key=lambda p: p.get("similarity_score", 0), reverse=True)
 
     return success_response(enhanced_products)

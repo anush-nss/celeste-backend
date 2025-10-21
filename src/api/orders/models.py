@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,6 +16,9 @@ class OrderItemSchema(BaseModel):
     unit_price: float = Field(..., examples=[1150.0])
     total_price: float = Field(..., examples=[2300.0])
     created_at: datetime
+    product: Optional[Dict[str, Any]] = Field(
+        default=None, description="Full product details (if populated)"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -42,6 +45,12 @@ class OrderSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
     items: List[OrderItemSchema]
+    store: Optional[Dict[str, Any]] = Field(
+        default=None, description="Full store details (if populated)"
+    )
+    address: Optional[Dict[str, Any]] = Field(
+        default=None, description="Full delivery address details (if populated)"
+    )
 
     model_config = ConfigDict(
         from_attributes=True,

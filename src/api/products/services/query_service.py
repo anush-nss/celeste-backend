@@ -889,6 +889,16 @@ class ProductQueryService:
 
             products = await self._process_row_batch(rows, query_params)
 
+            # Step 4: Add inventory if requested (consistent with get_products_with_criteria)
+            if include_inventory and store_ids:
+                products = await self.inventory_service.add_inventory_to_products_bulk(
+                    products=products,
+                    store_ids=store_ids,
+                    is_nearby_store=is_nearby_store,
+                    latitude=latitude,
+                    longitude=longitude,
+                )
+
             return products
 
     async def get_recent_products_for_user(

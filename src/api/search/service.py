@@ -1,7 +1,8 @@
 import asyncio
+import json
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, cast
 
 from sentence_transformers import SentenceTransformer
 from sqlalchemy import and_, desc, text
@@ -9,6 +10,7 @@ from sqlalchemy.future import select
 
 from src.api.products.models import EnhancedProductSchema
 from src.api.products.service import ProductService
+from src.api.stores.service import StoreService
 from src.config.constants import (
     MIN_SEARCH_COUNT_FOR_SUGGESTION,
     MIN_SUCCESS_RATE_FOR_SUGGESTION,
@@ -238,6 +240,8 @@ class SearchService:
             include_tags=False,
             include_inventory=False,
             customer_tier=customer_tier,
+            store_ids=None,
+            is_nearby_store=True,
         )
 
         # Convert to lightweight format for dropdown
@@ -284,6 +288,18 @@ class SearchService:
         Returns:
             dict with products and metadata
         """
+        # Determine store_ids if inventory requested with location
+        # (Same pattern as ProductService.get_products_with_criteria)
+        effective_store_ids = store_ids
+        is_nearby_store = True
+        if include_inventory and not store_ids and latitude and longitude:
+            store_service = StoreService()
+            (
+                effective_store_ids,
+                is_nearby_store,
+            ) = await store_service.get_store_ids_by_location(latitude, longitude)
+            effective_store_ids = cast(List[int], effective_store_ids)
+
         # Perform hybrid search
         products = await self._search_hybrid(
             query=query,
@@ -296,7 +312,8 @@ class SearchService:
             category_ids=category_ids,
             min_price=min_price,
             max_price=max_price,
-            store_ids=store_ids,
+            store_ids=effective_store_ids,
+            is_nearby_store=is_nearby_store,
             latitude=latitude,
             longitude=longitude,
         )
@@ -323,6 +340,7 @@ class SearchService:
         min_price: Optional[float] = None,
         max_price: Optional[float] = None,
         store_ids: Optional[List[int]] = None,
+        is_nearby_store: bool = True,
         latitude: Optional[float] = None,
         longitude: Optional[float] = None,
     ) -> List[EnhancedProductSchema]:
@@ -369,9 +387,9 @@ class SearchService:
                 result = await session.execute(
                     text(search_query),
                     {
-                        "query_vector": str(
+                        "query_vector": json.dumps(
                             query_embedding.tolist()
-                        ),  # Convert to string for CAST
+                        ),  # Convert to JSON array for CAST
                         "query": query,
                         "semantic_weight": SEARCH_HYBRID_WEIGHT_SEMANTIC,
                         "keyword_weight": SEARCH_HYBRID_WEIGHT_TFIDF,
@@ -387,11 +405,12 @@ class SearchService:
                 product_ids = [row.id for row in rows]
 
                 # Get full product data using existing ProductQueryService
+                # Reuses the same bulk query infrastructure as products module
                 products = await self.product_service.query_service.get_products_by_ids(
                     product_ids=product_ids,
                     customer_tier=customer_tier,
                     store_ids=store_ids,
-                    is_nearby_store=True,
+                    is_nearby_store=is_nearby_store,
                     include_pricing=include_pricing,
                     include_categories=include_categories,
                     include_tags=include_tags,

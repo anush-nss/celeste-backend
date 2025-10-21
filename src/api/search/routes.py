@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional, Union, Dict, Any, cast
+from typing import Annotated, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -49,17 +49,29 @@ async def search_products(
     include_pricing: bool = Query(True, description="Include pricing information"),
     include_categories: bool = Query(False, description="Include category information"),
     include_tags: bool = Query(False, description="Include tag information"),
-    include_inventory: bool = Query(True, description="Include inventory information"),
+    include_inventory: bool = Query(
+        True,
+        description="Include inventory information (requires store_id or location)",
+    ),
     category_ids: Optional[List[int]] = Query(
         None, description="Filter by category IDs"
     ),
     min_price: Optional[float] = Query(None, ge=0, description="Minimum price filter"),
     max_price: Optional[float] = Query(None, ge=0, description="Maximum price filter"),
+    store_id: Optional[List[int]] = Query(
+        None, description="Store IDs for multi-store inventory data"
+    ),
     latitude: Optional[float] = Query(
-        None, ge=-90, le=90, description="User latitude for inventory lookup"
+        None,
+        ge=-90,
+        le=90,
+        description="User latitude for location-based store finding",
     ),
     longitude: Optional[float] = Query(
-        None, ge=-180, le=180, description="User longitude for inventory lookup"
+        None,
+        ge=-180,
+        le=180,
+        description="User longitude for location-based store finding",
     ),
     current_user: Annotated[Optional[DecodedToken], Depends(get_optional_user)] = None,
     user_tier: Optional[int] = Depends(get_user_tier),
@@ -113,32 +125,8 @@ async def search_products(
     # Get user ID if authenticated
     user_id = current_user.uid if current_user else None
 
-    # Get store IDs from location if provided
-    store_ids: Optional[List[int]] = None
-    if include_inventory and latitude and longitude:
-        from src.api.stores.service import StoreService
-
-        store_service = StoreService()
-        result_tuple = await store_service.get_store_ids_by_location(
-            latitude, longitude
-        )
-        if result_tuple and result_tuple[0]:
-            potential_store_ids = result_tuple[0]
-            if isinstance(potential_store_ids, list):
-                if all(isinstance(x, int) for x in potential_store_ids):
-                    store_ids = cast(List[int], potential_store_ids)
-                elif all(
-                    isinstance(x, dict) and "id" in x and isinstance(x["id"], int)
-                    for x in potential_store_ids
-                ):
-                    store_ids = [
-                        cast(int, item["id"])
-                        for item in cast(List[Dict[str, Any]], potential_store_ids)
-                    ]
-            else:
-                store_ids = None
-
     # Perform search
+    # Note: store_ids are resolved internally by the service from latitude/longitude if not provided
     result = await search_service.search_products(
         query=q,
         mode=mode,
@@ -152,7 +140,7 @@ async def search_products(
         category_ids=category_ids,
         min_price=min_price,
         max_price=max_price,
-        store_ids=store_ids,
+        store_ids=store_id,
         latitude=latitude,
         longitude=longitude,
     )
