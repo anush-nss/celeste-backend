@@ -57,6 +57,12 @@ class ProductPopularity(Base):
     # Time-decayed trending score (higher for recent activity)
     trending_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
+    # Last interaction timestamp (from product_interactions)
+    last_interaction: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+
     # Last update timestamp
     last_updated: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

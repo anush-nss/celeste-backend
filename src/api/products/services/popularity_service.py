@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from sqlalchemy import desc, text
@@ -88,7 +88,7 @@ class PopularityService:
 
                 # Apply time window filter if specified
                 if time_window_days:
-                    cutoff_date = datetime.now() - timedelta(days=time_window_days)
+                    cutoff_date = datetime.now(timezone.utc) - timedelta(days=time_window_days)
                     query = query.where(
                         ProductPopularity.last_interaction >= cutoff_date
                     )
@@ -154,7 +154,7 @@ class PopularityService:
                 cart_count = row.cart_count or 0
                 order_count = row.order_count or 0
                 search_count = row.search_count or 0
-                last_interaction = row.last_interaction or datetime.now()
+                last_interaction = row.last_interaction or datetime.now(timezone.utc)
 
                 # Calculate overall popularity score
                 popularity_score = (
@@ -185,7 +185,7 @@ class PopularityService:
                     popularity.popularity_score = popularity_score
                     popularity.trending_score = trending_score
                     popularity.last_interaction = last_interaction
-                    popularity.last_updated = datetime.now()
+                    popularity.last_updated = datetime.now(timezone.utc)
                 else:
                     popularity = ProductPopularity(
                         product_id=product_id,
@@ -228,7 +228,7 @@ class PopularityService:
         """
         try:
             # Get recent interactions (last N days)
-            cutoff_date = datetime.now() - timedelta(days=TRENDING_RECENT_DAYS)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=TRENDING_RECENT_DAYS)
 
             interactions_query = select(
                 ProductInteraction.interaction_type,
@@ -245,7 +245,7 @@ class PopularityService:
                 return 0.0
 
             trending_score = 0.0
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
             for interaction_type, timestamp in interactions:
                 # Time decay: more recent = higher score

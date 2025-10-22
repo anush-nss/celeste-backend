@@ -128,10 +128,25 @@ class OrderService:
                     )
                 )
 
+                # Refresh and load items
                 await session.refresh(new_order)
-                # We need to load the items to return them in the schema
-                await session.refresh(new_order, ["items"])
-                return OrderSchema.model_validate(new_order)
+
+                # Re-query with eager loading of items
+                result = await session.execute(
+                    select(Order)
+                    .options(selectinload(Order.items))
+                    .filter(Order.id == new_order.id)
+                )
+                order_with_items = result.scalar_one()
+
+            # Use existing enrichment method to properly convert to schema
+            enriched_orders = await self._enrich_orders_with_products_and_stores(
+                [order_with_items],
+                include_products=True,
+                include_stores=True,
+                include_addresses=False,
+            )
+            return enriched_orders[0]
 
     def calculate_flat_delivery_charge(
         self,
@@ -555,9 +570,23 @@ class OrderService:
                 )
                 session.add(new_order)
                 await session.flush()
-                await session.refresh(new_order, ["items"])
 
-                return OrderSchema.model_validate(new_order)
+                # Re-query with eager loading of items
+                result = await session.execute(
+                    select(Order)
+                    .options(selectinload(Order.items))
+                    .filter(Order.id == new_order.id)
+                )
+                order_with_items = result.scalar_one()
+
+            # Use existing enrichment method to properly convert to schema
+            enriched_orders = await self._enrich_orders_with_products_and_stores(
+                [order_with_items],
+                include_products=True,
+                include_stores=True,
+                include_addresses=False,
+            )
+            return enriched_orders[0]
 
     @handle_service_errors("updating order status")
     async def update_order_status(
@@ -567,7 +596,10 @@ class OrderService:
             async with session.begin():
                 result = await session.execute(
                     select(Order)
-                    .options(selectinload(Order.items))
+                    .options(
+                        selectinload(Order.items).selectinload(OrderItem.product),
+                        selectinload(Order.store),
+                    )
                     .filter(Order.id == order_id)
                 )
                 order = result.scalars().first()
@@ -680,8 +712,23 @@ class OrderService:
                 )
                 # Note: session.begin() context manager auto-commits on exit
                 await session.flush()  # Ensure changes are persisted
-                await session.refresh(order)
-                return OrderSchema.model_validate(order)
+
+                # Re-query with eager loading of items
+                result = await session.execute(
+                    select(Order)
+                    .options(selectinload(Order.items))
+                    .filter(Order.id == order.id)
+                )
+                order_with_items = result.scalar_one()
+
+            # Use existing enrichment method to properly convert to schema
+            enriched_orders = await self._enrich_orders_with_products_and_stores(
+                [order_with_items],
+                include_products=True,
+                include_stores=True,
+                include_addresses=True,
+            )
+            return enriched_orders[0]
 
     async def _background_odoo_sync(self, order_id: int) -> None:
         """Background task to sync order to Odoo (runs after response is sent)"""
