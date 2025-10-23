@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -97,7 +97,7 @@ class PersonalizationService:
         try:
             async with AsyncSessionLocal() as session:
                 # Get recent interactions (last 100, within decay period)
-                cutoff_date = datetime.now() - timedelta(days=INTERACTION_DECAY_DAYS)
+                cutoff_date = datetime.now(timezone.utc) - timedelta(days=INTERACTION_DECAY_DAYS)
 
                 interactions_query = (
                     select(
@@ -151,7 +151,7 @@ class PersonalizationService:
                     preferences.brand_scores = brand_scores
                     preferences.search_keywords = search_keywords
                     preferences.total_interactions = len(interactions)
-                    preferences.last_updated = datetime.now()
+                    preferences.last_updated = datetime.now(timezone.utc)
                 else:
                     preferences = UserPreference(
                         user_id=user_id,
@@ -212,7 +212,7 @@ class PersonalizationService:
                     weight = interaction.interaction_score
 
                     # Apply time decay
-                    days_ago = (datetime.now() - interaction.timestamp).days
+                    days_ago = (datetime.now(timezone.utc) - interaction.timestamp).days
                     if days_ago > 0:
                         time_decay = pow(0.9, days_ago / 7)  # Decay over weeks
                         weight *= time_decay
@@ -352,7 +352,7 @@ class PersonalizationService:
         """
         try:
             # Get recent search queries
-            cutoff_date = datetime.now() - timedelta(days=INTERACTION_DECAY_DAYS)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=INTERACTION_DECAY_DAYS)
 
             searches_query = (
                 select(SearchInteraction.query)
