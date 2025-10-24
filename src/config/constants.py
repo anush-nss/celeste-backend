@@ -228,6 +228,7 @@ TRENDING_DECAY_HALF_LIFE_HOURS = 72  # Half-life of 3 days
 # Personalization settings
 PERSONALIZATION_MIN_INTERACTIONS = 5  # Minimum interactions before personalizing
 PERSONALIZATION_CATEGORY_WEIGHT = 1.0  # Weight for category affinity
+PERSONALIZATION_VECTOR_WEIGHT = 1.5  # Weight for vector similarity
 PERSONALIZATION_BRAND_WEIGHT = 0.5  # Weight for brand affinity
 PERSONALIZATION_SEARCH_WEIGHT = 0.3  # Weight for search keyword matching
 PERSONALIZATION_DIVERSITY_THRESHOLD = 0.7  # Threshold for diversity filtering

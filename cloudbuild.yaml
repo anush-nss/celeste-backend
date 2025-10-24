@@ -27,6 +27,5 @@ images:
 # Substitutions for configurable values
 substitutions:
   _SERVICE_NAME: "celeste-api"
-  _REGION: "us-central1" # Change to your desired region
-  # _REGION: "asia-south1" # Example for Asia
+  _REGION: "asia-south1" # Example for Asia
   _TAG: "latest" # Default tag when COMMIT_SHA is not available

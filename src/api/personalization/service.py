@@ -10,6 +10,7 @@ from src.config.constants import (
     INTERACTION_DECAY_DAYS,
     MAX_USER_INTERACTIONS,
     PERSONALIZATION_CATEGORY_WEIGHT,
+    PERSONALIZATION_VECTOR_WEIGHT,
     PERSONALIZATION_MIN_INTERACTIONS,
     PERSONALIZATION_SEARCH_WEIGHT,
     SEARCH_VECTOR_DIM,
@@ -248,28 +249,35 @@ class PersonalizationService:
 
             # Get categories for interacted products
             product_ids = [interaction.product_id for interaction in interactions]
+            
+            if not product_ids:
+                return {}
 
             categories_query = text("""
-                SELECT pc.category_id, pi.interaction_score
-                FROM product_categories pc
-                JOIN product_interactions pi ON pc.product_id = pi.product_id
-                WHERE pi.product_id = ANY(:product_ids)
+                SELECT product_id, category_id
+                FROM product_categories
+                WHERE product_id = ANY(:product_ids)
             """)
 
             result = await session.execute(
                 categories_query, {"product_ids": product_ids}
             )
-            rows = result.fetchall()
+            
+            product_to_categories = {}
+            for row in result.fetchall():
+                if row.product_id not in product_to_categories:
+                    product_to_categories[row.product_id] = []
+                product_to_categories[row.product_id].append(row.category_id)
 
             category_scores = {}
-            for row in rows:
-                category_id = row.category_id
-                score = row.interaction_score or 0
-
-                if category_id in category_scores:
-                    category_scores[category_id] += score
-                else:
-                    category_scores[category_id] = score
+            for interaction in interactions:
+                if interaction.product_id in product_to_categories:
+                    for category_id in product_to_categories[interaction.product_id]:
+                        score = interaction.interaction_score or 0
+                        if category_id in category_scores:
+                            category_scores[category_id] += score
+                        else:
+                            category_scores[category_id] = score
 
             # Normalize scores
             if category_scores:
@@ -304,25 +312,27 @@ class PersonalizationService:
 
             product_ids = [interaction.product_id for interaction in interactions]
 
+            if not product_ids:
+                return {}
+
             brands_query = text("""
-                SELECT p.brand, pi.interaction_score
-                FROM products p
-                JOIN product_interactions pi ON p.id = pi.product_id
-                WHERE pi.product_id = ANY(:product_ids) AND p.brand IS NOT NULL
+                SELECT id, brand
+                FROM products
+                WHERE id = ANY(:product_ids) AND brand IS NOT NULL
             """)
 
             result = await session.execute(brands_query, {"product_ids": product_ids})
-            rows = result.fetchall()
+            product_to_brand = {row.id: row.brand for row in result.fetchall()}
 
             brand_scores = {}
-            for row in rows:
-                brand = row.brand
-                score = row.interaction_score or 0
-
-                if brand in brand_scores:
-                    brand_scores[brand] += score
-                else:
-                    brand_scores[brand] = score
+            for interaction in interactions:
+                if interaction.product_id in product_to_brand:
+                    brand = product_to_brand[interaction.product_id]
+                    score = interaction.interaction_score or 0
+                    if brand in brand_scores:
+                        brand_scores[brand] += score
+                    else:
+                        brand_scores[brand] = score
 
             # Normalize scores
             if brand_scores:
@@ -445,11 +455,17 @@ class PersonalizationService:
                 products = result.fetchall()
 
                 scores = {}
-                user_vector = (
-                    np.array(preferences.interest_vector)
-                    if preferences.interest_vector
-                    else None
-                )
+                user_vector = None  # Initialize user_vector to None
+
+                # Check if preferences.interest_vector is not None first
+                if preferences.interest_vector is not None:
+                    # Now, convert it to a NumPy array
+                    temp_user_vector = np.array(preferences.interest_vector)
+
+                    # Check if the converted vector is a zero vector
+                    if np.linalg.norm(temp_user_vector) > 0:
+                        user_vector = temp_user_vector
+                    # If it's a zero vector, user_vector remains None
 
                 for product in products:
                     score = 0.0
@@ -457,13 +473,29 @@ class PersonalizationService:
 
                     # 1. Vector similarity (semantic)
                     if user_vector is not None and product.vector_embedding:
-                        product_vector = np.array(product.vector_embedding)
-                        # Cosine similarity
-                        similarity = np.dot(user_vector, product_vector) / (
-                            np.linalg.norm(user_vector) * np.linalg.norm(product_vector)
-                        )
-                        score += max(0, similarity)  # Clamp to 0-1
-                        components += 1
+                        product_vector = product.vector_embedding
+                        if isinstance(product_vector, str):
+                            try:
+                                vector_str = product_vector.strip('[]')
+                                product_vector = np.array([float(x) for x in vector_str.split(',')])
+                            except ValueError:
+                                self.logger.warning(f"Could not parse vector_embedding for product ID {product.id}: {product_vector}")
+                                product_vector = None # Set to None if parsing fails
+
+                        if product_vector is not None:
+                            # Calculate norms
+                            user_norm = np.linalg.norm(user_vector)
+                            product_norm = np.linalg.norm(product_vector)
+
+                            if user_norm > 0 and product_norm > 0:
+                                # Cosine similarity
+                                similarity = np.dot(user_vector, product_vector) / (user_norm * product_norm)
+                                score += max(0, similarity) * PERSONALIZATION_VECTOR_WEIGHT  # Clamp to 0-1
+                                components += 1
+                            else:
+                                # If one of the vectors is a zero vector, similarity is 0
+                                # Still count as a component, but with 0 score
+                                components += 1
 
                     # 2. Category affinity
                     if preferences.category_scores and product.category_ids:

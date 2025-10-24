@@ -324,6 +324,11 @@ async def get_all_products(
         longitude=longitude,
     )
 
+    # If personalization is enabled, we need categories and tags for scoring
+    if enable_personalization:
+        query_params.include_categories = True
+        query_params.include_tags = True
+
     # Use comprehensive method for all requests
     store_ids = None
     if include_inventory and store_id:
