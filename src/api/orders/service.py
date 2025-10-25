@@ -61,6 +61,7 @@ class OrderService:
         store_fulfillment: StoreFulfillmentResponse,
         location: LocationSchema,
         cart_ids: List[int],
+        platform: Optional[str] = None,
     ) -> OrderSchema:
         """Creates a single order for a specific store's fulfillment."""
         async with AsyncSessionLocal() as session:
@@ -84,6 +85,7 @@ class OrderService:
                     delivery_charge=Decimal(str(store_fulfillment.delivery_cost)),
                     fulfillment_mode=fulfillment_mode,
                     delivery_service_level=location.delivery_service_level,
+                    platform=platform,
                     status=OrderStatus.PENDING.value,
                 )
                 session.add(new_order)
@@ -435,6 +437,8 @@ class OrderService:
                 "total_amount": float(order.total_amount),
                 "delivery_charge": float(order.delivery_charge),
                 "fulfillment_mode": order.fulfillment_mode,
+                "delivery_service_level": order.delivery_service_level,
+                "platform": order.platform,
                 "status": order.status,
                 "created_at": order.created_at,
                 "updated_at": order.updated_at,
@@ -517,7 +521,7 @@ class OrderService:
 
     @handle_service_errors("creating order")
     async def create_order(
-        self, order_data: CreateOrderSchema, user_id: str
+        self, order_data: CreateOrderSchema, user_id: str, platform: Optional[str] = None
     ) -> OrderSchema:
         async with AsyncSessionLocal() as session:
             async with session.begin():
@@ -566,6 +570,7 @@ class OrderService:
                     store_id=order_data.store_id,
                     total_amount=total_amount,
                     status=OrderStatus.PENDING.value,
+                    platform=platform,
                     items=order_items_to_create,
                 )
                 session.add(new_order)

@@ -211,6 +211,7 @@ class CheckoutService:
                 store_fulfillment=store_fulfillment,
                 location=request.location,
                 cart_ids=request.cart_ids,
+                platform=request.platform,
             )
             # Create a new StoreFulfillmentResponse with the order_id
             fulfillment_with_order_id = StoreFulfillmentResponse(

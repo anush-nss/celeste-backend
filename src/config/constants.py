@@ -39,6 +39,12 @@ class OdooSyncStatus(str, Enum):
     FAILED = "failed"
 
 
+class Platform(str, Enum):
+    WEB = "web"
+    ANDROID = "android"
+    IOS = "ios"
+
+
 # Default fallback tier when no default tier is found in database
 DEFAULT_FALLBACK_TIER_ID = 1
 

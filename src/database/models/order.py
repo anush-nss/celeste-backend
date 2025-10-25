@@ -21,6 +21,7 @@ from src.config.constants import (
     FulfillmentMode,
     OdooSyncStatus,
     OrderStatus,
+    Platform,
 )
 from src.database.base import Base
 
@@ -79,6 +80,7 @@ class Order(Base):
         # Odoo sync status tracking
         Index("idx_orders_odoo_sync_status", "odoo_sync_status"),
         Index("idx_orders_odoo_failed_syncs", "odoo_sync_status", "created_at"),
+        Index("idx_orders_platform", "platform"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -112,6 +114,14 @@ class Order(Base):
         ),
         server_default=DeliveryServiceLevel.STANDARD.value,
         nullable=False,
+    )
+    platform: Mapped[str | None] = mapped_column(
+        Enum(
+            Platform,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="platform",
+        ),
+        nullable=True,
     )
     status: Mapped[str] = mapped_column(
         Enum(

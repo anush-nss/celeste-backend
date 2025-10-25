@@ -119,7 +119,7 @@ async def create__order(
     order_data: CreateOrderSchema,
     current_user: DecodedToken = Depends(get_current_user),
 ):
-    new_order = await order_service.create_order(order_data, current_user.uid)
+    new_order = await order_service.create_order(order_data, current_user.uid, platform=order_data.platform)
     return success_response(
         new_order.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )

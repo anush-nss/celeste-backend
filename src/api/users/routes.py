@@ -464,3 +464,20 @@ async def create_multi_cart_order(
     return success_response(
         order_summary.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )
+
+
+@users_router.get(
+    "/me/search-history",
+    summary="Get current user's search history",
+    response_model=List[str],
+)
+async def get_search_history(
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+    limit: int = Query(10, ge=1, le=50, description="Number of recent searches to return"),
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    search_history = await user_service.get_search_history(user_id, limit)
+    return success_response(search_history)

@@ -49,6 +49,11 @@ class CheckoutRequestSchema(BaseModel):
         description="Whether to allow splitting the order across multiple stores.",
     )
     location: LocationSchema
+    platform: Optional[str] = Field(
+        default=None,
+        description="Platform from which the order originated (e.g., 'mobile', 'web')",
+        examples=["web"],
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -61,6 +66,7 @@ class CheckoutRequestSchema(BaseModel):
                         "address_id": 1,
                         "delivery_service_level": "premium",
                     },
+                    "platform": "web",
                 }
             ]
         }
