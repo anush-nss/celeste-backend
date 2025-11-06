@@ -521,7 +521,10 @@ class OrderService:
 
     @handle_service_errors("creating order")
     async def create_order(
-        self, order_data: CreateOrderSchema, user_id: str, platform: Optional[str] = None
+        self,
+        order_data: CreateOrderSchema,
+        user_id: str,
+        platform: Optional[str] = None,
     ) -> OrderSchema:
         async with AsyncSessionLocal() as session:
             async with session.begin():

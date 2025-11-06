@@ -98,7 +98,9 @@ class PersonalizationService:
         try:
             async with AsyncSessionLocal() as session:
                 # Get recent interactions (last 100, within decay period)
-                cutoff_date = datetime.now(timezone.utc) - timedelta(days=INTERACTION_DECAY_DAYS)
+                cutoff_date = datetime.now(timezone.utc) - timedelta(
+                    days=INTERACTION_DECAY_DAYS
+                )
 
                 interactions_query = (
                     select(
@@ -249,7 +251,7 @@ class PersonalizationService:
 
             # Get categories for interacted products
             product_ids = [interaction.product_id for interaction in interactions]
-            
+
             if not product_ids:
                 return {}
 
@@ -262,7 +264,7 @@ class PersonalizationService:
             result = await session.execute(
                 categories_query, {"product_ids": product_ids}
             )
-            
+
             product_to_categories = {}
             for row in result.fetchall():
                 if row.product_id not in product_to_categories:
@@ -362,7 +364,9 @@ class PersonalizationService:
         """
         try:
             # Get recent search queries
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=INTERACTION_DECAY_DAYS)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(
+                days=INTERACTION_DECAY_DAYS
+            )
 
             searches_query = (
                 select(SearchInteraction.query)
@@ -476,11 +480,15 @@ class PersonalizationService:
                         product_vector = product.vector_embedding
                         if isinstance(product_vector, str):
                             try:
-                                vector_str = product_vector.strip('[]')
-                                product_vector = np.array([float(x) for x in vector_str.split(',')])
+                                vector_str = product_vector.strip("[]")
+                                product_vector = np.array(
+                                    [float(x) for x in vector_str.split(",")]
+                                )
                             except ValueError:
-                                self.logger.warning(f"Could not parse vector_embedding for product ID {product.id}: {product_vector}")
-                                product_vector = None # Set to None if parsing fails
+                                self.logger.warning(
+                                    f"Could not parse vector_embedding for product ID {product.id}: {product_vector}"
+                                )
+                                product_vector = None  # Set to None if parsing fails
 
                         if product_vector is not None:
                             # Calculate norms
@@ -489,8 +497,12 @@ class PersonalizationService:
 
                             if user_norm > 0 and product_norm > 0:
                                 # Cosine similarity
-                                similarity = np.dot(user_vector, product_vector) / (user_norm * product_norm)
-                                score += max(0, similarity) * PERSONALIZATION_VECTOR_WEIGHT  # Clamp to 0-1
+                                similarity = np.dot(user_vector, product_vector) / (
+                                    user_norm * product_norm
+                                )
+                                score += (
+                                    max(0, similarity) * PERSONALIZATION_VECTOR_WEIGHT
+                                )  # Clamp to 0-1
                                 components += 1
                             else:
                                 # If one of the vectors is a zero vector, similarity is 0

@@ -88,7 +88,9 @@ class PopularityService:
 
                 # Apply time window filter if specified
                 if time_window_days:
-                    cutoff_date = datetime.now(timezone.utc) - timedelta(days=time_window_days)
+                    cutoff_date = datetime.now(timezone.utc) - timedelta(
+                        days=time_window_days
+                    )
                     query = query.where(
                         ProductPopularity.last_interaction >= cutoff_date
                     )
@@ -228,7 +230,9 @@ class PopularityService:
         """
         try:
             # Get recent interactions (last N days)
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=TRENDING_RECENT_DAYS)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(
+                days=TRENDING_RECENT_DAYS
+            )
 
             interactions_query = select(
                 ProductInteraction.interaction_type,

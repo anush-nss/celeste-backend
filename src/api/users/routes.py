@@ -473,7 +473,9 @@ async def create_multi_cart_order(
 )
 async def get_search_history(
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
-    limit: int = Query(10, ge=1, le=50, description="Number of recent searches to return"),
+    limit: int = Query(
+        10, ge=1, le=50, description="Number of recent searches to return"
+    ),
 ):
     user_id = current_user.uid
     if not user_id:

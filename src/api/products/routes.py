@@ -186,12 +186,22 @@ async def get_popular_products(
             }
         )
 
+    # Determine store_ids if inventory requested with location
+    effective_store_ids = parsed_store_ids
+    is_nearby_store = True
+    if include_inventory and not parsed_store_ids and latitude and longitude:
+        (
+            effective_store_ids,
+            is_nearby_store,
+        ) = await store_service.get_store_ids_by_location(latitude, longitude)
+        effective_store_ids = cast(list[int], effective_store_ids)
+
     # Get full product data
     products = await product_service.query_service.get_products_by_ids(
         product_ids=product_ids,
         customer_tier=user_tier,
-        store_ids=parsed_store_ids,
-        is_nearby_store=True,
+        store_ids=effective_store_ids,
+        is_nearby_store=is_nearby_store,
         include_pricing=include_pricing,
         include_categories=include_categories,
         include_tags=include_tags,

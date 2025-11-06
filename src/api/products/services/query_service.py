@@ -854,15 +854,16 @@ class ProductQueryService:
             return []
 
         async with AsyncSessionLocal() as session:
-            # Step 1: Build comprehensive SQL for these products using existing infrastructure
+            # Step 1: Build comprehensive SQL for these products WITHOUT inventory
+            # (inventory is added separately via bulk service for consistency)
             sql_query, params = self._build_recent_products_sql(
                 product_ids=product_ids,
                 customer_tier=customer_tier,
-                store_ids=store_ids,
+                store_ids=None,  # Don't include in SQL query
                 include_pricing=include_pricing,
                 include_categories=include_categories,
                 include_tags=include_tags,
-                include_inventory=include_inventory,
+                include_inventory=False,  # Always False - added separately
             )
 
             # Step 2: Execute query
@@ -880,7 +881,7 @@ class ProductQueryService:
                 cursor=None,
                 store_id=store_ids,
                 include_pricing=include_pricing,
-                include_inventory=include_inventory,
+                include_inventory=False,  # Set to False for processing
                 include_categories=include_categories,
                 include_tags=include_tags,
                 latitude=latitude,

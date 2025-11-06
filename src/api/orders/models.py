@@ -100,7 +100,7 @@ class OrderSchema(BaseModel):
 
 class CreateOrderItemSchema(BaseModel):
     product_id: int = Field(..., examples=[6288])
-    quantity: int = Field(...,  examples=[3])
+    quantity: int = Field(..., examples=[3])
 
 
 class CreateOrderSchema(BaseModel):
