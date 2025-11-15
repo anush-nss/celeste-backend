@@ -25,7 +25,6 @@ from src.config.constants import CartStatus, CartUserRole, FulfillmentMode
 from src.database.connection import AsyncSessionLocal
 from src.database.models.address import Address
 from src.database.models.cart import Cart, CartItem, CartUser
-from src.database.models.product import Product
 from src.database.models.store import Store
 from src.database.models.user import User
 from src.shared.error_handler import handle_service_errors
@@ -699,92 +698,25 @@ class CartService:
     ) -> Dict[str, Any]:
         """Fetch products and calculate pricing for cart items using provided session. Returns pricing data."""
         all_product_ids = validation_data["all_product_ids"]
-        cart_item_mapping = validation_data["cart_item_mapping"]
         user_tier_id = validation_data["user_tier_id"]
 
-        # STEP 1: Bulk fetch all products
-        products_query = select(Product).where(Product.id.in_(all_product_ids))
-        products_result = await session.execute(products_query)
-        products_dict = {p.id: p for p in products_result.scalars().all()}
+        if not all_product_ids:
+            return {"products_dict": {}}
 
-        # STEP 2: Prepare bulk pricing data
-        product_data_for_pricing = []
-        for cart_id, cart_data in cart_item_mapping.items():
-            cart = cart_data["cart"]
-            for item in cart.items:
-                product = products_dict.get(item.product_id)
-                if not product:
-                    raise ValidationException(f"Product {item.product_id} not found")
+        from src.api.products.services.query_service import ProductQueryService
 
-                product_data_for_pricing.append(
-                    {
-                        "id": str(product.id),
-                        "price": float(product.base_price),
-                        "quantity": item.quantity,
-                        "category_ids": [],  # TODO: Get actual category IDs if needed
-                    }
-                )
+        query_service = ProductQueryService()
 
-        # STEP 3: Calculate exact pricing using bulk pricing service
-        from src.api.pricing.service import PricingService
-
-        pricing_service = PricingService()
-        pricing_results = await pricing_service.calculate_bulk_product_pricing(
-            product_data_for_pricing, user_tier_id
+        # Use the more efficient get_products_by_ids
+        products = await query_service.get_products_by_ids(
+            product_ids=list(set(all_product_ids)),  # Use set to get unique IDs
+            customer_tier=user_tier_id,
+            include_pricing=True,
         )
 
-        return {
-            "products_dict": products_dict,
-            "pricing_results": pricing_results,
-            "product_data_for_pricing": product_data_for_pricing,
-        }
+        products_dict = {product.id: product for product in products}
 
-    @staticmethod
-    async def fetch_products_and_calculate_pricing(
-        validation_data: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Fetch products and calculate pricing for cart items independently. Returns pricing data."""
-        all_product_ids = validation_data["all_product_ids"]
-        cart_item_mapping = validation_data["cart_item_mapping"]
-        user_tier_id = validation_data["user_tier_id"]
-
-        # STEP 1: Bulk fetch all products with own session
-        async with AsyncSessionLocal() as session:
-            products_query = select(Product).where(Product.id.in_(all_product_ids))
-            products_result = await session.execute(products_query)
-            products_dict = {p.id: p for p in products_result.scalars().all()}
-
-        # STEP 2: Prepare bulk pricing data
-        product_data_for_pricing = []
-        for cart_id, cart_data in cart_item_mapping.items():
-            cart = cart_data["cart"]
-            for item in cart.items:
-                product = products_dict.get(item.product_id)
-                if not product:
-                    raise ValidationException(f"Product {item.product_id} not found")
-
-                product_data_for_pricing.append(
-                    {
-                        "id": str(product.id),
-                        "price": float(product.base_price),
-                        "quantity": item.quantity,
-                        "category_ids": [],  # TODO: Get actual category IDs if needed
-                    }
-                )
-
-        # STEP 3: Calculate pricing using pricing service (creates its own session)
-        from src.api.pricing.service import PricingService
-
-        pricing_service = PricingService()
-        pricing_results = await pricing_service.calculate_bulk_product_pricing(
-            product_data_for_pricing, user_tier_id
-        )
-
-        return {
-            "products_dict": products_dict,
-            "pricing_results": pricing_results,
-            "product_data_for_pricing": product_data_for_pricing,
-        }
+        return {"products_dict": products_dict}
 
     @staticmethod
     def build_cart_groups(
@@ -793,10 +725,8 @@ class CartService:
         """Build cart groups with detailed pricing information."""
         cart_item_mapping = validation_data["cart_item_mapping"]
         products_dict = pricing_data["products_dict"]
-        pricing_results = pricing_data["pricing_results"]
 
         cart_groups = []
-        cart_item_index = 0
 
         for cart_id, cart_data in cart_item_mapping.items():
             cart = cart_data["cart"]
@@ -807,40 +737,32 @@ class CartService:
 
             # Process each item in this cart
             for item in cart.items:
-                # Get corresponding pricing result
-                pricing_result = pricing_results[cart_item_index]
-
-                # Get product details from pre-fetched dict
                 product = products_dict.get(item.product_id)
                 if not product:
                     raise ValidationException(f"Product {item.product_id} not found")
 
+                if not product.pricing:
+                    raise ValidationException(
+                        f"Pricing not found for product {item.product_id}"
+                    )
+
                 # Extract pricing information
-                base_price = Decimal(str(pricing_result.base_price))
-                final_price = Decimal(str(pricing_result.final_price))
+                base_price = Decimal(str(product.base_price))
+                final_price = Decimal(str(product.pricing.final_price))
                 total_price = final_price * item.quantity
                 savings_per_item = base_price - final_price
                 total_savings_item = savings_per_item * item.quantity
-                discount_percentage = (
-                    Decimal(str(pricing_result.discount_percentage))
-                    if hasattr(pricing_result, "discount_percentage")
-                    else Decimal("0.00")
-                )
+                discount_percentage = Decimal(str(product.pricing.discount_percentage))
 
                 # Build applied discounts info
                 applied_discounts = []
-                if (
-                    hasattr(pricing_result, "applied_discounts")
-                    and pricing_result.applied_discounts
-                ):
-                    for discount in pricing_result.applied_discounts:
+                if product.pricing.applied_price_lists:
+                    for price_list_name in product.pricing.applied_price_lists:
                         applied_discounts.append(
                             {
-                                "price_list_name": discount.get(
-                                    "price_list_name", "Unknown"
-                                ),
-                                "discount_type": discount.get("discount_type", ""),
-                                "discount_value": discount.get("discount_value", 0),
+                                "price_list_name": price_list_name,
+                                "discount_type": "N/A",  # This info is not available in the new model
+                                "discount_value": 0,  # This info is not available in the new model
                                 "savings": float(savings_per_item),
                             }
                         )
@@ -865,8 +787,6 @@ class CartService:
                 cart_subtotal += base_price * item.quantity
                 cart_total += total_price
                 cart_total_savings += total_savings_item
-
-                cart_item_index += 1
 
             # Create cart group
             cart_group = CartGroupSchema(

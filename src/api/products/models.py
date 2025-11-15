@@ -91,7 +91,7 @@ class PricingInfoSchema(BaseModel):
     discount_percentage: float = Field(
         default=0, description="Discount percentage applied"
     )
-    applied_price_lists: List[str] = Field(
+    applied_price_lists: Optional[List[str]] = Field(
         default=[], description="IDs of price lists that contributed to the discount"
     )
 
@@ -113,6 +113,18 @@ class InventoryInfoSchema(BaseModel):
     reason_unavailable: Optional[str] = Field(
         None,
         description="Reason why product is not available (only set when can_order=False)",
+    )
+
+
+class FuturePricingSchema(BaseModel):
+    """Schema for representing future, quantity-based pricing tiers"""
+
+    min_quantity: int = Field(
+        ..., ge=1, description="Minimum quantity required for this price"
+    )
+    final_price: float = Field(..., description="Price per unit at this quantity")
+    discount_percentage: float = Field(
+        ..., description="Discount percentage at this quantity"
     )
 
 
@@ -148,6 +160,9 @@ class EnhancedProductSchema(BaseModel):
     )
     alternatives: Optional[List["EnhancedProductSchema"]] = Field(
         None, description="List of alternative products"
+    )
+    future_pricing: Optional[List[FuturePricingSchema]] = Field(
+        None, description="Quantity-based pricing tiers for future promotions"
     )
 
     model_config = ConfigDict(from_attributes=True)

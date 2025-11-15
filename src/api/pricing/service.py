@@ -842,3 +842,128 @@ class PricingService:
         from src.shared.sqlalchemy_utils import safe_model_validate
 
         return safe_model_validate(PriceListLineSchema, line)
+
+    def get_pricing_sql_components(
+        self,
+        customer_tier: int,
+        quantity: int = 1,
+        product_ids: Optional[List[int]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Generate the SQL components for comprehensive pricing.
+        """
+        params: Dict[str, Any] = {
+            "customer_tier": customer_tier,
+            "quantity": quantity,
+        }
+        product_filter = ""
+        if product_ids:
+            params["product_ids"] = product_ids
+            product_filter = "AND p.id = ANY(:product_ids)"
+
+        # CTE for all possible price lines for the given tier
+        all_pricing_cte = f"""
+        all_pricing AS (
+            SELECT
+                p.id as product_id,
+                pll.min_quantity,
+                CASE
+                    WHEN pll.discount_type = 'percentage' THEN GREATEST(0, p.base_price - (LEAST(p.base_price * (pll.discount_value / 100), COALESCE(pll.max_discount_amount, p.base_price))))
+                    WHEN pll.discount_type = 'flat' THEN GREATEST(0, p.base_price - pll.discount_value)
+                    WHEN pll.discount_type = 'fixed_price' THEN pll.discount_value
+                    ELSE p.base_price
+                END as final_price,
+                CASE
+                    WHEN p.base_price > 0 THEN
+                        CASE
+                            WHEN pll.discount_type = 'percentage' THEN LEAST(pll.discount_value, (COALESCE(pll.max_discount_amount, p.base_price) / p.base_price) * 100)
+                            WHEN pll.discount_type = 'flat' THEN (pll.discount_value / p.base_price) * 100
+                            WHEN pll.discount_type = 'fixed_price' THEN ((p.base_price - pll.discount_value) / p.base_price) * 100
+                            ELSE 0
+                        END
+                    ELSE 0
+                END as discount_percentage
+            FROM products p
+            JOIN price_list_lines pll ON (
+                pll.product_id = p.id OR
+                (pll.product_id IS NULL AND pll.category_id IN (SELECT category_id FROM product_categories WHERE product_id = p.id)) OR
+                (pll.product_id IS NULL AND pll.category_id IS NULL)
+            )
+            JOIN price_lists pl ON pll.price_list_id = pl.id
+            JOIN tier_price_lists tpl ON pl.id = tpl.price_list_id
+            WHERE pl.is_active = true
+              AND tpl.tier_id = :customer_tier
+              AND (pl.valid_from IS NULL OR pl.valid_from <= NOW())
+              AND (pl.valid_until IS NULL OR pl.valid_until >= NOW())
+              AND pll.is_active = true
+              {product_filter}
+        )
+        """
+
+        # CTE for the current applicable price (highest discount for the given quantity)
+        pricing_cte = """
+        pricing AS (
+            SELECT
+                ap.product_id,
+                ap.final_price,
+                (p.base_price - ap.final_price) as savings,
+                ap.discount_percentage,
+                STRING_AGG(pl.name, ';') as price_list_names,
+                ROW_NUMBER() OVER (PARTITION BY ap.product_id ORDER BY (p.base_price - ap.final_price) DESC, pl.priority DESC) as rn
+            FROM all_pricing ap
+            JOIN products p ON ap.product_id = p.id
+            JOIN price_list_lines pll ON (
+                pll.product_id = p.id OR
+                (pll.product_id IS NULL AND pll.category_id IN (SELECT category_id FROM product_categories WHERE product_id = p.id)) OR
+                (pll.product_id IS NULL AND pll.category_id IS NULL)
+            )
+            JOIN price_lists pl ON pll.price_list_id = pl.id
+            WHERE ap.min_quantity <= :quantity
+            GROUP BY ap.product_id, ap.final_price, p.base_price, ap.discount_percentage, pl.priority
+        )
+        """
+
+        # CTE for future pricing tiers (quantity > current quantity)
+        future_pricing_cte = """
+        future_pricing AS (
+            SELECT
+                product_id,
+                JSON_AGG(
+                    JSON_BUILD_OBJECT(
+                        'min_quantity', min_quantity,
+                        'final_price', final_price,
+                        'discount_percentage', discount_percentage
+                    ) ORDER BY min_quantity
+                ) as tiers
+            FROM all_pricing
+            WHERE min_quantity > 1
+            GROUP BY product_id
+        )
+        """
+
+        ctes = [all_pricing_cte, pricing_cte, future_pricing_cte]
+        joins = [
+            "LEFT JOIN pricing ON p.id = pricing.product_id AND pricing.rn = 1",
+            "LEFT JOIN future_pricing ON p.id = future_pricing.product_id",
+        ]
+        selects = [
+            "COALESCE(pricing.final_price, p.base_price) as final_price",
+            "COALESCE(pricing.savings, 0) as savings",
+            "COALESCE(pricing.discount_percentage, 0) as discount_percentage",
+            "pricing.price_list_names",
+            "(ARRAY_AGG(future_pricing.tiers))[1] AS future_pricing_data",
+        ]
+        group_by_fields = [
+            "pricing.final_price",
+            "pricing.savings",
+            "pricing.discount_percentage",
+            "pricing.price_list_names",
+        ]
+
+        return {
+            "ctes": ctes,
+            "joins": joins,
+            "selects": selects,
+            "group_by_fields": group_by_fields,
+            "params": params,
+        }
