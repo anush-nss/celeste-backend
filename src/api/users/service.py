@@ -1,9 +1,11 @@
 from typing import List
 
+from sqlalchemy import desc
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from src.api.tiers.service import TierService
+from src.database.models.search_interaction import SearchInteraction
 
 # Import all models to ensure relationships are properly registered
 from src.api.users.models import (
@@ -185,3 +187,24 @@ class UserService:
     ) -> AddressResponseSchema | None:
         """Set an address as the default for a user"""
         return await self.address_service.set_default_address(user_id, address_id)
+
+    @handle_service_errors("retrieving search history")
+    async def get_search_history(self, user_id: str, limit: int = 10) -> List[str]:
+        """
+        Retrieves the recent search queries for a given user.
+
+        Args:
+            user_id: The Firebase UID of the user.
+            limit: The maximum number of search queries to return.
+
+        Returns:
+            A list of recent search query strings.
+        """
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(SearchInteraction.query)
+                .filter(SearchInteraction.user_id == user_id)
+                .order_by(desc(SearchInteraction.timestamp))
+                .limit(limit)
+            )
+            return [row.query for row in result.fetchall()]

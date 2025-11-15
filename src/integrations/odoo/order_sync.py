@@ -13,7 +13,12 @@ from typing import Any, Dict, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 
 from src.config.constants import OdooSyncStatus, DELIVERY_PRODUCT_ODOO_ID
 from src.database.connection import AsyncSessionLocal
@@ -439,9 +444,7 @@ class OdooOrderSync:
                 final_price = float(item.unit_price)
 
                 if base_price > 0:
-                    discount_percent = (
-                        (base_price - final_price) / base_price
-                    ) * 100
+                    discount_percent = ((base_price - final_price) / base_price) * 100
                     discount_percent = max(
                         0.0, min(100.0, discount_percent)
                     )  # Clamp 0-100

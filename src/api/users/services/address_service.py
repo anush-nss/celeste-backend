@@ -101,6 +101,20 @@ class UserAddressService:
                 return AddressResponseSchema.model_validate(address)
             return None
 
+    async def get_addresses_by_ids(
+        self, address_ids: List[int]
+    ) -> List[AddressResponseSchema]:
+        """Get multiple addresses by their IDs in a single bulk query"""
+        if not address_ids:
+            return []
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Address).where(Address.id.in_(address_ids))
+            )
+            addresses = result.scalars().all()
+            return safe_model_validate_list(AddressResponseSchema, addresses)
+
     async def delete_address(self, user_id: str, address_id: int) -> bool:
         """Soft delete an address by setting its active flag to false."""
         async with AsyncSessionLocal() as session:

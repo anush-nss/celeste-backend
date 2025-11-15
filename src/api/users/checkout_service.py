@@ -7,22 +7,27 @@ from fastapi import HTTPException, status
 
 from src.api.orders.service import OrderService
 from src.api.orders.services.store_selection_service import StoreSelectionService
+from src.api.products.models import ProductSchema
+from src.api.products.service import ProductService
+from src.api.stores.service import StoreService
 from src.api.users.checkout_models import (
     CheckoutCartItemPricingSchema,
     CheckoutRequestSchema,
     CheckoutResponse,
     NonSplitErrorResponse,
     StoreFulfillmentResponse,
+    UnavailableItemsErrorResponse,
 )
 from src.config.constants import FulfillmentMode
 from src.database.connection import AsyncSessionLocal
-from src.database.models.store import Store
 
 
 class CheckoutService:
     def __init__(self):
         self.store_selection_service = StoreSelectionService()
         self.order_service = OrderService()
+        self.product_service = ProductService()
+        self.store_service = StoreService()
 
     async def preview_order(
         self, user_id: str, request: CheckoutRequestSchema
@@ -47,6 +52,26 @@ class CheckoutService:
                 for item in group.items
             }
 
+            # Get all product IDs from store_assignments
+            product_ids = {
+                item["product_id"]
+                for items in store_assignments.values()
+                for item in items
+            }
+
+            # Fetch all products at once
+            products = await self.product_service.query_service.get_products_by_ids(
+                list(product_ids)
+            )
+            product_map = {product.id: product for product in products}
+
+            # Fetch all stores at once
+            store_ids = store_assignments.keys()
+            stores = await self.store_service.get_stores_by_ids(
+                session, list(store_ids)
+            )
+            store_map = {store.id: store for store in stores}
+
             for store_id, assigned_items_list in store_assignments.items():
                 store_subtotal = Decimal("0.00")
                 store_items_priced = []
@@ -56,8 +81,18 @@ class CheckoutService:
                     if (product_id, cart_id) in product_pricing_map:
                         priced_item = product_pricing_map[(product_id, cart_id)]
                         store_subtotal += Decimal(str(priced_item.total_price))
+
+                        product = product_map.get(product_id)
+                        if not product:
+                            raise HTTPException(
+                                status_code=status.HTTP_404_NOT_FOUND,
+                                detail=f"Product with ID {product_id} not found",
+                            )
+
                         checkout_item = CheckoutCartItemPricingSchema(
-                            **priced_item.model_dump(), source_cart_id=cart_id
+                            **priced_item.model_dump(),
+                            source_cart_id=cart_id,
+                            product=ProductSchema.model_validate(product),
                         )
                         store_items_priced.append(checkout_item)
 
@@ -67,7 +102,7 @@ class CheckoutService:
                     FulfillmentMode.FAR_DELIVERY.value,
                 ]:
                     is_nearby = fulfillment_result.get("is_nearby_store", True)
-                    store_info = await session.get(Store, store_id)
+                    store_info = store_map.get(store_id)
 
                     if store_info is None:
                         raise HTTPException(
@@ -92,7 +127,7 @@ class CheckoutService:
 
                 store_total = store_subtotal + delivery_cost
                 overall_total += store_total
-                store_info = await session.get(Store, store_id)
+                store_info = store_map.get(store_id)
 
                 if store_info is None:
                     raise HTTPException(
@@ -143,6 +178,16 @@ class CheckoutService:
 
         preview = await self.preview_order(user_id, request)
 
+        if preview.unavailable_items:
+            error_response = UnavailableItemsErrorResponse(
+                detail="Some items in your cart are unavailable. Please review the items below.",
+                unavailable_items=preview.unavailable_items,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_response.model_dump(mode="json"),
+            )
+
         if (
             not request.split_order
             and request.location.mode == FulfillmentMode.DELIVERY.value
@@ -166,6 +211,7 @@ class CheckoutService:
                 store_fulfillment=store_fulfillment,
                 location=request.location,
                 cart_ids=request.cart_ids,
+                platform=request.platform,
             )
             # Create a new StoreFulfillmentResponse with the order_id
             fulfillment_with_order_id = StoreFulfillmentResponse(

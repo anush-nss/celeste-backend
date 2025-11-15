@@ -1,9 +1,9 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.config.constants import FulfillmentMode, OrderStatus
+from src.config.constants import FulfillmentMode, OrderStatus, Platform
 
 
 class OrderItemSchema(BaseModel):
@@ -16,6 +16,9 @@ class OrderItemSchema(BaseModel):
     unit_price: float = Field(..., examples=[1150.0])
     total_price: float = Field(..., examples=[2300.0])
     created_at: datetime
+    product: Optional[Dict[str, Any]] = Field(
+        default=None, description="Full product details (if populated)"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -38,10 +41,26 @@ class OrderSchema(BaseModel):
         description="Order fulfillment mode: pickup, delivery, or far_delivery",
         examples=[FulfillmentMode.DELIVERY.value],
     )
+    delivery_service_level: Optional[str] = Field(
+        default="standard",
+        description="Requested delivery service level (e.g., standard, priority, premium)",
+        examples=["standard"],
+    )
+    platform: Optional[Platform] = Field(
+        default=None,
+        description="Platform from which the order originated (e.g., 'mobile', 'web')",
+        examples=["web"],
+    )
     status: OrderStatus = Field(..., examples=[OrderStatus.PENDING.value])
     created_at: datetime
     updated_at: datetime
     items: List[OrderItemSchema]
+    store: Optional[Dict[str, Any]] = Field(
+        default=None, description="Full store details (if populated)"
+    )
+    address: Optional[Dict[str, Any]] = Field(
+        default=None, description="Full delivery address details (if populated)"
+    )
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -55,6 +74,8 @@ class OrderSchema(BaseModel):
                     "total_amount": 2600.0,
                     "delivery_charge": 300.0,
                     "fulfillment_mode": "delivery",
+                    "delivery_service_level": "standard",
+                    "platform": "web",
                     "status": "pending",
                     "created_at": "2025-10-15T10:00:00Z",
                     "updated_at": "2025-10-15T10:00:00Z",
@@ -78,13 +99,18 @@ class OrderSchema(BaseModel):
 
 
 class CreateOrderItemSchema(BaseModel):
-    product_id: int = Field(..., gt=0, examples=[6288])
-    quantity: int = Field(..., gt=0, examples=[3])
+    product_id: int = Field(..., examples=[6288])
+    quantity: int = Field(..., examples=[3])
 
 
 class CreateOrderSchema(BaseModel):
     store_id: int = Field(..., examples=[1])
     items: List[CreateOrderItemSchema]
+    platform: Optional[Platform] = Field(
+        default=None,
+        description="Platform from which the order originated (e.g., 'mobile', 'web')",
+        examples=["web"],
+    )
 
 
 class UpdateOrderSchema(BaseModel):

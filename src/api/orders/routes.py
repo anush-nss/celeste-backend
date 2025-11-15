@@ -6,7 +6,6 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
-    Request,
     status,
 )
 from sqlalchemy import select
@@ -40,12 +39,36 @@ async def get_orders(
     status: Optional[List[str]] = Query(
         None, description="Filter orders by status (e.g., pending, confirmed)"
     ),
+    include_products: bool = Query(
+        False, description="Include full product details in order items"
+    ),
+    include_stores: bool = Query(False, description="Include full store details"),
+    include_addresses: bool = Query(
+        False, description="Include full delivery address details"
+    ),
 ):
+    """
+    Retrieve orders with optional population of related data.
+
+    By default, only order and item IDs/amounts are returned for fast listing.
+    Set query parameters to True to include full product/store/address details.
+    """
     if current_user.role == UserRole.ADMIN:
-        orders = await order_service.get_all_orders(cart_ids=cart_id, status=status)
+        orders = await order_service.get_all_orders(
+            cart_ids=cart_id,
+            status=status,
+            include_products=include_products,
+            include_stores=include_stores,
+            include_addresses=include_addresses,
+        )
     else:
         orders = await order_service.get_all_orders(
-            user_id=current_user.uid, cart_ids=cart_id, status=status
+            user_id=current_user.uid,
+            cart_ids=cart_id,
+            status=status,
+            include_products=include_products,
+            include_stores=include_stores,
+            include_addresses=include_addresses,
         )
     return success_response([order.model_dump(mode="json") for order in orders])
 
@@ -54,9 +77,28 @@ async def get_orders(
     "/{order_id}", summary="Retrieve a specific order", response_model=OrderSchema
 )
 async def get_order_by_id(
-    order_id: int, current_user: DecodedToken = Depends(get_current_user)
+    order_id: int,
+    current_user: DecodedToken = Depends(get_current_user),
+    include_products: bool = Query(
+        True, description="Include full product details in order items"
+    ),
+    include_stores: bool = Query(True, description="Include full store details"),
+    include_addresses: bool = Query(
+        True, description="Include full delivery address details"
+    ),
 ):
-    order = await order_service.get_order_by_id(order_id)
+    """
+    Retrieve a specific order with optional population of related data.
+
+    By default, products, stores, and addresses are fully populated.
+    Set query parameters to False to exclude them for faster responses.
+    """
+    order = await order_service.get_order_by_id(
+        order_id,
+        include_products=include_products,
+        include_stores=include_stores,
+        include_addresses=include_addresses,
+    )
     if not order:
         raise ResourceNotFoundException(detail=f"Order with ID {order_id} not found")
 
@@ -77,7 +119,9 @@ async def create__order(
     order_data: CreateOrderSchema,
     current_user: DecodedToken = Depends(get_current_user),
 ):
-    new_order = await order_service.create_order(order_data, current_user.uid)
+    new_order = await order_service.create_order(
+        order_data, current_user.uid, platform=order_data.platform
+    )
     return success_response(
         new_order.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )

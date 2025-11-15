@@ -1,0 +1,89 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+dist
+build
+*.egg
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+.tox
+.venv
+venv
+env
+ENV
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation (not needed in container)
+docs/
+*.md
+!README.md
+
+# Scripts (except db scripts which are needed)
+scripts/promote_user.py
+
+# Test files
+tests/
+test_*.py
+*_test.py
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+
+# Local config
+.env
+.env.local
+*.local
+service-account.json
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Migrations (already in image)
+migrations/*.sql
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Node (if any)
+node_modules
+package-lock.json
+
+# Cloud specific
+cloudbuild.yaml
+.gcloudignore
+
+# Large files that aren't needed
+*.zip
+*.tar.gz
+*.pdf
+*.jpg
+*.png
+*.gif

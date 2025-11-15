@@ -1,9 +1,11 @@
+from decimal import Decimal
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.api.auth.models import DecodedToken
 from src.api.carts.service import CartService
+from src.api.interactions.service import InteractionService
 from src.api.orders.service import OrderService
 from src.api.users.models import (
     AddCartItemSchema,
@@ -25,7 +27,11 @@ from src.shared.exceptions import (
 )
 from src.shared.responses import success_response
 
-from src.api.users.checkout_models import CheckoutRequestSchema, CheckoutResponse
+from src.api.users.checkout_models import (
+    CheckoutRequestSchema,
+    CheckoutResponse,
+    PaymentInfo,
+)
 from src.api.users.checkout_service import CheckoutService
 
 users_router = APIRouter(prefix="/users", tags=["Users"])
@@ -33,6 +39,7 @@ users_router = APIRouter(prefix="/users", tags=["Users"])
 user_service = UserService()
 order_service = OrderService()
 checkout_service = CheckoutService()
+interaction_service = InteractionService()
 
 
 @users_router.get("/me", summary="Get current user profile")
@@ -270,6 +277,15 @@ async def add_cart_item(
         raise UnauthorizedException(detail="User ID not found in token")
 
     item = await CartService.add_cart_item(user_id, cart_id, item_data)
+
+    # Track cart add interaction (background task)
+    await interaction_service.track_cart_add(
+        user_id=user_id,
+        product_id=item_data.product_id,
+        quantity=item_data.quantity,
+        auto_update=True,  # Auto-update popularity
+    )
+
     return success_response(
         item.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )
@@ -438,13 +454,32 @@ async def create_multi_cart_order(
     order_summary = await checkout_service.create_order(user_id, checkout_data)
 
     # Initiate payment
-    payment_info = await order_service.payment_service.initiate_payment(
+    payment_info_dict = await order_service.payment_service.initiate_payment(
         cart_ids=checkout_data.cart_ids,
-        total_amount=order_summary.overall_total,
+        total_amount=Decimal(order_summary.overall_total),
         user_id=user_id,
     )
-    order_summary.payment_info = payment_info
+    order_summary.payment_info = PaymentInfo(**payment_info_dict)
 
     return success_response(
         order_summary.model_dump(mode="json"), status_code=status.HTTP_201_CREATED
     )
+
+
+@users_router.get(
+    "/me/search-history",
+    summary="Get current user's search history",
+    response_model=List[str],
+)
+async def get_search_history(
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+    limit: int = Query(
+        10, ge=1, le=50, description="Number of recent searches to return"
+    ),
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    search_history = await user_service.get_search_history(user_id, limit)
+    return success_response(search_history)

@@ -17,6 +17,12 @@ from .tier_benefit import Benefit, tier_benefits
 from .tier_price_list import TierPriceList
 from .payment import PaymentTransaction
 from .user import User
+from .product_vector import ProductVector
+from .search_interaction import SearchInteraction
+from .user_preference import UserPreference
+from .product_interaction import ProductInteraction
+from .product_popularity import ProductPopularity
+from .search_suggestion import SearchSuggestion
 
 __all__ = [
     "User",
@@ -41,4 +47,10 @@ __all__ = [
     "Order",
     "OrderItem",
     "PaymentTransaction",
+    "ProductVector",
+    "SearchInteraction",
+    "UserPreference",
+    "ProductInteraction",
+    "ProductPopularity",
+    "SearchSuggestion",
 ]

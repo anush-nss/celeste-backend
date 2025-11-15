@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional, Union
+from typing import Annotated, List, Optional, Union, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -13,11 +13,18 @@ from src.api.products.models import (
     ProductTagSchema,
     UpdateProductSchema,
 )
+from src.api.products.models_popular import (
+    PopularProductsResponseSchema,
+)
 from src.api.products.service import ProductService
+from src.api.products.services.popularity_service import PopularityService
+from src.api.products.services.vector_service import VectorService
+from src.api.personalization.service import PersonalizationService
+from src.api.stores.service import StoreService
 from src.api.tags.models import CreateTagSchema, TagSchema, UpdateTagSchema
 from src.config.constants import UserRole
 from src.database.connection import AsyncSessionLocal
-from src.dependencies.auth import RoleChecker, get_current_user
+from src.dependencies.auth import RoleChecker, get_current_user, get_optional_user
 from src.dependencies.tiers import get_user_tier
 from src.shared.exceptions import ResourceNotFoundException
 from src.shared.responses import success_response
@@ -25,6 +32,10 @@ from src.shared.responses import success_response
 products_router = APIRouter(prefix="/products", tags=["Products"])
 product_service = ProductService()
 pricing_service = PricingService()
+popularity_service = PopularityService()
+personalization_service = PersonalizationService()
+vector_service = VectorService()
+store_service = StoreService()
 
 
 @products_router.get(
@@ -44,7 +55,8 @@ async def get_recent_products(
     include_categories: bool = Query(False, description="Include category information"),
     include_tags: bool = Query(False, description="Include tag information"),
     include_inventory: bool = Query(
-        False, description="Include inventory information (requires location)"
+        True,
+        description="Include inventory information (requires store_id or location)",
     ),
     latitude: Optional[float] = Query(
         None, ge=-90, le=90, description="User latitude for location-based inventory"
@@ -83,8 +95,155 @@ async def get_recent_products(
 
 
 @products_router.get(
+    "/popular",
+    summary="Get popular products based on various ranking modes",
+    response_model=PopularProductsResponseSchema,
+)
+async def get_popular_products(
+    mode: str = Query("trending", description="Popularity mode"),
+    limit: int = Query(20, ge=1, le=100, description="Number of products to return"),
+    time_window_days: Optional[int] = Query(
+        None, ge=1, le=365, description="Limit to last N days"
+    ),
+    category_ids: Optional[str] = Query(
+        None, description="Comma-separated category IDs"
+    ),
+    min_interactions: int = Query(5, ge=1, description="Minimum interactions required"),
+    include_pricing: bool = Query(True, description="Include pricing information"),
+    include_categories: bool = Query(False, description="Include category information"),
+    include_tags: bool = Query(False, description="Include tag information"),
+    include_inventory: bool = Query(True, description="Include inventory information"),
+    include_popularity_metrics: bool = Query(
+        True, description="Include popularity metrics"
+    ),
+    store_ids: Optional[str] = Query(None, description="Comma-separated store IDs"),
+    latitude: Optional[float] = Query(None, ge=-90, le=90, description="Latitude"),
+    longitude: Optional[float] = Query(None, ge=-180, le=180, description="Longitude"),
+    user_tier: Optional[int] = Depends(get_user_tier),
+):
+    """
+    Get popular products based on various ranking modes.
+
+    **Modes:**
+    - `trending`: Time-decayed recent activity (default)
+    - `most_viewed`: Most viewed products
+    - `most_carted`: Most added to cart
+    - `most_ordered`: Best sellers
+    - `most_searched`: Most searched products
+    - `overall`: Overall popularity score
+
+    **Filters:**
+    - Time window: Limit to products popular in last N days
+    - Categories: Filter by category IDs
+    - Min interactions: Minimum interactions required to be considered
+
+    **Returns:**
+    - Products with optional pricing, inventory, and popularity metrics
+    """
+    from src.config.constants import PopularityMode
+
+    # Parse comma-separated IDs
+    parsed_category_ids = (
+        [int(id.strip()) for id in category_ids.split(",") if id.strip()]
+        if category_ids
+        else None
+    )
+    parsed_store_ids = (
+        [int(id.strip()) for id in store_ids.split(",") if id.strip()]
+        if store_ids
+        else None
+    )
+
+    # Validate and convert mode
+    try:
+        popularity_mode = PopularityMode(mode)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid mode. Must be one of: {[m.value for m in PopularityMode]}",
+        )
+
+    # Get popular product IDs from popularity service
+    product_ids = await popularity_service.get_popular_products(
+        mode=popularity_mode,
+        limit=limit,
+        time_window_days=time_window_days,
+        category_ids=parsed_category_ids,
+        min_interactions=min_interactions,
+    )
+
+    if not product_ids:
+        return success_response(
+            {
+                "products": [],
+                "total_results": 0,
+                "mode": mode,
+                "time_window_days": time_window_days,
+                "filters_applied": {
+                    "category_ids": parsed_category_ids,
+                    "min_interactions": min_interactions,
+                },
+            }
+        )
+
+    # Determine store_ids if inventory requested with location
+    effective_store_ids = parsed_store_ids
+    is_nearby_store = True
+    if include_inventory and not parsed_store_ids and latitude and longitude:
+        (
+            effective_store_ids,
+            is_nearby_store,
+        ) = await store_service.get_store_ids_by_location(latitude, longitude)
+        effective_store_ids = cast(list[int], effective_store_ids)
+
+    # Get full product data
+    products = await product_service.query_service.get_products_by_ids(
+        product_ids=product_ids,
+        customer_tier=user_tier,
+        store_ids=effective_store_ids,
+        is_nearby_store=is_nearby_store,
+        include_pricing=include_pricing,
+        include_categories=include_categories,
+        include_tags=include_tags,
+        include_inventory=include_inventory,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+    # Convert to dicts and add popularity metrics if requested
+    products_data = []
+    for product in products:
+        product_dict = product.model_dump(mode="json")
+
+        # Add popularity metrics if requested
+        if include_popularity_metrics and product.id:
+            metrics = await popularity_service.get_popularity_metrics(product.id)
+            if metrics:
+                product_dict["popularity_metrics"] = metrics
+
+        products_data.append(product_dict)
+
+    # Maintain original popularity order
+    product_order_map = {pid: idx for idx, pid in enumerate(product_ids)}
+    products_data.sort(key=lambda p: product_order_map.get(p["id"], len(product_ids)))
+
+    return success_response(
+        {
+            "products": products_data,
+            "total_results": len(products_data),
+            "mode": mode,
+            "time_window_days": time_window_days,
+            "filters_applied": {
+                "category_ids": parsed_category_ids,
+                "min_interactions": min_interactions,
+            },
+        }
+    )
+
+
+@products_router.get(
     "/",
-    summary="Get all products with smart pricing and pagination",
+    summary="Get all products with smart pricing, pagination, and personalization",
     response_model=PaginatedProductsResponse,
 )
 async def get_all_products(
@@ -136,14 +295,26 @@ async def get_all_products(
         le=180,
         description="User longitude for location-based store finding",
     ),
+    enable_personalization: bool = Query(
+        True,
+        description="Enable personalized ranking (requires authentication)",
+    ),
     user_tier: Optional[int] = Depends(get_user_tier),
+    current_user: Optional[DecodedToken] = Depends(get_optional_user),
 ):
     """
     Enhanced product listing with:
     - Cursor-based pagination for efficiency
     - Smart pricing with automatic tier detection from Bearer token
+    - **Personalized ranking** based on user preferences (when authenticated)
     - Default limit of 20, maximum 100
+    - Diversity filtering to prevent filter bubble
     - Future-ready inventory structure
+
+    **Personalization:**
+    - Automatically applied for authenticated users with 5+ interactions
+    - Combines semantic similarity, category affinity, and brand preferences
+    - Diversity filtering ensures variety in results
     """
     query_params = ProductQuerySchema(
         limit=limit,
@@ -163,6 +334,11 @@ async def get_all_products(
         longitude=longitude,
     )
 
+    # If personalization is enabled, we need categories and tags for scoring
+    if enable_personalization:
+        query_params.include_categories = True
+        query_params.include_tags = True
+
     # Use comprehensive method for all requests
     store_ids = None
     if include_inventory and store_id:
@@ -174,6 +350,51 @@ async def get_all_products(
         customer_tier=user_tier,
         store_ids=store_ids,
     )
+
+    # Apply personalization if user is authenticated and personalization is enabled
+    if enable_personalization and current_user:
+        try:
+            # Get product IDs from result (filter out None values)
+            product_ids = [p.id for p in result.products if p.id is not None]
+
+            if product_ids:
+                # Calculate personalization scores
+                personalization_scores = (
+                    await personalization_service.calculate_personalization_scores(
+                        user_id=current_user.uid,
+                        product_ids=product_ids,
+                    )
+                )
+
+                # If personalization scores exist, rerank and apply diversity
+                if personalization_scores:
+                    # Create a mapping of product id to personalization score
+                    # We'll use this for sorting without modifying the Pydantic model
+                    product_scores = {}
+                    for product in result.products:
+                        if product.id is not None:
+                            product_scores[product.id] = personalization_scores.get(
+                                product.id, 0.0
+                            )
+
+                    # Sort by personalization score
+                    result.products.sort(
+                        key=lambda p: product_scores.get(p.id, 0.0) if p.id else 0.0,
+                        reverse=True,
+                    )
+
+                    # Apply diversity filtering
+                    result.products = personalization_service.apply_diversity_filter(
+                        result.products,
+                        personalization_scores,
+                    )
+
+        except Exception as e:
+            # Log error but don't fail the request
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error applying personalization: {e}", exc_info=True)
 
     return success_response(result.model_dump(mode="json"))
 
@@ -394,7 +615,9 @@ async def get_product_by_ref(
         else False,
         include_tags=include_tags if include_tags is not None else False,
         include_inventory=include_inventory if include_inventory is not None else False,
-        include_alternatives=include_alternatives if include_alternatives is not None else False,
+        include_alternatives=include_alternatives
+        if include_alternatives is not None
+        else False,
         customer_tier=user_tier,
         store_ids=store_id,
         latitude=latitude,
@@ -459,7 +682,9 @@ async def get_product_by_id(
         else False,
         include_tags=include_tags if include_tags is not None else False,
         include_inventory=include_inventory if include_inventory is not None else False,
-        include_alternatives=include_alternatives if include_alternatives is not None else False,
+        include_alternatives=include_alternatives
+        if include_alternatives is not None
+        else False,
         customer_tier=user_tier,
         store_ids=store_id,
         latitude=latitude,
@@ -471,6 +696,119 @@ async def get_product_by_id(
         raise ResourceNotFoundException(detail=f"Product with ID {id} not found")
 
     return success_response(product.model_dump(mode="json"))
+
+
+@products_router.get(
+    "/{id}/similar",
+    summary="Get similar products using vector similarity",
+    response_model=List[EnhancedProductSchema],
+)
+async def get_similar_products(
+    id: int,
+    limit: Optional[int] = Query(
+        10, ge=1, le=50, description="Maximum number of similar products to return"
+    ),
+    min_similarity: Optional[float] = Query(
+        0.5,
+        ge=0.0,
+        le=1.0,
+        description="Minimum similarity threshold (0.0 to 1.0)",
+    ),
+    include_pricing: Optional[bool] = Query(
+        True, description="Include pricing calculations"
+    ),
+    include_categories: Optional[bool] = Query(
+        True, description="Include category information"
+    ),
+    include_tags: Optional[bool] = Query(True, description="Include tag information"),
+    include_inventory: Optional[bool] = Query(
+        True, description="Include inventory information"
+    ),
+    store_id: Optional[List[int]] = Query(
+        None, description="Store IDs for inventory data"
+    ),
+    latitude: Optional[float] = Query(
+        None,
+        ge=-90,
+        le=90,
+        description="User latitude for location-based store finding",
+    ),
+    longitude: Optional[float] = Query(
+        None,
+        ge=-180,
+        le=180,
+        description="User longitude for location-based store finding",
+    ),
+    quantity: Optional[int] = Query(1, description="Quantity for bulk pricing"),
+    user_tier: Optional[int] = Depends(get_user_tier),
+):
+    """
+    Get products similar to a given product using AI-powered vector similarity.
+
+    Uses cosine similarity on 384-dimension embeddings to find semantically
+    similar products based on name, description, categories, brand, and tags.
+
+    Similar products are enriched with:
+    - Tier-based pricing (if include_pricing=true)
+    - Category information (if include_categories=true)
+    - Product tags (if include_tags=true)
+    - Inventory data (if include_inventory=true)
+    - Location-based store information (if latitude/longitude provided)
+
+    Returns products ranked by similarity score (highest first).
+    """
+    # Find similar products using vector similarity
+    similar_product_data = await vector_service.find_similar_products(
+        product_id=id,
+        limit=limit or 10,
+        min_similarity=min_similarity or 0.5,
+    )
+
+    if not similar_product_data:
+        # Return empty list if no similar products found
+        return success_response([])
+
+    # Extract product IDs and similarity scores
+    similar_product_ids = [p[0] for p in similar_product_data]
+    similarity_scores = {p[0]: p[1] for p in similar_product_data}
+
+    # Determine store_ids if inventory requested with location
+    effective_store_ids = store_id
+    is_nearby_store = True
+    if include_inventory and not store_id and latitude and longitude:
+        (
+            effective_store_ids,
+            is_nearby_store,
+        ) = await store_service.get_store_ids_by_location(latitude, longitude)
+        effective_store_ids = cast(list[int], effective_store_ids)
+
+    # Get all products in a single bulk query (avoid N+1)
+    enhanced_products_list = await product_service.query_service.get_products_by_ids(
+        product_ids=similar_product_ids,
+        customer_tier=user_tier,
+        store_ids=effective_store_ids,
+        is_nearby_store=is_nearby_store,
+        include_pricing=include_pricing if include_pricing is not None else False,
+        include_categories=include_categories
+        if include_categories is not None
+        else False,
+        include_tags=include_tags if include_tags is not None else False,
+        include_inventory=include_inventory if include_inventory is not None else False,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+    # Add similarity scores to products and maintain order
+    enhanced_products = []
+    for product in enhanced_products_list:
+        product_dict = product.model_dump(mode="json")
+        product_dict["similarity_score"] = similarity_scores.get(product.id, 0.0)
+        enhanced_products.append(product_dict)
+
+    # Sort by similarity score (maintain ranking from vector search)
+    enhanced_products.sort(key=lambda p: p.get("similarity_score", 0), reverse=True)
+
+    return success_response(enhanced_products)
 
 
 @products_router.post(

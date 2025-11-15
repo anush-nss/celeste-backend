@@ -1,4 +1,5 @@
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from src.database.connection import initialize_firebase
 from src.api.auth.routes import auth_router
@@ -8,6 +9,8 @@ from src.api.inventory.routes import inventory_router
 from src.api.orders.routes import orders_router
 from src.api.pricing.routes import pricing_router
 from src.api.products.routes import products_router
+from src.api.search.routes import search_router
+from src.api.search.service import SearchService
 from src.api.stores.routes import stores_router
 from src.api.tags.routes import tags_router
 from src.api.tiers.routes import router as tiers_router
@@ -21,16 +24,43 @@ initialize_firebase()
 
 logger = get_logger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Application lifespan events.
+    Runs on startup and shutdown to manage resources.
+    """
+    # Startup: Warm up search service
+    logger.info("Starting application startup tasks...")
+    try:
+        search_service = SearchService()
+        search_service.warmup()
+        logger.info("Application startup complete!")
+    except Exception as e:
+        logger.error(f"Error during startup warmup: {e}", exc_info=True)
+        # Don't crash the app if warmup fails, model will lazy-load on first search
+
+    yield
+
+    # Shutdown: Cleanup (if needed in future)
+    logger.info("Application shutdown")
+
+
 app = FastAPI(
     title="Celeste API",
     description="API documentation for the Celeste e-commerce platform.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(categories_router)
 app.include_router(ecommerce_categories_router)
+# IMPORTANT: Register search_router BEFORE products_router
+# to prevent /products/{id} from catching /products/search
+app.include_router(search_router)
 app.include_router(products_router)
 app.include_router(orders_router)
 app.include_router(inventory_router)

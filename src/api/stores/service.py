@@ -28,6 +28,7 @@ from src.shared.error_handler import ErrorHandler, handle_service_errors
 from src.shared.exceptions import ConflictException, ValidationException
 from src.shared.geo_utils import GeoUtils
 from src.shared.performance_utils import async_timer
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class StoreService:
@@ -35,6 +36,16 @@ class StoreService:
         self._error_handler = ErrorHandler(__name__)
         self.tag_service = TagService(entity_type="store")
         self.cache = cache_service
+
+    @handle_service_errors("retrieving stores by ids")
+    async def get_stores_by_ids(
+        self, session: AsyncSession, store_ids: List[int]
+    ) -> List[Store]:
+        """Retrieves stores by their IDs."""
+        if not store_ids:
+            return []
+        result = await session.execute(select(Store).where(Store.id.in_(store_ids)))
+        return list(result.scalars().all())
 
     def calculate_bounding_box(self, lat: float, lng: float, radius_km: float) -> dict:
         """Calculate bounding box for efficient spatial filtering"""

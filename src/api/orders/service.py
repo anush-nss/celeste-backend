@@ -7,6 +7,7 @@ from sqlalchemy import update
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
+from src.api.interactions.service import InteractionService
 from src.api.inventory.service import InventoryService
 from src.api.orders.models import (
     CreateOrderSchema,
@@ -18,6 +19,9 @@ from src.api.orders.services.payment_service import PaymentService
 from src.api.orders.services.store_selection_service import StoreSelectionService
 from src.api.pricing.service import PricingService
 from src.api.products.cache import products_cache
+from src.api.products.service import ProductService
+from src.api.stores.service import StoreService
+from src.api.users.services.address_service import UserAddressService
 
 
 from src.api.users.checkout_models import LocationSchema, StoreFulfillmentResponse
@@ -40,11 +44,15 @@ from src.shared.exceptions import ResourceNotFoundException, ValidationException
 class OrderService:
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
+        self.interaction_service = InteractionService()
         self.inventory_service = InventoryService()
         self.pricing_service = PricingService()
         self.payment_service = PaymentService()
         self.store_selection_service = StoreSelectionService()
         self.products_cache = products_cache
+        self.product_service = ProductService()
+        self.store_service = StoreService()
+        self.address_service = UserAddressService()
 
     @handle_service_errors("creating single store order")
     async def create_single_store_order(
@@ -53,6 +61,7 @@ class OrderService:
         store_fulfillment: StoreFulfillmentResponse,
         location: LocationSchema,
         cart_ids: List[int],
+        platform: Optional[str] = None,
     ) -> OrderSchema:
         """Creates a single order for a specific store's fulfillment."""
         async with AsyncSessionLocal() as session:
@@ -76,6 +85,7 @@ class OrderService:
                     delivery_charge=Decimal(str(store_fulfillment.delivery_cost)),
                     fulfillment_mode=fulfillment_mode,
                     delivery_service_level=location.delivery_service_level,
+                    platform=platform,
                     status=OrderStatus.PENDING.value,
                 )
                 session.add(new_order)
@@ -89,7 +99,7 @@ class OrderService:
                     order_items_to_create.append(
                         OrderItem(
                             order_id=new_order.id,
-                            product_id=item.product_id,
+                            product_id=item.product.id,
                             store_id=store_id,
                             quantity=item.quantity,
                             unit_price=Decimal(str(item.final_price)),
@@ -99,7 +109,7 @@ class OrderService:
                     )
                     holds_to_place.append(
                         {
-                            "product_id": item.product_id,
+                            "product_id": item.product.id,
                             "store_id": store_id,
                             "quantity": item.quantity,
                         }
@@ -120,10 +130,25 @@ class OrderService:
                     )
                 )
 
+                # Refresh and load items
                 await session.refresh(new_order)
-                # We need to load the items to return them in the schema
-                await session.refresh(new_order, ["items"])
-                return OrderSchema.model_validate(new_order)
+
+                # Re-query with eager loading of items
+                result = await session.execute(
+                    select(Order)
+                    .options(selectinload(Order.items))
+                    .filter(Order.id == new_order.id)
+                )
+                order_with_items = result.scalar_one()
+
+            # Use existing enrichment method to properly convert to schema
+            enriched_orders = await self._enrich_orders_with_products_and_stores(
+                [order_with_items],
+                include_products=True,
+                include_stores=True,
+                include_addresses=False,
+            )
+            return enriched_orders[0]
 
     def calculate_flat_delivery_charge(
         self,
@@ -290,12 +315,152 @@ class OrderService:
                 f"Lifetime Value: LKR {new_lifetime_value:.2f}"
             )
 
+    async def _enrich_orders_with_products_and_stores(
+        self,
+        orders: List[Order],
+        include_products: bool = True,
+        include_stores: bool = True,
+        include_addresses: bool = True,
+    ) -> List[OrderSchema]:
+        """
+        Enrich orders with full product, store, and address details using bulk queries.
+
+        Efficiently fetches data in single queries to avoid N+1.
+        Each type of data can be optionally excluded for performance.
+
+        Args:
+            orders: List of Order models to enrich
+            include_products: Fetch and populate full product details
+            include_stores: Fetch and populate full store details
+            include_addresses: Fetch and populate full address details
+
+        Returns:
+            List of enriched OrderSchema objects
+        """
+        if not orders:
+            return []
+
+        # Collect all unique product IDs, store IDs, and address IDs
+        all_product_ids = set()
+        all_store_ids = set()
+        all_address_ids = set()
+
+        for order in orders:
+            if include_stores:
+                all_store_ids.add(order.store_id)
+            if include_addresses and order.address_id:
+                all_address_ids.add(order.address_id)
+            if include_products:
+                for item in order.items:
+                    if item.product_id != DELIVERY_PRODUCT_ODOO_ID:
+                        all_product_ids.add(item.product_id)
+
+        # Fetch all products in a single bulk query (reuses products module)
+        products_map = {}
+        if include_products and all_product_ids:
+            products_list = (
+                await self.product_service.query_service.get_products_by_ids(
+                    product_ids=list(all_product_ids),
+                    customer_tier=None,  # No tier-specific pricing for order history
+                    include_pricing=False,  # Order already has final prices
+                    include_categories=False,
+                    include_tags=False,
+                    include_inventory=False,
+                )
+            )
+            products_map = {p.id: p.model_dump(mode="json") for p in products_list}
+
+        # Fetch all stores in a single bulk query (reuses stores module)
+        stores_map = {}
+        if include_stores and all_store_ids:
+            async with AsyncSessionLocal() as session:
+                stores = await self.store_service.get_stores_by_ids(
+                    session, list(all_store_ids)
+                )
+                # Convert Store models to dicts inside session to avoid lazy loading issues
+                # Access all attributes we need while session is active
+                stores_map = {
+                    s.id: {
+                        "id": s.id,
+                        "name": s.name,
+                        "address": s.address,
+                        "latitude": s.latitude,
+                        "longitude": s.longitude,
+                        "phone": s.phone,
+                        "email": s.email,
+                        "is_active": s.is_active,
+                        "created_at": s.created_at.isoformat()
+                        if s.created_at
+                        else None,
+                        "updated_at": s.updated_at.isoformat()
+                        if s.updated_at
+                        else None,
+                    }
+                    for s in stores
+                }
+
+        # Fetch all addresses in a single bulk query (reuses users module)
+        addresses_map = {}
+        if include_addresses and all_address_ids:
+            addresses = await self.address_service.get_addresses_by_ids(
+                list(all_address_ids)
+            )
+            addresses_map = {a.id: a.model_dump(mode="json") for a in addresses}
+
+        # Build enriched order schemas
+        order_schemas = []
+        for order in orders:
+            # Filter out delivery product from items
+            filtered_items = []
+            for item in order.items:
+                if item.product_id != DELIVERY_PRODUCT_ODOO_ID:
+                    item_dict = {
+                        "id": item.id,
+                        "order_id": item.order_id,
+                        "source_cart_id": item.source_cart_id,
+                        "product_id": item.product_id,
+                        "store_id": item.store_id,
+                        "quantity": item.quantity,
+                        "unit_price": float(item.unit_price),
+                        "total_price": float(item.total_price),
+                        "created_at": item.created_at,
+                        "product": products_map.get(item.product_id),  # Attach product
+                    }
+                    filtered_items.append(OrderItemSchema.model_validate(item_dict))
+
+            # Build order dict with store and address attached
+            order_dict = {
+                "id": order.id,
+                "user_id": order.user_id,
+                "store_id": order.store_id,
+                "address_id": order.address_id,
+                "total_amount": float(order.total_amount),
+                "delivery_charge": float(order.delivery_charge),
+                "fulfillment_mode": order.fulfillment_mode,
+                "delivery_service_level": order.delivery_service_level,
+                "platform": order.platform,
+                "status": order.status,
+                "created_at": order.created_at,
+                "updated_at": order.updated_at,
+                "items": filtered_items,
+                "store": stores_map.get(order.store_id),  # Attach store
+                "address": addresses_map.get(order.address_id)
+                if order.address_id
+                else None,  # Attach address
+            }
+            order_schemas.append(OrderSchema.model_validate(order_dict))
+
+        return order_schemas
+
     @handle_service_errors("retrieving orders")
     async def get_all_orders(
         self,
         user_id: Optional[str] = None,
         cart_ids: Optional[List[int]] = None,
         status: Optional[List[str]] = None,
+        include_products: bool = False,
+        include_stores: bool = False,
+        include_addresses: bool = False,
     ) -> List[OrderSchema]:
         async with AsyncSessionLocal() as session:
             query = (
@@ -317,38 +482,24 @@ class OrderService:
                 query = query.filter(Order.status.in_(status))
 
             result = await session.execute(query)
-            orders = result.scalars().unique().all()
+            orders = list(result.scalars().unique().all())
 
-            # Filter out delivery product from each order's items
-            order_schemas = []
-            for order in orders:
-                filtered_items = [
-                    item
-                    for item in order.items
-                    if item.product_id != DELIVERY_PRODUCT_ODOO_ID
-                ]
-
-                order_dict = {
-                    "id": order.id,
-                    "user_id": order.user_id,
-                    "store_id": order.store_id,
-                    "address_id": order.address_id,
-                    "total_amount": float(order.total_amount),
-                    "delivery_charge": float(order.delivery_charge),
-                    "fulfillment_mode": order.fulfillment_mode,
-                    "status": order.status,
-                    "created_at": order.created_at,
-                    "updated_at": order.updated_at,
-                    "items": [
-                        OrderItemSchema.model_validate(item) for item in filtered_items
-                    ],
-                }
-                order_schemas.append(OrderSchema.model_validate(order_dict))
-
-            return order_schemas
+            # Use enrichment method to populate products, stores, and addresses
+            return await self._enrich_orders_with_products_and_stores(
+                orders,
+                include_products=include_products,
+                include_stores=include_stores,
+                include_addresses=include_addresses,
+            )
 
     @handle_service_errors("retrieving order")
-    async def get_order_by_id(self, order_id: int) -> OrderSchema | None:
+    async def get_order_by_id(
+        self,
+        order_id: int,
+        include_products: bool = True,
+        include_stores: bool = True,
+        include_addresses: bool = True,
+    ) -> OrderSchema | None:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(Order)
@@ -359,35 +510,21 @@ class OrderService:
             if not order:
                 return None
 
-            # Filter out delivery product from items (it's shown as delivery_charge field)
-            filtered_items = [
-                item
-                for item in order.items
-                if item.product_id != DELIVERY_PRODUCT_ODOO_ID
-            ]
-
-            # Build order dict with filtered items
-            order_dict = {
-                "id": order.id,
-                "user_id": order.user_id,
-                "store_id": order.store_id,
-                "address_id": order.address_id,
-                "total_amount": float(order.total_amount),
-                "delivery_charge": float(order.delivery_charge),
-                "fulfillment_mode": order.fulfillment_mode,
-                "status": order.status,
-                "created_at": order.created_at,
-                "updated_at": order.updated_at,
-                "items": [
-                    OrderItemSchema.model_validate(item) for item in filtered_items
-                ],
-            }
-
-            return OrderSchema.model_validate(order_dict)
+            # Use enrichment method to populate products, stores, and addresses
+            enriched_orders = await self._enrich_orders_with_products_and_stores(
+                [order],
+                include_products=include_products,
+                include_stores=include_stores,
+                include_addresses=include_addresses,
+            )
+            return enriched_orders[0] if enriched_orders else None
 
     @handle_service_errors("creating order")
     async def create_order(
-        self, order_data: CreateOrderSchema, user_id: str
+        self,
+        order_data: CreateOrderSchema,
+        user_id: str,
+        platform: Optional[str] = None,
     ) -> OrderSchema:
         async with AsyncSessionLocal() as session:
             async with session.begin():
@@ -436,13 +573,28 @@ class OrderService:
                     store_id=order_data.store_id,
                     total_amount=total_amount,
                     status=OrderStatus.PENDING.value,
+                    platform=platform,
                     items=order_items_to_create,
                 )
                 session.add(new_order)
                 await session.flush()
-                await session.refresh(new_order, ["items"])
 
-                return OrderSchema.model_validate(new_order)
+                # Re-query with eager loading of items
+                result = await session.execute(
+                    select(Order)
+                    .options(selectinload(Order.items))
+                    .filter(Order.id == new_order.id)
+                )
+                order_with_items = result.scalar_one()
+
+            # Use existing enrichment method to properly convert to schema
+            enriched_orders = await self._enrich_orders_with_products_and_stores(
+                [order_with_items],
+                include_products=True,
+                include_stores=True,
+                include_addresses=False,
+            )
+            return enriched_orders[0]
 
     @handle_service_errors("updating order status")
     async def update_order_status(
@@ -452,7 +604,10 @@ class OrderService:
             async with session.begin():
                 result = await session.execute(
                     select(Order)
-                    .options(selectinload(Order.items))
+                    .options(
+                        selectinload(Order.items).selectinload(OrderItem.product),
+                        selectinload(Order.store),
+                    )
                     .filter(Order.id == order_id)
                 )
                 order = result.scalars().first()
@@ -565,8 +720,23 @@ class OrderService:
                 )
                 # Note: session.begin() context manager auto-commits on exit
                 await session.flush()  # Ensure changes are persisted
-                await session.refresh(order)
-                return OrderSchema.model_validate(order)
+
+                # Re-query with eager loading of items
+                result = await session.execute(
+                    select(Order)
+                    .options(selectinload(Order.items))
+                    .filter(Order.id == order.id)
+                )
+                order_with_items = result.scalar_one()
+
+            # Use existing enrichment method to properly convert to schema
+            enriched_orders = await self._enrich_orders_with_products_and_stores(
+                [order_with_items],
+                include_products=True,
+                include_stores=True,
+                include_addresses=True,
+            )
+            return enriched_orders[0]
 
     async def _background_odoo_sync(self, order_id: int) -> None:
         """Background task to sync order to Odoo (runs after response is sent)"""
@@ -617,24 +787,56 @@ class OrderService:
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 result = await session.execute(
-                    select(Order).join(OrderItem).filter(OrderItem.source_cart_id.in_(cart_ids))
+                    select(Order)
+                    .join(OrderItem)
+                    .filter(OrderItem.source_cart_id.in_(cart_ids))
                 )
                 orders = result.scalars().unique().all()
 
                 if not orders:
-                    return {"status": "error", "message": "No orders found for the given carts"}
+                    return {
+                        "status": "error",
+                        "message": "No orders found for the given carts",
+                    }
 
                 processed_orders = []
                 for order in orders:
                     if payment_status == "success":
                         # Automatically confirm the order (convert holds to reservations)
                         update_schema = UpdateOrderSchema(status=OrderStatus.CONFIRMED)
-                        updated_order = await self.update_order_status(order.id, update_schema)
+                        updated_order = await self.update_order_status(
+                            order.id, update_schema
+                        )
+
+                        # Track order interactions for all products
+                        try:
+                            # Get order items
+                            order_items = [
+                                (item.product_id, item.quantity, item.unit_price)
+                                for item in updated_order.items
+                            ]
+
+                            # Track bulk order interactions
+                            await self.interaction_service.track_bulk_orders(
+                                user_id=updated_order.user_id,
+                                order_id=updated_order.id,
+                                products=order_items,
+                                auto_update=True,  # Auto-update popularity and preferences
+                            )
+                            self._error_handler.logger.info(
+                                f"Tracked {len(order_items)} product interactions for order {order.id}"
+                            )
+                        except Exception as e:
+                            # Log but don't fail the payment processing
+                            self._error_handler.logger.error(
+                                f"Failed to track interactions for order {order.id}: {str(e)}"
+                            )
 
                         # Update user statistics for successful payment
                         try:
                             await self.update_user_statistics(
-                                updated_order.user_id, Decimal(str(updated_order.total_amount))
+                                updated_order.user_id,
+                                Decimal(str(updated_order.total_amount)),
                             )
                         except Exception as e:
                             # Log but don't fail the payment processing
@@ -644,7 +846,9 @@ class OrderService:
 
                         # Queue Odoo sync as background task (non-blocking)
                         if background_tasks:
-                            background_tasks.add_task(self._background_odoo_sync, order.id)
+                            background_tasks.add_task(
+                                self._background_odoo_sync, order.id
+                            )
                             self._error_handler.logger.info(
                                 f"Odoo sync queued as background task for order {order.id}"
                             )
@@ -654,18 +858,24 @@ class OrderService:
                                 f"BackgroundTasks not provided - Odoo sync skipped for order {order.id}. "
                                 "Use retry endpoint to sync manually."
                             )
-                        processed_orders.append({
-                            "order_id": order.id,
-                            "order_status": updated_order.status,
-                        })
+                        processed_orders.append(
+                            {
+                                "order_id": order.id,
+                                "order_status": updated_order.status,
+                            }
+                        )
                     else:
                         # Payment failed - cancel order and release holds
                         update_schema = UpdateOrderSchema(status=OrderStatus.CANCELLED)
-                        updated_order = await self.update_order_status(order.id, update_schema)
-                        processed_orders.append({
-                            "order_id": order.id,
-                            "order_status": updated_order.status,
-                        })
+                        updated_order = await self.update_order_status(
+                            order.id, update_schema
+                        )
+                        processed_orders.append(
+                            {
+                                "order_id": order.id,
+                                "order_status": updated_order.status,
+                            }
+                        )
 
         return {
             "status": "success",
