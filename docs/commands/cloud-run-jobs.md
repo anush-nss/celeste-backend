@@ -180,6 +180,35 @@ gcloud run jobs execute update-user-preferences-job \
 - **Run Frequency**: Recommended to run daily
 - **Purpose**: Updates user interest vectors and affinities for personalization
 
+## Retry Failed Odoo Syncs Job
+
+### Create the Job
+```bash
+gcloud run jobs create retry-odoo-syncs-job \
+  --image gcr.io/celeste-470811/celeste-api:latest \
+  --command python \
+  --args scripts/db/retry_failed_odoo_syncs.py \
+  --set-env-vars=^::^DATABASE_URL="postgresql+asyncpg://test:asdASD123-@/celeste?host=/cloudsql/celeste-470811:asia-south1:sql-primary"::ODOO_URL="YOUR_ODOO_URL"::ODOO_DB="YOUR_ODOO_DB"::ODOO_USERNAME="YOUR_ODOO_USERNAME"::ODOO_PASSWORD="YOUR_ODOO_PASSWORD" \
+  --set-cloudsql-instances celeste-470811:asia-south1:sql-primary \
+  --memory 1Gi \
+  --task-timeout 30m
+```
+
+### Execute the Job
+```bash
+# Retry all orders with a 'failed' sync status
+gcloud run jobs execute retry-odoo-syncs-job
+
+# Retry a specific order by its ID
+gcloud run jobs execute retry-odoo-syncs-job \
+  --args scripts/db/retry_failed_odoo_syncs.py,--order-id,123
+```
+
+### Notes
+- **Important**: Replace `YOUR_ODOO_URL`, `YOUR_ODOO_DB`, etc., with your actual Odoo credentials.
+- **Purpose**: Finds all orders with a failed Odoo sync status and attempts to sync them again.
+- **Run Frequency**: Run as needed to clean up failed syncs, or on a schedule (e.g., hourly) to automatically recover from transient errors.
+
 ## Job Management Commands
 
 ### List Jobs
