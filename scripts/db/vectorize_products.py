@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """
-Script to vectorize all products in the database.
+Script to create vector embeddings for products.
 
-This script creates vector embeddings for all products using sentence-transformers.
-The embeddings are used for semantic search functionality.
+Default behavior: Only creates embeddings for products that are missing them.
+Use the --force flag to update embeddings for all products.
 
-Usage:
-    python scripts/db/vectorize_products.py                    # Vectorize all products
-    python scripts/db/vectorize_products.py --force             # Re-vectorize all products
-    python scripts/db/vectorize_products.py --product-id 123    # Vectorize specific product
+This script uses sentence-transformers for semantic search functionality.
 """
 
 import argparse
@@ -28,29 +25,35 @@ from src.database.connection import engine
 
 async def vectorize_all(force: bool = False, batch_size: int = 8):
     """
-    Vectorize all products in the database.
+    Vectorize products in the database.
 
     Args:
-        force: If True, re-vectorize products even if they already have vectors
-        batch_size: Number of products to process in each batch
+        force: If True, re-vectorize all products. Otherwise, only vectorize
+               products that are missing a vector.
+        batch_size: Number of products to process in each batch.
     """
     print("=" * 80)
     print("PRODUCT VECTORIZATION SCRIPT")
     print("=" * 80)
     print()
+
+    only_missing = not force
+    if only_missing:
+        print("MODE: Vectorizing products missing an embedding.")
+    else:
+        print("⚠️  FORCE MODE: Vectorizing all products.")
+
     print(f"Batch size: {batch_size} products")
     print(f"Memory optimization: {'ENABLED' if batch_size <= 8 else 'DISABLED'}")
     print()
 
     vector_service = VectorService()
 
-    if force:
-        print("⚠️  FORCE MODE: Re-vectorizing all products...")
-        print()
-
     try:
-        # Vectorize all products
-        results = await vector_service.vectorize_all_products(version=1)
+        # Vectorize products based on the selected mode
+        results = await vector_service.vectorize_all_products(
+            version=1, only_missing=only_missing
+        )
 
         # Display results
         print()
@@ -114,16 +117,16 @@ async def main(
     Main function that runs vectorization.
 
     Args:
-        force: Re-vectorize all products
-        product_id: Vectorize specific product ID
-        batch_size: Batch size for processing
+        force: If True, re-vectorize all products.
+        product_id: Vectorize a specific product ID.
+        batch_size: Batch size for processing.
     """
     try:
         if product_id is not None:
             # Vectorize specific product
             await vectorize_product(product_id)
         else:
-            # Vectorize all products
+            # Vectorize products (either all or just missing)
             await vectorize_all(force=force, batch_size=batch_size)
 
         print("=" * 80)
@@ -149,56 +152,47 @@ async def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Vectorize products for semantic search.",
+        description="Create and update vector embeddings for products.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Vectorize all products (optimized for low memory)
+  # Vectorize only products that are missing an embedding (default behavior)
   python scripts/db/vectorize_products.py
 
-  # Re-vectorize all products (force update)
+  # Re-vectorize ALL products, updating existing ones
   python scripts/db/vectorize_products.py --force
 
-  # Vectorize with custom batch size (if you have more memory)
-  python scripts/db/vectorize_products.py --batch-size 16
-
-  # Vectorize with smaller batch (if memory issues)
-  python scripts/db/vectorize_products.py --batch-size 4
-
-  # Vectorize a specific product
+  # Vectorize a specific product by its ID
   python scripts/db/vectorize_products.py --product-id 123
 
-Notes:
-  - First run may take several minutes for large product catalogs
-  - Requires sentence-transformers package (auto-downloads model on first run)
-  - Model download is ~80MB and happens automatically
-  - Vectorization includes: product name, description, brand, categories, tags
-  - Excludes NEXT_DAY_DELIVERY_ONLY tag from vectorization
+  # Use a custom batch size (e.g., if you have more memory available)
+  python scripts/db/vectorize_products.py --batch-size 16
 
-Memory Optimization:
-  - Default batch size: 8 (optimized for 1GB RAM)
-  - Reduce to 4 if you get memory errors
-  - Increase to 16 or 32 if you have 2GB+ RAM
+Notes:
+  - The default behavior is the most efficient for regular updates.
+  - Use --force after significant changes to product text generation logic.
+  - First run may take several minutes for large product catalogs.
+  - Requires sentence-transformers package (model is pre-cached in Docker image).
         """,
     )
 
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Re-vectorize all products even if they already have vectors",
+        help="Re-vectorize all products, updating existing embeddings. Default is to only create for missing.",
     )
 
     parser.add_argument(
         "--product-id",
         type=int,
-        help="Vectorize a specific product by ID",
+        help="Vectorize a specific product by ID, ignoring other modes.",
     )
 
     parser.add_argument(
         "--batch-size",
         type=int,
         default=8,
-        help="Batch size for vectorization (default: 8, optimized for 1GB RAM)",
+        help="Batch size for vectorization (default: 8, optimized for 1GB RAM).",
     )
 
     args = parser.parse_args()

@@ -61,17 +61,17 @@ gcloud run jobs create vectorize-products-job \
 
 ### Execute the Job
 ```bash
-# Vectorize all products (optimized for low memory)
+# Vectorize only products that are missing an embedding (default behavior)
 gcloud run jobs execute vectorize-products-job \
   --args scripts/db/vectorize_products.py
+
+# Re-vectorize ALL products, updating existing ones
+gcloud run jobs execute vectorize-products-job \
+  --args scripts/db/vectorize_products.py,--force
 
 # Vectorize with custom batch size (if more memory available)
 gcloud run jobs execute vectorize-products-job \
   --args scripts/db/vectorize_products.py,--batch-size,16
-
-# Re-vectorize all products (force update)
-gcloud run jobs execute vectorize-products-job \
-  --args scripts/db/vectorize_products.py,--force
 
 # Vectorize a specific product
 gcloud run jobs execute vectorize-products-job \
@@ -84,7 +84,9 @@ gcloud run jobs execute vectorize-products-job \
 
 ### Notes
 - **Memory**: 2GB recommended for faster processing. Use 1GB with `--batch-size 4` if needed
-- **Duration**: ~30-60 seconds per 100 products with batch size 8
+- **Duration**: Varies based on the number of products to process.
+- **Default Behavior**: Only vectorizes products that do not yet have an embedding. This is the most efficient for regular updates.
+- **`--force` flag**: Use this to re-vectorize all products, updating existing embeddings. Recommended after significant changes to product text generation logic or embedding model.
 - **First Run**: Downloads sentence-transformers model (~400MB) from container cache
 - **Run After**: Product imports, bulk product updates, or when search returns no results
 
