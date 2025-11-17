@@ -2,7 +2,6 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, status
 
-from src.api.auth.models import DecodedToken
 from src.api.promotions.models import (
     CreatePromotionSchema,
     PromotionSchema,
@@ -10,7 +9,7 @@ from src.api.promotions.models import (
 )
 from src.api.promotions.service import PromotionService
 from src.config.constants import PromotionType, UserRole
-from src.dependencies.auth import RoleChecker, get_current_user
+from src.dependencies.auth import RoleChecker
 from src.shared.responses import success_response
 
 promotions_router = APIRouter(prefix="/promotions", tags=["Promotions"])
@@ -93,9 +92,7 @@ async def get_promotion_by_id(promotion_id: int):
     response_model=PromotionSchema,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def update_promotion(
-    promotion_id: int, promotion_data: UpdatePromotionSchema
-):
+async def update_promotion(promotion_id: int, promotion_data: UpdatePromotionSchema):
     updated_promotion = await promotion_service.update_promotion(
         promotion_id, promotion_data
     )

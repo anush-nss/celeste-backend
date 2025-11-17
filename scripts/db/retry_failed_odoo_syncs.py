@@ -112,6 +112,7 @@ async def main(order_id: Optional[int] = None):
     except Exception as e:
         print(f"❌ An unexpected error occurred during the script execution: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
@@ -128,7 +129,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Retry failed Odoo order synchronizations.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=f"""
+        epilog="""
 Examples:
   # Retry all orders with a 'failed' sync status
   python scripts/db/retry_failed_odoo_syncs.py

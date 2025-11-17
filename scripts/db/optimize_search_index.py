@@ -186,7 +186,9 @@ async def main(dry_run: bool = False, force_lists: Optional[int] = None):
         else:
             optimal_lists = await calculate_optimal_lists(vector_count)
             print(f"\nRecommended lists parameter: {optimal_lists}")
-            print(f"  Calculation: sqrt({vector_count:,}) ≈ {math.sqrt(vector_count):.1f}")
+            print(
+                f"  Calculation: sqrt({vector_count:,}) ≈ {math.sqrt(vector_count):.1f}"
+            )
 
         # Check if optimization is needed
         if current_lists is not None and current_lists == optimal_lists:

@@ -17,7 +17,6 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
 from sqlalchemy.future import select
 
 # Add the project root to the Python path
@@ -36,15 +35,17 @@ async def get_active_users():
     Get a list of user IDs with recent interactions.
     """
     async with AsyncSessionLocal() as session:
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=INTERACTION_DECAY_DAYS)
-        
+        cutoff_date = datetime.now(timezone.utc) - timedelta(
+            days=INTERACTION_DECAY_DAYS
+        )
+
         query = (
             select(ProductInteraction.user_id)
             .where(ProductInteraction.timestamp >= cutoff_date)
             .distinct()
             .order_by(ProductInteraction.user_id)
         )
-        
+
         result = await session.execute(query)
         user_ids = [row[0] for row in result.fetchall()]
         return user_ids
@@ -77,7 +78,9 @@ async def main(user_id: str | None = None):
 
         for i, current_user_id in enumerate(users_to_update):
             print(f"Processing user {i + 1}/{len(users_to_update)}: {current_user_id}")
-            success = await personalization_service.update_user_preferences(current_user_id)
+            success = await personalization_service.update_user_preferences(
+                current_user_id
+            )
             if success:
                 results["success"] += 1
             else:
@@ -96,6 +99,7 @@ async def main(user_id: str | None = None):
     except Exception as e:
         print(f"❌ An unexpected error occurred: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
@@ -113,7 +117,7 @@ if __name__ == "__main__":
         description="Update user preferences based on recent interactions.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    
+
     parser.add_argument(
         "--user-id",
         type=str,

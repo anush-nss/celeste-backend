@@ -383,7 +383,9 @@ class VectorService:
                         f"Found {len(product_ids)} products missing a vector"
                     )
                 else:
-                    self.logger.info(f"Found {len(product_ids)} total products to process")
+                    self.logger.info(
+                        f"Found {len(product_ids)} total products to process"
+                    )
 
                 if not product_ids:
                     return {"success": 0, "failed": 0, "skipped": 0}

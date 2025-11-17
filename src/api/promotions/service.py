@@ -1,10 +1,7 @@
-import random
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import and_, func, select, text
-from sqlalchemy.dialects.postgresql import array
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, select
 
 from src.api.promotions.models import (
     CreatePromotionSchema,
@@ -30,7 +27,9 @@ class PromotionService:
 
     async def get_all_promotions(self) -> List[PromotionSchema]:
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Promotion).order_by(Promotion.priority.desc()))
+            result = await session.execute(
+                select(Promotion).order_by(Promotion.priority.desc())
+            )
             promotions = result.scalars().all()
             return [PromotionSchema.model_validate(p) for p in promotions]
 
@@ -84,23 +83,20 @@ class PromotionService:
     ) -> Optional[PromotionSchema]:
         async with AsyncSessionLocal() as session:
             now = datetime.now(timezone.utc)
-            
-            base_query = (
-                select(Promotion)
-                .where(
-                    Promotion.is_active == True,
-                    Promotion.promotion_type == promotion_type,
-                    Promotion.start_date <= now,
-                    Promotion.end_date >= now,
-                )
+
+            base_query = select(Promotion).where(
+                Promotion.is_active,
+                Promotion.promotion_type == promotion_type,
+                Promotion.start_date <= now,
+                Promotion.end_date >= now,
             )
 
             filters = []
             if product_id:
-                filters.append(Promotion.product_ids.any(product_id))
+                filters.append(Promotion.product_ids.contains([product_id]))
             if category_id:
-                filters.append(Promotion.category_ids.any(category_id))
-            
+                filters.append(Promotion.category_ids.contains([category_id]))
+
             if filters:
                 base_query = base_query.where(and_(*filters))
 
@@ -109,7 +105,7 @@ class PromotionService:
             query = base_query.order_by(
                 -func.log(func.random()) / Promotion.priority
             ).limit(1)
-            
+
             result = await session.execute(query)
             promotion = result.scalar_one_or_none()
 
@@ -123,29 +119,26 @@ class PromotionService:
     ) -> List[PromotionSchema]:
         async with AsyncSessionLocal() as session:
             now = datetime.now(timezone.utc)
-            
-            base_query = (
-                select(Promotion)
-                .where(
-                    Promotion.is_active == True,
-                    Promotion.promotion_type == promotion_type,
-                    Promotion.start_date <= now,
-                    Promotion.end_date >= now,
-                )
+
+            base_query = select(Promotion).where(
+                Promotion.is_active,
+                Promotion.promotion_type == promotion_type,
+                Promotion.start_date <= now,
+                Promotion.end_date >= now,
             )
 
             filters = []
             if product_id:
-                filters.append(Promotion.product_ids.any(product_id))
+                filters.append(Promotion.product_ids.contains([product_id]))
             if category_id:
-                filters.append(Promotion.category_ids.any(category_id))
+                filters.append(Promotion.category_ids.contains([category_id]))
 
             if filters:
                 base_query = base_query.where(and_(*filters))
 
             query = base_query.order_by(Promotion.priority.desc())
-            
+
             result = await session.execute(query)
             promotions = result.scalars().all()
-            
+
             return [PromotionSchema.model_validate(p) for p in promotions]

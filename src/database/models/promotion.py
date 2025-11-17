@@ -8,7 +8,6 @@ from sqlalchemy import (
     CheckConstraint,
     Enum,
     Index,
-    String,
     text,
 )
 from sqlalchemy.dialects.postgresql import TEXT, TIMESTAMP
@@ -49,7 +48,9 @@ class Promotion(Base):
     priority: Mapped[int] = mapped_column(
         INTEGER, nullable=False, server_default=text("1")
     )
-    start_date: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    start_date: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
     end_date: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     product_ids: Mapped[List[int] | None] = mapped_column(ARRAY(INTEGER))
     category_ids: Mapped[List[int] | None] = mapped_column(ARRAY(INTEGER))

@@ -57,6 +57,7 @@ async def main():
     except Exception as e:
         print(f"❌ An unexpected error occurred: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
