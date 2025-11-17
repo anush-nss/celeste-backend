@@ -124,6 +124,60 @@ gcloud run jobs execute optimize-search-index-job \
 - **Expected Improvement**: 2-5x faster search queries (30-80% improvement)
 - **Formula**: Calculates optimal `lists` parameter as sqrt(product_count)
 
+## Product Popularity Update Job
+
+### Create the Job
+```bash
+gcloud run jobs create update-product-popularity-job \
+  --image gcr.io/celeste-470811/celeste-api:latest \
+  --command python \
+  --args scripts/db/update_product_popularity.py \
+  --set-env-vars DATABASE_URL="postgresql+asyncpg://test:asdASD123-@/celeste?host=/cloudsql/celeste-470811:asia-south1:sql-primary" \
+  --set-cloudsql-instances celeste-470811:asia-south1:sql-primary \
+  --memory 1Gi \
+  --task-timeout 10m
+```
+
+### Execute the Job
+```bash
+# Update popularity for all products
+gcloud run jobs execute update-product-popularity-job
+```
+
+### Notes
+- **Duration**: Varies based on product count (approx. 1-5 minutes per 10k products)
+- **Run Frequency**: Recommended to run daily or every few hours
+- **Purpose**: Keeps trending scores and popularity metrics up-to-date for recommendations
+
+## User Preferences Update Job
+
+### Create the Job
+```bash
+gcloud run jobs create update-user-preferences-job \
+  --image gcr.io/celeste-470811/celeste-api:latest \
+  --command python \
+  --args scripts/db/update_user_preferences.py \
+  --set-env-vars DATABASE_URL="postgresql+asyncpg://test:asdASD123-@/celeste?host=/cloudsql/celeste-470811:asia-south1:sql-primary" \
+  --set-cloudsql-instances celeste-470811:asia-south1:sql-primary \
+  --memory 1Gi \
+  --task-timeout 20m
+```
+
+### Execute the Job
+```bash
+# Update preferences for all recently active users
+gcloud run jobs execute update-user-preferences-job
+
+# Update preferences for a specific user
+gcloud run jobs execute update-user-preferences-job \
+  --args scripts/db/update_user_preferences.py,--user-id,USER_ID_HERE
+```
+
+### Notes
+- **Duration**: Varies based on number of active users and their interactions
+- **Run Frequency**: Recommended to run daily
+- **Purpose**: Updates user interest vectors and affinities for personalization
+
 ## Job Management Commands
 
 ### List Jobs
