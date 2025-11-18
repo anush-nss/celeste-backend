@@ -39,6 +39,12 @@ class OdooSyncStatus(str, Enum):
     FAILED = "failed"
 
 
+class PromotionType(str, Enum):
+    BANNER = "banner"
+    POPUP = "popup"
+    SEARCH = "search"
+
+
 class Platform(str, Enum):
     WEB = "web"
     ANDROID = "android"

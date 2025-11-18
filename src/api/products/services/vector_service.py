@@ -342,25 +342,50 @@ class VectorService:
         )
         return results
 
-    async def vectorize_all_products(self, version: int = 1) -> dict:
+    async def vectorize_all_products(
+        self, version: int = 1, only_missing: bool = False
+    ) -> dict:
         """
-        Vectorize all products in the database.
+        Vectorize products in the database.
 
         Args:
             version: Embedding model version
+            only_missing: If True, only vectorize products that don't have a vector yet.
+                          If False, process all products.
 
         Returns:
             dict with success/failure counts
         """
-        self.logger.info("Starting vectorization of all products")
+        if only_missing:
+            self.logger.info("Starting vectorization for products missing a vector")
+        else:
+            self.logger.info("Starting vectorization for all products")
 
         try:
             async with AsyncSessionLocal() as session:
-                # Get all product IDs
-                result = await session.execute(select(Product.id))
+                if only_missing:
+                    # Get product IDs that are not in product_vectors
+                    query = text("""
+                        SELECT p.id
+                        FROM products p
+                        LEFT JOIN product_vectors pv ON p.id = pv.product_id
+                        WHERE pv.product_id IS NULL
+                    """)
+                    result = await session.execute(query)
+                else:
+                    # Get all product IDs
+                    result = await session.execute(select(Product.id))
+
                 product_ids = [row[0] for row in result.fetchall()]
 
-                self.logger.info(f"Found {len(product_ids)} products to vectorize")
+                if only_missing:
+                    self.logger.info(
+                        f"Found {len(product_ids)} products missing a vector"
+                    )
+                else:
+                    self.logger.info(
+                        f"Found {len(product_ids)} total products to process"
+                    )
 
                 if not product_ids:
                     return {"success": 0, "failed": 0, "skipped": 0}

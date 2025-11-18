@@ -9,6 +9,7 @@ from src.api.inventory.routes import inventory_router
 from src.api.orders.routes import orders_router
 from src.api.pricing.routes import pricing_router
 from src.api.products.routes import products_router
+from src.api.promotions.routes import promotions_router
 from src.api.search.routes import search_router
 from src.api.search.service import SearchService
 from src.api.stores.routes import stores_router
@@ -62,6 +63,7 @@ app.include_router(ecommerce_categories_router)
 # to prevent /products/{id} from catching /products/search
 app.include_router(search_router)
 app.include_router(products_router)
+app.include_router(promotions_router)
 app.include_router(orders_router)
 app.include_router(inventory_router)
 app.include_router(stores_router)

@@ -162,68 +162,74 @@ async def main(dry_run: bool = False, force_lists: Optional[int] = None):
         dry_run: If True, only show what would be done
         force_lists: If provided, use this value instead of calculating
     """
-    print("=" * 80)
-    print("SEARCH INDEX OPTIMIZATION SCRIPT")
-    print("=" * 80)
-
-    # Get current state
-    vector_count = await get_vector_count()
-    print(f"\nVectorized products: {vector_count:,}")
-
-    if vector_count == 0:
-        print("\n⚠️  No vectors found in the database!")
-        print("   Run vectorization first: python scripts/db/vectorize_products.py")
-        return
-
-    # Show current index
-    current_lists = await show_index_info()
-
-    # Calculate or use forced lists value
-    if force_lists is not None:
-        optimal_lists = force_lists
-        print(f"\nUsing forced lists value: {optimal_lists}")
-    else:
-        optimal_lists = await calculate_optimal_lists(vector_count)
-        print(f"\nRecommended lists parameter: {optimal_lists}")
-        print(f"  Calculation: sqrt({vector_count:,}) ≈ {math.sqrt(vector_count):.1f}")
-
-    # Check if optimization is needed
-    if current_lists is not None and current_lists == optimal_lists:
-        print(f"\n✓ Index is already optimized with lists={optimal_lists}")
-        print("  No action needed!")
-        return
-
-    improvement = 0.0  # Initialize for type checker
-    if current_lists is not None:
-        improvement = abs(optimal_lists - current_lists) / current_lists * 100
-        print(f"\n  Current: {current_lists} lists")
-        print(f"  Optimal: {optimal_lists} lists")
-        print(f"  Expected improvement: ~{improvement:.1f}%")
-
-    # Rebuild index
-    print("\n" + "=" * 80)
-    if not dry_run:
-        print("REBUILDING INDEX...")
+    try:
         print("=" * 80)
-        print("\n⚠️  This will temporarily impact search performance!")
-        print("   The operation may take 30-60 seconds for large datasets.\n")
-
-    await rebuild_index(optimal_lists, dry_run=dry_run)
-
-    if not dry_run:
-        print("\n" + "=" * 80)
-        print("OPTIMIZATION COMPLETE!")
+        print("SEARCH INDEX OPTIMIZATION SCRIPT")
         print("=" * 80)
-        print(f"\n✓ Index optimized with lists={optimal_lists}")
-        if current_lists is not None:
-            print(f"✓ Search performance should improve by ~{improvement:.0f}%")
+
+        # Get current state
+        vector_count = await get_vector_count()
+        print(f"\nVectorized products: {vector_count:,}")
+
+        if vector_count == 0:
+            print("\n⚠️  No vectors found in the database!")
+            print("   Run vectorization first: python scripts/db/vectorize_products.py")
+            return
+
+        # Show current index
+        current_lists = await show_index_info()
+
+        # Calculate or use forced lists value
+        if force_lists is not None:
+            optimal_lists = force_lists
+            print(f"\nUsing forced lists value: {optimal_lists}")
         else:
-            print("✓ Index created successfully")
-        print("\nNext steps:")
-        print("  1. Test search performance:")
-        print("     GET /products/search?q=milk&mode=full")
-        print("  2. Monitor search response times in logs")
-        print()
+            optimal_lists = await calculate_optimal_lists(vector_count)
+            print(f"\nRecommended lists parameter: {optimal_lists}")
+            print(
+                f"  Calculation: sqrt({vector_count:,}) ≈ {math.sqrt(vector_count):.1f}"
+            )
+
+        # Check if optimization is needed
+        if current_lists is not None and current_lists == optimal_lists:
+            print(f"\n✓ Index is already optimized with lists={optimal_lists}")
+            print("  No action needed!")
+            return
+
+        improvement = 0.0  # Initialize for type checker
+        if current_lists is not None:
+            improvement = abs(optimal_lists - current_lists) / current_lists * 100
+            print(f"\n  Current: {current_lists} lists")
+            print(f"  Optimal: {optimal_lists} lists")
+            print(f"  Expected improvement: ~{improvement:.1f}%")
+
+        # Rebuild index
+        print("\n" + "=" * 80)
+        if not dry_run:
+            print("REBUILDING INDEX...")
+            print("=" * 80)
+            print("\n⚠️  This will temporarily impact search performance!")
+            print("   The operation may take 30-60 seconds for large datasets.\n")
+
+        await rebuild_index(optimal_lists, dry_run=dry_run)
+
+        if not dry_run:
+            print("\n" + "=" * 80)
+            print("OPTIMIZATION COMPLETE!")
+            print("=" * 80)
+            print(f"\n✓ Index optimized with lists={optimal_lists}")
+            if current_lists is not None:
+                print(f"✓ Search performance should improve by ~{improvement:.0f}%")
+            else:
+                print("✓ Index created successfully")
+            print("\nNext steps:")
+            print("  1. Test search performance:")
+            print("     GET /products/search?q=milk&mode=full")
+            print("  2. Monitor search response times in logs")
+            print()
+    finally:
+        # Properly dispose of the engine to close all connections
+        await engine.dispose()
 
 
 if __name__ == "__main__":
@@ -272,6 +278,3 @@ Index Parameter Guidelines:
     except KeyboardInterrupt:
         print("\n\n⚠️  Optimization interrupted by user")
         sys.exit(1)
-    finally:
-        # Properly dispose of the engine
-        asyncio.run(engine.dispose())

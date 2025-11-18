@@ -61,17 +61,17 @@ gcloud run jobs create vectorize-products-job \
 
 ### Execute the Job
 ```bash
-# Vectorize all products (optimized for low memory)
+# Vectorize only products that are missing an embedding (default behavior)
 gcloud run jobs execute vectorize-products-job \
   --args scripts/db/vectorize_products.py
+
+# Re-vectorize ALL products, updating existing ones
+gcloud run jobs execute vectorize-products-job \
+  --args scripts/db/vectorize_products.py,--force
 
 # Vectorize with custom batch size (if more memory available)
 gcloud run jobs execute vectorize-products-job \
   --args scripts/db/vectorize_products.py,--batch-size,16
-
-# Re-vectorize all products (force update)
-gcloud run jobs execute vectorize-products-job \
-  --args scripts/db/vectorize_products.py,--force
 
 # Vectorize a specific product
 gcloud run jobs execute vectorize-products-job \
@@ -84,7 +84,9 @@ gcloud run jobs execute vectorize-products-job \
 
 ### Notes
 - **Memory**: 2GB recommended for faster processing. Use 1GB with `--batch-size 4` if needed
-- **Duration**: ~30-60 seconds per 100 products with batch size 8
+- **Duration**: Varies based on the number of products to process.
+- **Default Behavior**: Only vectorizes products that do not yet have an embedding. This is the most efficient for regular updates.
+- **`--force` flag**: Use this to re-vectorize all products, updating existing embeddings. Recommended after significant changes to product text generation logic or embedding model.
 - **First Run**: Downloads sentence-transformers model (~400MB) from container cache
 - **Run After**: Product imports, bulk product updates, or when search returns no results
 
@@ -123,6 +125,89 @@ gcloud run jobs execute optimize-search-index-job \
 - **Run After**: Initial vectorization, adding 20%+ more products, or monthly maintenance
 - **Expected Improvement**: 2-5x faster search queries (30-80% improvement)
 - **Formula**: Calculates optimal `lists` parameter as sqrt(product_count)
+
+## Product Popularity Update Job
+
+### Create the Job
+```bash
+gcloud run jobs create update-product-popularity-job \
+  --image gcr.io/celeste-470811/celeste-api:latest \
+  --command python \
+  --args scripts/db/update_product_popularity.py \
+  --set-env-vars DATABASE_URL="postgresql+asyncpg://test:asdASD123-@/celeste?host=/cloudsql/celeste-470811:asia-south1:sql-primary" \
+  --set-cloudsql-instances celeste-470811:asia-south1:sql-primary \
+  --memory 1Gi \
+  --task-timeout 10m
+```
+
+### Execute the Job
+```bash
+# Update popularity for all products
+gcloud run jobs execute update-product-popularity-job
+```
+
+### Notes
+- **Duration**: Varies based on product count (approx. 1-5 minutes per 10k products)
+- **Run Frequency**: Recommended to run daily or every few hours
+- **Purpose**: Keeps trending scores and popularity metrics up-to-date for recommendations
+
+## User Preferences Update Job
+
+### Create the Job
+```bash
+gcloud run jobs create update-user-preferences-job \
+  --image gcr.io/celeste-470811/celeste-api:latest \
+  --command python \
+  --args scripts/db/update_user_preferences.py \
+  --set-env-vars DATABASE_URL="postgresql+asyncpg://test:asdASD123-@/celeste?host=/cloudsql/celeste-470811:asia-south1:sql-primary" \
+  --set-cloudsql-instances celeste-470811:asia-south1:sql-primary \
+  --memory 1Gi \
+  --task-timeout 20m
+```
+
+### Execute the Job
+```bash
+# Update preferences for all recently active users
+gcloud run jobs execute update-user-preferences-job
+
+# Update preferences for a specific user
+gcloud run jobs execute update-user-preferences-job \
+  --args scripts/db/update_user_preferences.py,--user-id,USER_ID_HERE
+```
+
+### Notes
+- **Duration**: Varies based on number of active users and their interactions
+- **Run Frequency**: Recommended to run daily
+- **Purpose**: Updates user interest vectors and affinities for personalization
+
+## Retry Failed Odoo Syncs Job
+
+### Create the Job
+```bash
+gcloud run jobs create retry-odoo-syncs-job \
+  --image gcr.io/celeste-470811/celeste-api:latest \
+  --command python \
+  --args scripts/db/retry_failed_odoo_syncs.py \
+  --set-env-vars=^::^DATABASE_URL="postgresql+asyncpg://test:asdASD123-@/celeste?host=/cloudsql/celeste-470811:asia-south1:sql-primary"::ODOO_URL="YOUR_ODOO_URL"::ODOO_DB="YOUR_ODOO_DB"::ODOO_USERNAME="YOUR_ODOO_USERNAME"::ODOO_PASSWORD="YOUR_ODOO_PASSWORD" \
+  --set-cloudsql-instances celeste-470811:asia-south1:sql-primary \
+  --memory 1Gi \
+  --task-timeout 30m
+```
+
+### Execute the Job
+```bash
+# Retry all orders with a 'failed' sync status
+gcloud run jobs execute retry-odoo-syncs-job
+
+# Retry a specific order by its ID
+gcloud run jobs execute retry-odoo-syncs-job \
+  --args scripts/db/retry_failed_odoo_syncs.py,--order-id,123
+```
+
+### Notes
+- **Important**: Replace `YOUR_ODOO_URL`, `YOUR_ODOO_DB`, etc., with your actual Odoo credentials.
+- **Purpose**: Finds all orders with a failed Odoo sync status and attempts to sync them again.
+- **Run Frequency**: Run as needed to clean up failed syncs, or on a schedule (e.g., hourly) to automatically recover from transient errors.
 
 ## Job Management Commands
 
