@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from src.api.promotions.models import (
     CreatePromotionSchema,
@@ -19,18 +19,21 @@ promotion_service = PromotionService()
 # Public endpoints
 @promotions_router.get(
     "/active/random",
-    summary="Get a single random active promotion",
-    response_model=Optional[PromotionSchema],
+    summary="Get random active promotions",
+    response_model=List[PromotionSchema],
 )
-async def get_random_active_promotion(
+async def get_random_active_promotions(
     promotion_type: PromotionType,
     product_id: Optional[int] = None,
     category_id: Optional[int] = None,
+    limit: int = Query(1, ge=1, le=20),
 ):
-    promotion = await promotion_service.get_active_promotion_random(
-        promotion_type, product_id, category_id
+    promotions = await promotion_service.get_active_promotions_random(
+        promotion_type, product_id, category_id, limit
     )
-    return success_response(promotion.model_dump(mode="json") if promotion else None)
+    return success_response(
+        [p.model_dump(mode="json") for p in promotions] if promotions else []
+    )
 
 
 @promotions_router.get(

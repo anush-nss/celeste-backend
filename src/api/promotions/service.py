@@ -75,12 +75,13 @@ class PromotionService:
             await session.commit()
             return
 
-    async def get_active_promotion_random(
+    async def get_active_promotions_random(
         self,
         promotion_type: PromotionType,
         product_id: Optional[int] = None,
         category_id: Optional[int] = None,
-    ) -> Optional[PromotionSchema]:
+        limit: int = 1,
+    ) -> List[PromotionSchema]:
         async with AsyncSessionLocal() as session:
             now = datetime.now(timezone.utc)
 
@@ -104,12 +105,12 @@ class PromotionService:
             # ORDER BY -log(random()) / priority
             query = base_query.order_by(
                 -func.log(func.random()) / Promotion.priority
-            ).limit(1)
+            ).limit(limit)
 
             result = await session.execute(query)
-            promotion = result.scalar_one_or_none()
+            promotions = result.scalars().all()
 
-            return PromotionSchema.model_validate(promotion) if promotion else None
+            return [PromotionSchema.model_validate(p) for p in promotions]
 
     async def get_active_promotions_all(
         self,

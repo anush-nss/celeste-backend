@@ -34,6 +34,7 @@ service-account.json
 
 # Logs
 *.log
+logs/
 
 # Claude files
 .claude/ 
