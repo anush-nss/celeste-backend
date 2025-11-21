@@ -59,9 +59,9 @@ class CheckoutService:
                 for item in items
             }
 
-            # Fetch all products at once
+            # Fetch all products at once, but without pricing data
             products = await self.product_service.query_service.get_products_by_ids(
-                list(product_ids)
+                list(product_ids), include_pricing=False
             )
             product_map = {product.id: product for product in products}
 

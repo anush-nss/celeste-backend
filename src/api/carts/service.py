@@ -602,7 +602,7 @@ class CartService:
             "location_obj": None,
             "cart_role_pairs": [],
             "cart_item_mapping": {},
-            "all_product_ids": [],
+            "product_quantities": {},
         }
 
         # STEP 1: Get user and tier
@@ -680,15 +680,17 @@ class CartService:
 
         # STEP 4: Build cart item mapping and collect product IDs
         cart_item_mapping = {}
-        all_product_ids = []
+        product_quantities = {}
 
         for cart, role in cart_role_pairs:
             cart_item_mapping[cart.id] = {"cart": cart, "role": role}
             for item in cart.items:
-                all_product_ids.append(item.product_id)
+                product_quantities[item.product_id] = (
+                    product_quantities.get(item.product_id, 0) + item.quantity
+                )
 
         validation_result["cart_item_mapping"] = cart_item_mapping
-        validation_result["all_product_ids"] = all_product_ids
+        validation_result["product_quantities"] = product_quantities
 
         return validation_result
 
@@ -697,24 +699,37 @@ class CartService:
         session, validation_data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Fetch products and calculate pricing for cart items using provided session. Returns pricing data."""
-        all_product_ids = validation_data["all_product_ids"]
+        import asyncio
+        from src.api.products.service import ProductService
+
+        product_quantities = validation_data["product_quantities"]
         user_tier_id = validation_data["user_tier_id"]
 
-        if not all_product_ids:
+        if not product_quantities:
             return {"products_dict": {}}
 
-        from src.api.products.services.query_service import ProductQueryService
+        product_service = ProductService()
 
-        query_service = ProductQueryService()
+        async def get_product_with_quantity(product_id, quantity):
+            return await product_service.get_enhanced_product_by_id(
+                product_id=product_id,
+                customer_tier=user_tier_id,
+                include_pricing=True,
+                quantity=quantity,
+                include_inventory=False,
+                include_categories=False,
+                include_tags=False,
+            )
 
-        # Use the more efficient get_products_by_ids
-        products = await query_service.get_products_by_ids(
-            product_ids=list(set(all_product_ids)),  # Use set to get unique IDs
-            customer_tier=user_tier_id,
-            include_pricing=True,
-        )
+        tasks = [
+            get_product_with_quantity(pid, qty)
+            for pid, qty in product_quantities.items()
+        ]
+        products = await asyncio.gather(*tasks)
 
-        products_dict = {product.id: product for product in products}
+        products_dict = {
+            product.id: product for product in products if product is not None
+        }
 
         return {"products_dict": products_dict}
 
