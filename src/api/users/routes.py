@@ -17,7 +17,9 @@ from src.api.users.models import (
     UpdateCartItemQuantitySchema,
     UpdateCartSchema,
     UpdateUserSchema,
+    AddFavoriteSchema,
 )
+from src.api.products.models import EnhancedProductSchema
 from src.api.users.service import UserService
 from src.dependencies.auth import get_current_user
 from src.shared.exceptions import (
@@ -48,13 +50,18 @@ async def get_user_profile(
     include_addresses: bool = Query(
         True, description="Include user's addresses in the response"
     ),
+    include_favorites: bool = Query(
+        False, description="Include user's favorites in the response"
+    ),
 ):
     user_id = current_user.uid
     if not user_id:
         raise UnauthorizedException(detail="User ID not found in token")
 
     user = await user_service.get_user_by_id(
-        user_id, include_addresses=include_addresses
+        user_id,
+        include_addresses=include_addresses,
+        include_favorites=include_favorites,
     )
 
     if not user:
@@ -79,6 +86,72 @@ async def update_user_profile(
         raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
 
     return success_response(updated_user.model_dump(mode="json"))
+
+
+# Favorites Management Endpoints
+
+@users_router.post(
+    "/me/favorites",
+    summary="Add a product to user favorites",
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_favorite(
+    favorite_data: AddFavoriteSchema,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    product_ids = await user_service.add_favorite(user_id, favorite_data.product_id)
+
+    return success_response(
+        {"product_ids": product_ids}, status_code=status.HTTP_201_CREATED
+    )
+
+
+@users_router.delete(
+    "/me/favorites/{product_id}",
+    summary="Remove a product from user favorites",
+)
+async def remove_favorite(
+    product_id: int,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    product_ids = await user_service.remove_favorite(user_id, product_id)
+
+    return success_response({"product_ids": product_ids})
+
+
+@users_router.get(
+    "/me/favorites",
+    summary="Get user favorites",
+    response_model=List[EnhancedProductSchema],
+)
+async def get_favorites(
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+    include_products: bool = Query(
+        True, description="Include full product details"
+    ),
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    favorites = await user_service.get_favorites(user_id, include_products=include_products)
+
+    if include_products:
+        return success_response([fav.model_dump(mode="json") for fav in favorites])
+    else:
+        # If not including products, we might need a different response model or just return IDs.
+        # But the type hint says List[EnhancedProductSchema].
+        # If include_products is False, get_favorites returns List[int].
+        # So we should probably wrap it.
+        return success_response(favorites)
 
 
 # Address Management Endpoints

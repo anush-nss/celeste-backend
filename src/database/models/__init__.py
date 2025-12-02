@@ -5,6 +5,7 @@ from .address import Address
 from .associations import product_categories
 from .cart import Cart, CartItem, CartUser
 from .category import Category
+from .favorite import Favorite
 from .inventory import Inventory
 from .order import Order, OrderItem
 from .price_list import PriceList
@@ -31,6 +32,7 @@ __all__ = [
     "CartUser",
     "CartItem",
     "Category",
+    "Favorite",
     "Product",
     "Tag",
     "ProductTag",
