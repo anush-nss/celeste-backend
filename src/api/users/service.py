@@ -6,6 +6,9 @@ from sqlalchemy.orm import selectinload
 
 from src.api.tiers.service import TierService
 from src.database.models.search_interaction import SearchInteraction
+from src.database.models.favorite import Favorite
+from src.api.products.models import EnhancedProductSchema
+from src.api.products.service import ProductService
 
 # Import all models to ensure relationships are properly registered
 from src.api.users.models import (
@@ -24,7 +27,10 @@ from src.shared.sqlalchemy_utils import safe_model_validate
 
 
 def _user_to_dict(
-    user: User, include_addresses: bool = False, include_cart: bool = False
+    user: User,
+    include_addresses: bool = False,
+    include_favorites: bool = False,
+    favorites_data: List[EnhancedProductSchema] = None,
 ) -> dict:
     """Convert SQLAlchemy User to dictionary, handling relationships properly"""
     user_dict = {
@@ -41,6 +47,7 @@ def _user_to_dict(
         "is_delivery": getattr(user, "is_delivery", None),
         "addresses": None,
         "cart": None,
+        "favorites": None,
     }
 
     # Only add addresses if they are loaded and requested
@@ -60,6 +67,9 @@ def _user_to_dict(
         except Exception:
             user_dict["addresses"] = []
 
+    if include_favorites and favorites_data:
+        user_dict["favorites"] = favorites_data
+
     return user_dict
 
 
@@ -67,6 +77,7 @@ class UserService:
     def __init__(self):
         self.tier_service = TierService()
         self.address_service = UserAddressService()
+        self.product_service = ProductService()
         self._error_handler = ErrorHandler(__name__)
 
     @handle_service_errors("creating user")
@@ -119,7 +130,10 @@ class UserService:
 
     @handle_service_errors("retrieving user by ID")
     async def get_user_by_id(
-        self, user_id: str, include_addresses: bool = False
+        self,
+        user_id: str,
+        include_addresses: bool = False,
+        include_favorites: bool = False,
     ) -> UserSchema | None:
         if not user_id or not user_id.strip():
             raise ValidationException(detail="Valid user ID is required")
@@ -130,15 +144,28 @@ class UserService:
             if include_addresses:
                 query = query.options(selectinload(User.addresses))
 
+            # Don't need to load favorites relationship eagerly if we are just fetching IDs,
+            # but if we want to include it in the response, we might.
+            # However, favorites logic is handled via helper to fetch products.
+
             result = await session.execute(query)
             user = result.scalars().first()
 
             if user:
+                favorites_data = None
+                if include_favorites:
+                    favorites_data = await self.get_favorites(
+                        user_id, include_products=True
+                    )
+
                 # Convert SQLAlchemy model to Pydantic schema using safe converter
                 include_rels = {"addresses"} if include_addresses else set()
                 user_schema_data = safe_model_validate(
                     UserSchema, user, include_relationships=include_rels
                 )
+
+                if include_favorites and favorites_data:
+                    user_schema_data.favorites = favorites_data
 
                 return user_schema_data
             return None
@@ -208,3 +235,96 @@ class UserService:
                 .limit(limit)
             )
             return [row.query for row in result.fetchall()]
+
+    @handle_service_errors("adding favorite")
+    async def add_favorite(self, user_id: str, product_id: int) -> List[int]:
+        """Add a product to user's favorites"""
+        if not user_id:
+            raise ValidationException(detail="User ID is required")
+
+        async with AsyncSessionLocal() as session:
+            # Check if product exists
+            product_exists = await self.product_service.get_product_by_id(product_id)
+            if not product_exists:
+                raise ValidationException(detail=f"Product with ID {product_id} not found")
+
+            stmt = select(Favorite).filter(Favorite.user_id == user_id)
+            result = await session.execute(stmt)
+            favorite = result.scalars().first()
+
+            if not favorite:
+                favorite = Favorite(user_id=user_id, product_ids=[product_id])
+                session.add(favorite)
+            else:
+                current_ids = list(favorite.product_ids)
+                if product_id not in current_ids:
+                    # Create a new list to ensure change detection works
+                    favorite.product_ids = current_ids + [product_id]
+
+            await session.commit()
+            await session.refresh(favorite)
+            return favorite.product_ids
+
+    @handle_service_errors("removing favorite")
+    async def remove_favorite(self, user_id: str, product_id: int) -> List[int]:
+        """Remove a product from user's favorites"""
+        if not user_id:
+            raise ValidationException(detail="User ID is required")
+
+        async with AsyncSessionLocal() as session:
+            stmt = select(Favorite).filter(Favorite.user_id == user_id)
+            result = await session.execute(stmt)
+            favorite = result.scalars().first()
+
+            if favorite and favorite.product_ids:
+                current_ids = list(favorite.product_ids)
+                if product_id in current_ids:
+                    current_ids.remove(product_id)
+                    favorite.product_ids = current_ids
+                    await session.commit()
+                    await session.refresh(favorite)
+                return favorite.product_ids
+            return []
+
+    @handle_service_errors("retrieving favorites")
+    async def get_favorites(
+        self, user_id: str, include_products: bool = True
+    ) -> List[EnhancedProductSchema] | List[int]:
+        """Get user's favorites, optionally fetching full product details"""
+        if not user_id:
+            raise ValidationException(detail="User ID is required")
+
+        async with AsyncSessionLocal() as session:
+            stmt = select(Favorite).filter(Favorite.user_id == user_id)
+            result = await session.execute(stmt)
+            favorite = result.scalars().first()
+
+            product_ids = favorite.product_ids if favorite else []
+
+        if not product_ids:
+            return []
+
+        if include_products:
+            # Reusing ProductService to get enhanced product details (inventory, pricing, etc.)
+            # We assume current user's tier for pricing if needed,
+            # but getting user tier requires user object.
+            # For simplicity, we'll let product service handle defaults or we fetch user first.
+
+            # Fetch user to get tier
+            user = await self.get_user_by_id(user_id)
+            customer_tier = user.tier_id if user else None
+
+            # We need to use query service directly or add method to product service
+            # ProductService.get_products_by_ids uses query service which supports enhanced details
+            return await self.product_service.query_service.get_products_by_ids(
+                product_ids=product_ids,
+                customer_tier=customer_tier,
+                include_pricing=True,
+                include_inventory=True,
+                include_categories=True,
+                include_tags=True,
+                # We don't have location here easily unless we pass it down
+                # If needed we could add lat/lon params to get_favorites
+            )
+
+        return product_ids
