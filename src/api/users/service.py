@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from sqlalchemy import desc
 from sqlalchemy.future import select
@@ -288,7 +288,12 @@ class UserService:
 
     @handle_service_errors("retrieving favorites")
     async def get_favorites(
-        self, user_id: str, include_products: bool = True
+        self,
+        user_id: str,
+        include_products: bool = True,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+        store_ids: Optional[List[int]] = None,
     ) -> List[EnhancedProductSchema] | List[int]:
         """Get user's favorites, optionally fetching full product details"""
         if not user_id:
@@ -314,6 +319,18 @@ class UserService:
             user = await self.get_user_by_id(user_id)
             customer_tier = user.tier_id if user else None
 
+            # Resolve store_ids if not provided but location is available
+            if not store_ids and latitude and longitude:
+                (
+                    store_ids,
+                    _,  # is_nearby_store
+                ) = await self.product_service.store_service.get_store_ids_by_location(
+                    latitude, longitude
+                )
+                # Ensure store_ids is a list of ints
+                if store_ids:
+                    store_ids = list(store_ids)
+
             # We need to use query service directly or add method to product service
             # ProductService.get_products_by_ids uses query service which supports enhanced details
             return await self.product_service.query_service.get_products_by_ids(
@@ -323,8 +340,9 @@ class UserService:
                 include_inventory=True,
                 include_categories=True,
                 include_tags=True,
-                # We don't have location here easily unless we pass it down
-                # If needed we could add lat/lon params to get_favorites
+                latitude=latitude,
+                longitude=longitude,
+                store_ids=store_ids,
             )
 
         return product_ids

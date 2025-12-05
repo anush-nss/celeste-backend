@@ -137,12 +137,21 @@ async def get_favorites(
     include_products: bool = Query(
         True, description="Include full product details"
     ),
+    latitude: Optional[float] = Query(None, description="Latitude for inventory check"),
+    longitude: Optional[float] = Query(None, description="Longitude for inventory check"),
+    store_ids: Optional[List[int]] = Query(None, description="Specific store IDs to check inventory"),
 ):
     user_id = current_user.uid
     if not user_id:
         raise UnauthorizedException(detail="User ID not found in token")
 
-    favorites = await user_service.get_favorites(user_id, include_products=include_products)
+    favorites = await user_service.get_favorites(
+        user_id,
+        include_products=include_products,
+        latitude=latitude,
+        longitude=longitude,
+        store_ids=store_ids,
+    )
 
     if include_products:
         return success_response([fav.model_dump(mode="json") for fav in favorites])
