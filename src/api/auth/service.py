@@ -26,7 +26,7 @@ class AuthService:
         self._error_handler = ErrorHandler(__name__)
 
     @handle_service_errors("user registration")
-    async def register_user(self, user_registration: UserRegistration) -> dict:
+    async def register_user(self, user_registration: UserRegistration) -> tuple[dict, int]:
         """
         Register a new user by verifying their Firebase ID token and creating user records.
 
@@ -56,6 +56,26 @@ class AuthService:
         # Add custom claim for user role
         auth.set_custom_user_claims(uid, {"role": UserRole.CUSTOMER.value})
 
+        # Check if user already exists
+        existing_user = await self.user_service.get_user_by_id(uid)
+        
+        if existing_user:
+            # Check if phone number is different
+            if existing_user.phone != phone_number:
+                # Update phone number
+                updated_user = await self.user_service.update_user(uid, {"phone": phone_number})
+                return {
+                    "message": "User phone number updated successfully",
+                    "user": {
+                        "uid": updated_user.firebase_uid,
+                        "role": updated_user.role,
+                        "tier_id": updated_user.tier_id,
+                    },
+                }, 200
+            else:
+                # User exists and phone number is the same
+                raise ConflictException(detail=f"User with UID {uid} already exists")
+
         # Create user in PostgreSQL database
         create_user_data = CreateUserSchema(
             name=user_registration.name.strip(),
@@ -73,7 +93,7 @@ class AuthService:
                 "role": new_user.role,
                 "tier_id": new_user.tier_id,
             },
-        }
+        }, 201
 
     @handle_service_errors("token verification")
     def verify_id_token(self, id_token: str) -> DecodedToken:

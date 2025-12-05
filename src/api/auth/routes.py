@@ -14,5 +14,5 @@ auth_service = AuthService()
     "/register", summary="Register a new user", status_code=status.HTTP_201_CREATED
 )
 async def register_user(user_registration: UserRegistration):
-    result = await auth_service.register_user(user_registration)
-    return success_response(result, status_code=status.HTTP_201_CREATED)
+    result, status_code = await auth_service.register_user(user_registration)
+    return success_response(result, status_code=status_code)
