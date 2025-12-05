@@ -31,6 +31,16 @@ class Settings:
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-here")
     JWT_ALGORITHM = "HS256"
     JWT_EXPIRATION_TIME_HOURS = 24
+    
+    # Rate Limiting & Source Restriction
+    MOBILE_APP_SECRET = os.getenv("MOBILE_APP_SECRET", None)
+    ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",")
+    # Clean up origins
+    ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS if o.strip()]
+    
+    RATE_LIMIT_EXEMPT_IPS = os.getenv("RATE_LIMIT_EXEMPT_IPS", "").split(",")
+    # Clean up IPs
+    RATE_LIMIT_EXEMPT_IPS = [ip.strip() for ip in RATE_LIMIT_EXEMPT_IPS if ip.strip()]
 
     # API
     API_V1_STR = "/api/v1"
