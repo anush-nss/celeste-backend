@@ -43,6 +43,8 @@ class PromotionType(str, Enum):
     BANNER = "banner"
     POPUP = "popup"
     SEARCH = "search"
+    NEWS = "news"
+    OFFER = "offer"
 
 
 class Platform(str, Enum):
