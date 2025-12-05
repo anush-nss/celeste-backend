@@ -22,7 +22,11 @@ from src.config.constants import UserRole
 from src.database.connection import AsyncSessionLocal
 from src.database.models.user import User
 from src.shared.error_handler import ErrorHandler, handle_service_errors
-from src.shared.exceptions import ConflictException, ValidationException
+from src.shared.exceptions import (
+    ConflictException,
+    ResourceNotFoundException,
+    ValidationException,
+)
 from src.shared.sqlalchemy_utils import safe_model_validate
 
 
@@ -30,7 +34,7 @@ def _user_to_dict(
     user: User,
     include_addresses: bool = False,
     include_favorites: bool = False,
-    favorites_data: List[EnhancedProductSchema] = None,
+    favorites_data: Optional[List[EnhancedProductSchema]] = None,
 ) -> dict:
     """Convert SQLAlchemy User to dictionary, handling relationships properly"""
     user_dict = {
@@ -246,7 +250,9 @@ class UserService:
             # Check if product exists
             product_exists = await self.product_service.get_product_by_id(product_id)
             if not product_exists:
-                raise ValidationException(detail=f"Product with ID {product_id} not found")
+                raise ValidationException(
+                    detail=f"Product with ID {product_id} not found"
+                )
 
             stmt = select(Favorite).filter(Favorite.user_id == user_id)
             result = await session.execute(stmt)
@@ -276,15 +282,22 @@ class UserService:
             result = await session.execute(stmt)
             favorite = result.scalars().first()
 
-            if favorite and favorite.product_ids:
-                current_ids = list(favorite.product_ids)
-                if product_id in current_ids:
-                    current_ids.remove(product_id)
-                    favorite.product_ids = current_ids
-                    await session.commit()
-                    await session.refresh(favorite)
-                return favorite.product_ids
-            return []
+            if not favorite or not favorite.product_ids:
+                raise ResourceNotFoundException(
+                    detail=f"Product with ID {product_id} not found in favorites"
+                )
+
+            current_ids = list(favorite.product_ids)
+            if product_id not in current_ids:
+                raise ResourceNotFoundException(
+                    detail=f"Product with ID {product_id} not found in favorites"
+                )
+
+            current_ids.remove(product_id)
+            favorite.product_ids = current_ids
+            await session.commit()
+            await session.refresh(favorite)
+            return favorite.product_ids
 
     @handle_service_errors("retrieving favorites")
     async def get_favorites(
@@ -294,7 +307,7 @@ class UserService:
         latitude: Optional[float] = None,
         longitude: Optional[float] = None,
         store_ids: Optional[List[int]] = None,
-    ) -> List[EnhancedProductSchema] | List[int]:
+    ) -> List[EnhancedProductSchema] | List[int] | List[dict]:
         """Get user's favorites, optionally fetching full product details"""
         if not user_id:
             raise ValidationException(detail="User ID is required")
@@ -322,14 +335,16 @@ class UserService:
             # Resolve store_ids if not provided but location is available
             if not store_ids and latitude and longitude:
                 (
-                    store_ids,
+                    fetched_store_ids,
                     _,  # is_nearby_store
                 ) = await self.product_service.store_service.get_store_ids_by_location(
                     latitude, longitude
                 )
                 # Ensure store_ids is a list of ints
-                if store_ids:
-                    store_ids = list(store_ids)
+                if fetched_store_ids:
+                    store_ids = [
+                        s_id for s_id in fetched_store_ids if isinstance(s_id, int)
+                    ]
 
             # We need to use query service directly or add method to product service
             # ProductService.get_products_by_ids uses query service which supports enhanced details

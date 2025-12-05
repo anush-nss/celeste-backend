@@ -90,6 +90,7 @@ async def update_user_profile(
 
 # Favorites Management Endpoints
 
+
 @users_router.post(
     "/me/favorites",
     summary="Add a product to user favorites",
@@ -134,12 +135,14 @@ async def remove_favorite(
 )
 async def get_favorites(
     current_user: Annotated[DecodedToken, Depends(get_current_user)],
-    include_products: bool = Query(
-        True, description="Include full product details"
-    ),
+    include_products: bool = Query(True, description="Include full product details"),
     latitude: Optional[float] = Query(None, description="Latitude for inventory check"),
-    longitude: Optional[float] = Query(None, description="Longitude for inventory check"),
-    store_ids: Optional[List[int]] = Query(None, description="Specific store IDs to check inventory"),
+    longitude: Optional[float] = Query(
+        None, description="Longitude for inventory check"
+    ),
+    store_ids: Optional[List[int]] = Query(
+        None, description="Specific store IDs to check inventory"
+    ),
 ):
     user_id = current_user.uid
     if not user_id:
@@ -154,7 +157,13 @@ async def get_favorites(
     )
 
     if include_products:
-        return success_response([fav.model_dump(mode="json") for fav in favorites])
+        serialized_favorites = []
+        for fav in favorites:
+            if isinstance(fav, EnhancedProductSchema):
+                serialized_favorites.append(fav.model_dump(mode="json"))
+            else:
+                serialized_favorites.append(fav)
+        return success_response(serialized_favorites)
     else:
         # If not including products, we might need a different response model or just return IDs.
         # But the type hint says List[EnhancedProductSchema].

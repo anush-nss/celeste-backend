@@ -14,6 +14,7 @@ from src.shared.exceptions import (
     ResourceNotFoundException,
     ServiceUnavailableException,
     ValidationException,
+    ConflictException,
 )
 
 # Load environment variables from .env file
@@ -26,7 +27,9 @@ class AuthService:
         self._error_handler = ErrorHandler(__name__)
 
     @handle_service_errors("user registration")
-    async def register_user(self, user_registration: UserRegistration) -> tuple[dict, int]:
+    async def register_user(
+        self, user_registration: UserRegistration
+    ) -> tuple[dict, int]:
         """
         Register a new user by verifying their Firebase ID token and creating user records.
 
@@ -58,12 +61,19 @@ class AuthService:
 
         # Check if user already exists
         existing_user = await self.user_service.get_user_by_id(uid)
-        
+
         if existing_user:
             # Check if phone number is different
             if existing_user.phone != phone_number:
                 # Update phone number
-                updated_user = await self.user_service.update_user(uid, {"phone": phone_number})
+                updated_user = await self.user_service.update_user(
+                    uid, {"phone": phone_number}
+                )
+                if not updated_user:
+                    raise ResourceNotFoundException(
+                        detail=f"User with ID {uid} not found during update"
+                    )
+
                 return {
                     "message": "User phone number updated successfully",
                     "user": {
