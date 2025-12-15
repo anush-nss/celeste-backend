@@ -58,6 +58,7 @@ def test_rate_limiting():
     # To test BLOCKING, we'd need to mock the limit to be small. 
     # For "minimum effort" verification, ensuring it runs is good.
     
+    response = None
     for i in range(5):
         response = client.get("/", headers={"X-Client-Secret": "test-secret"})
         if response.status_code != 200:
@@ -68,7 +69,7 @@ def test_rate_limiting():
     # SlowAPI adds X-RateLimit-Limit headers if configured? 
     # By default it might not unless configured.
     # Let's check headers.
-    if "X-RateLimit-Limit" in response.headers or "x-ratelimit-limit" in response.headers:
+    if response and ("X-RateLimit-Limit" in response.headers or "x-ratelimit-limit" in response.headers):
          print("PASS: Rate limit headers detected.")
     else:
          print("WARN: Rate limit headers NOT detected (configuration might hide them).")

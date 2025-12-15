@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from src.shared.error_handler import ErrorHandler
 
@@ -14,6 +14,7 @@ from src.shared.error_handler import ErrorHandler
 import uuid
 
 from src.database.connection import AsyncSessionLocal
+from src.database.models.order import Order, OrderItem
 from src.database.models.payment import PaymentTransaction
 
 
@@ -49,6 +50,19 @@ class PaymentService:
                 )
                 session.add(new_transaction)
                 await session.flush()
+
+                # Link relevant orders to this payment transaction
+                await session.execute(
+                    update(Order)
+                    .where(
+                        Order.id.in_(
+                            select(OrderItem.order_id).where(
+                                OrderItem.source_cart_id.in_(cart_ids)
+                            )
+                        )
+                    )
+                    .values(payment_transaction_id=new_transaction.id)
+                )
 
         # Prepare payment data for bank gateway
         payment_data = {
@@ -147,6 +161,8 @@ class PaymentService:
 
                 # Update payment transaction status
                 payment_transaction.status = payment_status
+                if transaction_id:
+                    payment_transaction.transaction_id = str(transaction_id)
                 await session.flush()
 
                 callback_result = {

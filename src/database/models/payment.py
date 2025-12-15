@@ -17,6 +17,9 @@ class PaymentTransaction(Base):
     payment_reference: Mapped[str] = mapped_column(
         String(255), nullable=False, unique=True, index=True
     )
+    transaction_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )
     cart_ids: Mapped[List[int]] = mapped_column(ARRAY(Integer), nullable=False)
     amount: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="initiated")

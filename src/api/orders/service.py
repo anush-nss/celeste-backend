@@ -440,6 +440,12 @@ class OrderService:
                 "delivery_service_level": order.delivery_service_level,
                 "platform": order.platform,
                 "status": order.status,
+                "payment_reference": order.payment_transaction.payment_reference
+                if order.payment_transaction
+                else None,
+                "transaction_id": order.payment_transaction.transaction_id
+                if order.payment_transaction
+                else None,
                 "created_at": order.created_at,
                 "updated_at": order.updated_at,
                 "items": filtered_items,
@@ -465,7 +471,9 @@ class OrderService:
         async with AsyncSessionLocal() as session:
             query = (
                 select(Order)
-                .options(selectinload(Order.items))
+                .options(
+                    selectinload(Order.items), selectinload(Order.payment_transaction)
+                )
                 .distinct()
                 .order_by(Order.created_at.desc())
             )
@@ -503,7 +511,9 @@ class OrderService:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(Order)
-                .options(selectinload(Order.items))
+                .options(
+                    selectinload(Order.items), selectinload(Order.payment_transaction)
+                )
                 .filter(Order.id == order_id)
             )
             order = result.scalars().first()

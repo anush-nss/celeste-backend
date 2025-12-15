@@ -25,6 +25,12 @@ class OrderItemSchema(BaseModel):
 
 class OrderSchema(BaseModel):
     id: int = Field(..., examples=[1])
+    payment_reference: Optional[str] = Field(
+        None, description="Payment reference for this order"
+    )
+    transaction_id: Optional[str] = Field(
+        None, description="External transaction ID from payment gateway"
+    )
     user_id: str = Field(..., examples=["TZKU3C493fY2JH9Ftnsdpz5occN2"])
     store_id: int = Field(..., examples=[1])
     address_id: Optional[int] = Field(

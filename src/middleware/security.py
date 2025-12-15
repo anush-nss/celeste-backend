@@ -37,6 +37,14 @@ class TrustedSourceMiddleware(BaseHTTPMiddleware):
         
         path = request.url.path
         client_ip = request.client.host if request.client else "unknown"
+
+        # 0. Global Bypass for Development
+        if settings.ENVIRONMENT == "development":
+            # Still log it so we know it happened, but don't block
+            # Unless it's just a health check which might spam logs
+            if path != "/":
+                logger.info(f"Dev Bypass: Allowing request to {path} (IP: {client_ip})")
+            return await call_next(request)
         
         # allow documentation access usually? Or should we restrict that too?
         if path.startswith("/docs") or path.startswith("/openapi.json") or path.startswith("/redoc"):

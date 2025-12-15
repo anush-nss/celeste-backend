@@ -15,6 +15,11 @@ def get_ip_key(request: Request) -> Optional[str]:
     """
     # Check for exempt IPs
     remote_addr = get_remote_address(request)
+    
+    # Bypass if in development mode
+    if settings.ENVIRONMENT == "development":
+        return None
+
     if remote_addr and remote_addr in settings.RATE_LIMIT_EXEMPT_IPS:
         return None  # Return None to skip rate limiting
             
@@ -24,6 +29,6 @@ def get_ip_key(request: Request) -> Optional[str]:
 # Initialize limiter with our custom key function
 # default_limits can be overridden per route
 limiter = Limiter(
-    key_func=get_ip_key,
-    default_limits=["10/minute"] # Default "minimum effort" global limit
+    key_func=get_ip_key,  # type: ignore
+    default_limits=["100/minute"] # Default "minimum effort" global limit
 )

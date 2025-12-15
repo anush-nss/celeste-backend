@@ -28,7 +28,10 @@ from src.database.base import Base
 if TYPE_CHECKING:
     from src.database.models.product import Product
     from src.database.models.store import Store
+    from src.database.models.product import Product
+    from src.database.models.store import Store
     from src.database.models.user import User
+    from src.database.models.payment import PaymentTransaction
 
 
 class Order(Base):
@@ -92,6 +95,9 @@ class Order(Base):
     )
     address_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("addresses.id"), nullable=True
+    )
+    payment_transaction_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("payment_transactions.id"), nullable=True
     )
     total_amount: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
     delivery_charge: Mapped[Decimal] = mapped_column(
@@ -169,6 +175,7 @@ class Order(Base):
     )
     user: Mapped["User"] = relationship("User", back_populates="orders")
     store: Mapped["Store"] = relationship("Store")
+    payment_transaction: Mapped["PaymentTransaction"] = relationship("PaymentTransaction")
 
 
 class OrderItem(Base):
