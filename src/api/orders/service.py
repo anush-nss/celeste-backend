@@ -136,7 +136,9 @@ class OrderService:
                 # Re-query with eager loading of items
                 result = await session.execute(
                     select(Order)
-                    .options(selectinload(Order.items))
+                    .options(
+                        selectinload(Order.items), selectinload(Order.payment_transaction)
+                    )
                     .filter(Order.id == new_order.id)
                 )
                 order_with_items = result.scalar_one()
@@ -592,7 +594,9 @@ class OrderService:
                 # Re-query with eager loading of items
                 result = await session.execute(
                     select(Order)
-                    .options(selectinload(Order.items))
+                    .options(
+                        selectinload(Order.items), selectinload(Order.payment_transaction)
+                    )
                     .filter(Order.id == new_order.id)
                 )
                 order_with_items = result.scalar_one()
@@ -734,7 +738,9 @@ class OrderService:
                 # Re-query with eager loading of items
                 result = await session.execute(
                     select(Order)
-                    .options(selectinload(Order.items))
+                    .options(
+                        selectinload(Order.items), selectinload(Order.payment_transaction)
+                    )
                     .filter(Order.id == order.id)
                 )
                 order_with_items = result.scalar_one()
