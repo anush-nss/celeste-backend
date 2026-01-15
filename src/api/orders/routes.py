@@ -19,7 +19,7 @@ from src.api.orders.models import (
     UpdateOrderSchema,
 )
 from src.api.orders.service import OrderService
-from src.config.constants import OdooSyncStatus, UserRole
+from src.config.constants import OdooSyncStatus, OrderStatus, UserRole
 from src.database.connection import AsyncSessionLocal
 from src.database.models.order import Order
 from src.dependencies.auth import RoleChecker, get_current_user
@@ -41,7 +41,7 @@ async def get_orders(
     cart_id: Optional[List[int]] = Query(
         None, description="Filter orders by source cart ID(s)"
     ),
-    status: Optional[List[str]] = Query(
+    status: Optional[List[OrderStatus]] = Query(
         None, description="Filter orders by status (e.g., pending, confirmed)"
     ),
     page: int = Query(1, ge=1, description="Page number"),
@@ -60,7 +60,7 @@ async def get_orders(
     if current_user.role == UserRole.ADMIN:
         result = await order_service.get_orders_paginated(
             cart_ids=cart_id,
-            status=status,
+            status=[s.value for s in status] if status else None,
             page=page,
             limit=limit,
             include_products=include_products,
@@ -71,7 +71,7 @@ async def get_orders(
         result = await order_service.get_orders_paginated(
             user_id=current_user.uid,
             cart_ids=cart_id,
-            status=status,
+            status=[s.value for s in status] if status else None,
             page=page,
             limit=limit,
             include_products=include_products,
