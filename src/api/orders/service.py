@@ -507,6 +507,77 @@ class OrderService:
                 include_addresses=include_addresses,
             )
 
+    @handle_service_errors("retrieving paginated orders")
+    async def get_orders_paginated(
+        self,
+        page: int = 1,
+        limit: int = 20,
+        user_id: Optional[str] = None,
+        rider_id: Optional[int] = None,
+        cart_ids: Optional[List[int]] = None,
+        status: Optional[List[str]] = None,
+        include_products: bool = False,
+        include_stores: bool = False,
+        include_addresses: bool = False,
+    ) -> Dict[str, Any]:
+        offset = (page - 1) * limit
+        async with AsyncSessionLocal() as session:
+            # Base query creation (similar to get_all_orders but we need count too)
+            query = select(Order)
+            
+            # Apply Filters
+            if cart_ids:
+                query = query.join(Order.items).filter(OrderItem.source_cart_id.in_(cart_ids))
+
+            if user_id:
+                query = query.filter(Order.user_id == user_id)
+            
+            if rider_id:
+                query = query.filter(Order.rider_id == rider_id)
+
+            if status:
+                query = query.filter(Order.status.in_(status))
+
+            # Count query (efficient count)
+            # We clone the query for count before adding eager loads and ordering
+            from sqlalchemy import func
+            count_query = select(func.count()).select_from(query.subquery())
+            total_result = await session.execute(count_query)
+            total_count = total_result.scalar() or 0
+
+            # Add eager loads and ordering for data query
+            query = (
+                query
+                .options(
+                    selectinload(Order.items), selectinload(Order.payment_transaction)
+                )
+                .distinct()
+                .order_by(Order.created_at.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+
+            result = await session.execute(query)
+            orders = list(result.scalars().unique().all())
+
+            # Enrich
+            enriched_orders = await self._enrich_orders_with_products_and_stores(
+                orders,
+                include_products=include_products,
+                include_stores=include_stores,
+                include_addresses=include_addresses,
+            )
+            
+            return {
+                "orders": enriched_orders,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "total_results": total_count,
+                    "page": page
+                }
+            }
+
     @handle_service_errors("retrieving order")
     async def get_order_by_id(
         self,
@@ -617,7 +688,7 @@ class OrderService:
 
     @handle_service_errors("updating order status")
     async def update_order_status(
-        self, order_id: int, status_update: UpdateOrderSchema
+        self, order_id: int, status_update: UpdateOrderSchema, current_user: Optional[Dict] = None
     ) -> OrderSchema:
         async with AsyncSessionLocal() as session:
             async with session.begin():
@@ -626,6 +697,7 @@ class OrderService:
                     .options(
                         selectinload(Order.items).selectinload(OrderItem.product),
                         selectinload(Order.store),
+                        selectinload(Order.rider),
                     )
                     .filter(Order.id == order_id)
                 )
@@ -643,6 +715,33 @@ class OrderService:
                     if isinstance(status_update.status, OrderStatus)
                     else status_update.status
                 )
+                
+                # Role-based validation
+                if current_user and current_user.get("role") == "rider":
+                     # 1. Verify Assignment
+                     # We need to fetch the rider profile for this user
+                     rider_stmt = select(RiderProfile).where(RiderProfile.user_id == current_user.get("uid"))
+                     rider_result = await session.execute(rider_stmt)
+                     rider_profile = rider_result.scalar_one_or_none()
+                     
+                     if not rider_profile or order.rider_id != rider_profile.id:
+                         # Use ForbiddenException if available, else ValidationException
+                         raise ValidationException("You can only update status for orders assigned to you.")
+                     
+                     # 2. Verify Valid Transitions for Riders
+                     # Allowed: PACKED -> SHIPPED -> DELIVERED
+                     allowed_transitions = {
+                         OrderStatus.PACKED.value: [OrderStatus.SHIPPED.value],
+                         OrderStatus.SHIPPED.value: [OrderStatus.DELIVERED.value]
+                     }
+                     
+                     allowed_next_statuses = allowed_transitions.get(current_status, [])
+                     if new_status not in allowed_next_statuses:
+                         raise ValidationException(
+                             f"Riders cannot transition order from {current_status} to {new_status}. "
+                             f"Allowed transitions: {allowed_transitions}"
+                         )
+
 
                 if current_status == new_status:
                     return OrderSchema.model_validate(order)  # No change
@@ -804,6 +903,43 @@ class OrderService:
         if not cart_ids:
             return {"status": "error", "message": "Cart IDs not found in callback"}
 
+        if payment_status == "success":
+            # Update order statuses to CONFIRMED
+            # We need to find the orders associated with these carts
+            async with AsyncSessionLocal() as session:
+                stmt = (
+                    select(Order)
+                    .join(Order.items)
+                    .where(OrderItem.source_cart_id.in_(cart_ids))
+                    .distinct()
+                )
+                result = await session.execute(stmt)
+                orders = result.scalars().all()
+            
+            # Update each order status
+            # We call update_order_status one by one to trigger side effects (inventory)
+            for order in orders:
+                if order.status == OrderStatus.PENDING.value:
+                    try:
+                        await self.update_order_status(
+                            order.id, 
+                            UpdateOrderSchema(status=OrderStatus.CONFIRMED)
+                        )
+                        self._error_handler.logger.info(
+                            f"Order {order.id} confirmed via payment callback"
+                        )
+                        
+                        # Logically, we might want to trigger Odoo sync here or in update_order_status
+                        if background_tasks:
+                            background_tasks.add_task(self._background_odoo_sync, order.id)
+                            
+                    except Exception as e:
+                        self._error_handler.logger.error(
+                            f"Failed to confirm order {order.id} in callback: {e}"
+                        )
+                        # We don't fail the entire callback if one order fails, 
+                        # but we should log it.
+
         return callback_result
 
     @handle_service_errors("assigning rider to order")
@@ -824,6 +960,8 @@ class OrderService:
                     .options(
                         selectinload(Order.items).selectinload(OrderItem.product),
                         selectinload(Order.store),
+                        selectinload(Order.payment_transaction),
+                        selectinload(Order.rider),
                     )
                     .where(Order.id == order_id)
                 )
@@ -842,15 +980,20 @@ class OrderService:
                 order.rider_id = rider_id
                 await session.flush()
                 
-                # Re-query
-                # result = await session.execute(
-                #     select(Order)
-                #     .options(
-                #         selectinload(Order.items), selectinload(Order.payment_transaction)
-                #     )
-                #     .filter(Order.id == order.id)
-                # )
-                # order_with_items = result.scalar_one()
+                # Re-query to ensure everything is loaded correctly for the return schema
+                # This avoids "greenlet_spawn" issues with accessing relationships on a potentially stale object
+                order_stmt = (
+                    select(Order)
+                    .options(
+                        selectinload(Order.items).selectinload(OrderItem.product),
+                        selectinload(Order.store),
+                        selectinload(Order.payment_transaction),
+                        selectinload(Order.rider),
+                    )
+                    .where(Order.id == order_id)
+                )
+                order_result = await session.execute(order_stmt)
+                order = order_result.scalar_one()
 
             # Enrich
             enriched_orders = await self._enrich_orders_with_products_and_stores(
@@ -881,106 +1024,4 @@ class OrderService:
                 
                 order.rider_id = None
                 await session.flush()
-        
         return {"message": "Rider assignment removed successfully"}
-
-        # Fetch all orders associated with the cart_ids
-        async with AsyncSessionLocal() as session:
-            async with session.begin():
-                result = await session.execute(
-                    select(Order)
-                    .join(OrderItem)
-                    .filter(OrderItem.source_cart_id.in_(cart_ids))
-                )
-                orders = result.scalars().unique().all()
-
-                if not orders:
-                    return {
-                        "status": "error",
-                        "message": "No orders found for the given carts",
-                    }
-
-                processed_orders = []
-                for order in orders:
-                    if payment_status == "success":
-                        # Automatically confirm the order (convert holds to reservations)
-                        update_schema = UpdateOrderSchema(status=OrderStatus.CONFIRMED)
-                        updated_order = await self.update_order_status(
-                            order.id, update_schema
-                        )
-
-                        # Track order interactions for all products
-                        try:
-                            # Get order items
-                            order_items = [
-                                (item.product_id, item.quantity, item.unit_price)
-                                for item in updated_order.items
-                            ]
-
-                            # Track bulk order interactions
-                            await self.interaction_service.track_bulk_orders(
-                                user_id=updated_order.user_id,
-                                order_id=updated_order.id,
-                                products=order_items,
-                                auto_update=True,  # Auto-update popularity and preferences
-                            )
-                            self._error_handler.logger.info(
-                                f"Tracked {len(order_items)} product interactions for order {order.id}"
-                            )
-                        except Exception as e:
-                            # Log but don't fail the payment processing
-                            self._error_handler.logger.error(
-                                f"Failed to track interactions for order {order.id}: {str(e)}"
-                            )
-
-                        # Update user statistics for successful payment
-                        try:
-                            await self.update_user_statistics(
-                                updated_order.user_id,
-                                Decimal(str(updated_order.total_amount)),
-                            )
-                        except Exception as e:
-                            # Log but don't fail the payment processing
-                            self._error_handler.logger.error(
-                                f"Failed to update user statistics for order {order.id}: {str(e)}"
-                            )
-
-                        # Queue Odoo sync as background task (non-blocking)
-                        if background_tasks:
-                            background_tasks.add_task(
-                                self._background_odoo_sync, order.id
-                            )
-                            self._error_handler.logger.info(
-                                f"Odoo sync queued as background task for order {order.id}"
-                            )
-                        else:
-                            # Fallback: log warning if BackgroundTasks not provided
-                            self._error_handler.logger.warning(
-                                f"BackgroundTasks not provided - Odoo sync skipped for order {order.id}. "
-                                "Use retry endpoint to sync manually."
-                            )
-                        processed_orders.append(
-                            {
-                                "order_id": order.id,
-                                "order_status": updated_order.status,
-                            }
-                        )
-                    else:
-                        # Payment failed - cancel order and release holds
-                        update_schema = UpdateOrderSchema(status=OrderStatus.CANCELLED)
-                        updated_order = await self.update_order_status(
-                            order.id, update_schema
-                        )
-                        processed_orders.append(
-                            {
-                                "order_id": order.id,
-                                "order_status": updated_order.status,
-                            }
-                        )
-
-        return {
-            "status": "success",
-            "processed_orders": processed_orders,
-            "payment_reference": callback_result["payment_reference"],
-            "transaction_id": callback_result["transaction_id"],
-        }

@@ -75,7 +75,7 @@ class PaymentService:
             "return_url": f"https://yourapp.com/payment/return/{payment_reference}",
             "cancel_url": f"https://yourapp.com/payment/cancel/{payment_reference}",
             "notify_url": "https://yourapp.com/api/orders/payment/callback",
-            "expires_at": datetime.now() + timedelta(minutes=30),
+            "expires_at": (datetime.now() + timedelta(minutes=30)).isoformat(),
         }
 
         # Generate payment URL (placeholder)
@@ -171,7 +171,7 @@ class PaymentService:
                     "status": payment_status,
                     "transaction_id": transaction_id,
                     "amount_charged": float(amount) if amount else 0.0,
-                    "processed_at": datetime.now(),
+                    "processed_at": datetime.now().isoformat(),
                     "signature_valid": is_valid_signature,
                     "raw_callback_data": callback_data,
                 }
@@ -226,7 +226,7 @@ class PaymentService:
             "status": "completed",  # Placeholder: success for development
             "verified": True,
             "amount_paid": 0.0,  # Would be actual amount from bank
-            "verification_time": datetime.now(),
+            "verification_time": datetime.now().isoformat(),
             "bank_reference": f"BANK_REF_{payment_reference}",
             "transaction_details": {
                 "bank_transaction_id": f"BTX_{payment_reference}",
@@ -271,8 +271,8 @@ class PaymentService:
             "status": "processed",
             "refund_amount": float(refund_amount) if refund_amount else 0.0,
             "reason": reason,
-            "processed_at": datetime.now(),
-            "estimated_completion": datetime.now() + timedelta(days=3),
+            "processed_at": datetime.now().isoformat(),
+            "estimated_completion": (datetime.now() + timedelta(days=3)).isoformat(),
             "bank_refund_id": f"BANK_REF_{refund_reference}",
             "refund_method": "original_payment_method",
         }

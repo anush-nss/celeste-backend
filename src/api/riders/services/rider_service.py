@@ -1,6 +1,7 @@
 from typing import Optional
 
 from sqlalchemy import delete, insert, select, update
+from sqlalchemy.orm import selectinload
 
 from src.api.riders.models import (
     RiderProfileSchema,
@@ -101,4 +102,45 @@ class RiderService:
 
             except Exception as e:
                 self._error_handler.log_error("remove_rider_from_store", e)
+                raise
+
+    async def get_assigned_stores(self, rider_id: int):
+        """Get all stores assigned to a rider"""
+        async with AsyncSessionLocal() as session:
+            try:
+                rider_stmt = (
+                    select(RiderProfile)
+                    .options(selectinload(RiderProfile.stores))
+                    .where(RiderProfile.id == rider_id)
+                )
+                result = await session.execute(rider_stmt)
+                rider = result.scalar_one_or_none()
+                
+                if not rider:
+                     raise ResourceNotFoundException(detail="Rider not found")
+
+                # Reuse Store models logic, but we might want schema output.
+                # For now returning raw dictionaries matching Store schema structure logic if needed
+                # or just returning the models to be validated by response_model
+                return rider.stores
+            except Exception as e:
+                self._error_handler.log_error("get_assigned_stores", e)
+                raise
+
+    async def update_rider_status(self, rider_id: int, is_online: bool):
+        """Update rider online status"""
+        async with AsyncSessionLocal() as session:
+            try:
+                stmt = select(RiderProfile).where(RiderProfile.id == rider_id)
+                result = await session.execute(stmt)
+                rider = result.scalar_one_or_none()
+                if not rider:
+                    raise ResourceNotFoundException(detail="Rider not found")
+
+                rider.is_online = is_online
+                await session.commit()
+                await session.refresh(rider)
+                return rider
+            except Exception as e:
+                self._error_handler.log_error("update_rider_status", e)
                 raise

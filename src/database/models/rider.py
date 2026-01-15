@@ -45,6 +45,7 @@ class RiderProfile(Base):
     vehicle_type: Mapped[str] = mapped_column(String(50), nullable=False, default="motorcycle")
     vehicle_registration_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_online: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("NOW()"), nullable=False

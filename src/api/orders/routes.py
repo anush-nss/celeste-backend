@@ -14,6 +14,7 @@ from src.api.auth.models import DecodedToken
 from src.api.orders.models import (
     CreateOrderSchema,
     OrderSchema,
+    PaginatedOrdersResponse,
     PaymentCallbackSchema,
     UpdateOrderSchema,
 )
@@ -30,7 +31,7 @@ orders_router = APIRouter(prefix="/orders", tags=["Orders"])
 order_service = OrderService()
 
 
-@orders_router.get("/", summary="Retrieve orders", response_model=List[OrderSchema])
+@orders_router.get("/", summary="Retrieve orders", response_model=PaginatedOrdersResponse)
 async def get_orders(
     current_user: DecodedToken = Depends(get_current_user),
     cart_id: Optional[List[int]] = Query(
@@ -39,6 +40,8 @@ async def get_orders(
     status: Optional[List[str]] = Query(
         None, description="Filter orders by status (e.g., pending, confirmed)"
     ),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
     include_products: bool = Query(
         False, description="Include full product details in order items"
     ),
@@ -48,29 +51,37 @@ async def get_orders(
     ),
 ):
     """
-    Retrieve orders with optional population of related data.
-
-    By default, only order and item IDs/amounts are returned for fast listing.
-    Set query parameters to True to include full product/store/address details.
+    Retrieve orders with optional population of related data and pagination.
     """
     if current_user.role == UserRole.ADMIN:
-        orders = await order_service.get_all_orders(
+        result = await order_service.get_orders_paginated(
             cart_ids=cart_id,
             status=status,
+            page=page,
+            limit=limit,
             include_products=include_products,
             include_stores=include_stores,
             include_addresses=include_addresses,
         )
     else:
-        orders = await order_service.get_all_orders(
+        result = await order_service.get_orders_paginated(
             user_id=current_user.uid,
             cart_ids=cart_id,
             status=status,
+            page=page,
+            limit=limit,
             include_products=include_products,
             include_stores=include_stores,
             include_addresses=include_addresses,
         )
-    return success_response([order.model_dump(mode="json") for order in orders])
+    
+    # Manually dump models for JSON compatibility
+    orders_data = [order.model_dump(mode="json") for order in result["orders"]]
+    
+    return success_response({
+        "orders": orders_data,
+        "pagination": result["pagination"]
+    })
 
 
 @orders_router.get(
@@ -131,10 +142,18 @@ async def create__order(
     "/{order_id}/status",
     summary="Update an order status",
     response_model=OrderSchema,
-    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN, UserRole.RIDER]))],
 )
-async def update_order_status(order_id: int, order_data: UpdateOrderSchema):
-    updated_order = await order_service.update_order_status(order_id, order_data)
+async def update_order_status(
+    order_id: int, 
+    order_data: UpdateOrderSchema,
+    current_user: DecodedToken = Depends(get_current_user)
+):
+    updated_order = await order_service.update_order_status(
+        order_id, 
+        order_data, 
+        current_user={"role": current_user.role, "uid": current_user.uid}
+    )
     return success_response(updated_order.model_dump(mode="json"))
 
 

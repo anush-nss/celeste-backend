@@ -47,11 +47,16 @@ class RiderProfileSchema(BaseModel):
     vehicle_type: str
     vehicle_registration_number: Optional[str] = None
     is_active: bool
+    is_online: bool
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class RiderStatusUpdateSchema(BaseModel):
+    is_online: bool
 
 
 class VerifyRiderSchema(BaseModel):

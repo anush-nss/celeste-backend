@@ -143,3 +143,18 @@ class PaymentCallbackSchema(BaseModel):
             ]
         }
     )
+
+
+class PaginatedOrdersResponse(BaseModel):
+    orders: List[OrderSchema]
+    pagination: Dict[str, Any] = Field(
+        ...,
+        description="Pagination metadata",
+        examples=[
+            {
+                "limit": 20,
+                "offset": 0,
+                "total_results": 100,
+            }
+        ],
+    )
