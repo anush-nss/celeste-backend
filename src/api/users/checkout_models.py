@@ -8,6 +8,7 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.api.products.models import ProductSchema
+from src.config.constants import DeliveryOption
 
 
 # Define a new base schema without the inventory_status field
@@ -53,6 +54,11 @@ class CheckoutRequestSchema(BaseModel):
         default=None,
         description="Platform from which the order originated (e.g., 'mobile', 'web')",
         examples=["web"],
+    )
+    delivery_option: Optional[DeliveryOption] = Field(
+        None,
+        description="Delivery instruction option (e.g., leave_at_door)",
+        examples=[DeliveryOption.LEAVE_AT_DOOR],
     )
 
     model_config = ConfigDict(

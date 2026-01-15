@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -7,9 +7,13 @@ from src.config.constants import VehicleType
 
 
 class CreateRiderSchema(BaseModel):
-    phone: str = Field(..., min_length=5, max_length=20, description="Rider phone number")
+    phone: str = Field(
+        ..., min_length=5, max_length=20, description="Rider phone number"
+    )
     name: str = Field(..., min_length=2, max_length=100, description="Rider name")
-    vehicle_type: str = Field(..., description="Type of vehicle (motorcycle, bicycle, etc.)")
+    vehicle_type: str = Field(
+        ..., description="Type of vehicle (motorcycle, bicycle, etc.)"
+    )
     vehicle_registration_number: Optional[str] = Field(None, max_length=50)
 
     @field_validator("vehicle_type")

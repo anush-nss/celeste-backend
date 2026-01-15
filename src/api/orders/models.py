@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.config.constants import FulfillmentMode, OrderStatus, Platform
+from src.config.constants import FulfillmentMode, OrderStatus, Platform, DeliveryOption
 
 
 class OrderItemSchema(BaseModel):
@@ -56,6 +56,11 @@ class OrderSchema(BaseModel):
         default=None,
         description="Platform from which the order originated (e.g., 'mobile', 'web')",
         examples=["web"],
+    )
+    delivery_option: Optional[DeliveryOption] = Field(
+        default=None,
+        description="Delivery instruction option",
+        examples=[DeliveryOption.LEAVE_AT_DOOR],
     )
     status: OrderStatus = Field(..., examples=[OrderStatus.PENDING.value])
     created_at: datetime
@@ -116,6 +121,9 @@ class CreateOrderSchema(BaseModel):
         default=None,
         description="Platform from which the order originated (e.g., 'mobile', 'web')",
         examples=["web"],
+    )
+    delivery_option: Optional[DeliveryOption] = Field(
+        default=None, description="Delivery option"
     )
 
 

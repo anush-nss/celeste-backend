@@ -212,6 +212,7 @@ class CheckoutService:
                 location=request.location,
                 cart_ids=request.cart_ids,
                 platform=request.platform,
+                delivery_option=request.delivery_option,
             )
             # Create a new StoreFulfillmentResponse with the order_id
             fulfillment_with_order_id = StoreFulfillmentResponse(

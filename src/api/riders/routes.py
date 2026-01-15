@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.api.riders.models import (
     RiderProfileSchema,
@@ -10,25 +10,21 @@ from src.api.riders.models import (
 )
 from src.api.riders.services.query_service import RiderQueryService
 from src.api.riders.services.rider_service import RiderService
+from src.api.orders.models import PaginatedOrdersResponse
+from src.api.orders.service import OrderService
 from src.config.constants import UserRole, OrderStatus
-from src.dependencies.auth import RoleChecker
+from src.dependencies.auth import RoleChecker, get_current_user
 from src.shared.responses import success_response
 
 riders_router = APIRouter(prefix="/riders", tags=["Riders"])
+
+# Initialize services
 rider_service = RiderService()
 query_service = RiderQueryService()
-
-from fastapi import HTTPException
-from src.api.orders.models import OrderSchema, PaginatedOrdersResponse
-from src.api.orders.service import OrderService
-from src.dependencies.auth import get_current_user
-
 order_service = OrderService()
 
 
 # ===== ADMIN ENDPOINTS =====
-
-
 
 
 @riders_router.get(
@@ -38,7 +34,9 @@ order_service = OrderService()
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
 async def get_riders(
-    store_id: Optional[int] = Query(None, description="Filter riders by store assignment"),
+    store_id: Optional[int] = Query(
+        None, description="Filter riders by store assignment"
+    ),
 ):
     """List all riders, optionally filtered by store."""
     riders = await query_service.get_riders(store_id=store_id)
@@ -53,10 +51,12 @@ async def get_riders(
     dependencies=[Depends(RoleChecker([UserRole.RIDER]))],
 )
 async def get_rider_orders(
-    status: Optional[List[OrderStatus]] = Query(None, description="Filter orders by status"),
+    order_statuses: Optional[List[OrderStatus]] = Query(
+        None, alias="status", description="Filter orders by status"
+    ),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     """List all orders assigned to the authenticated rider."""
     # 1. Get Rider Profile
@@ -64,27 +64,26 @@ async def get_rider_orders(
     if not rider:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Rider profile not found for this user."
+            detail="Rider profile not found for this user.",
         )
 
     # 2. Get Assigned Orders
     result = await order_service.get_orders_paginated(
         rider_id=rider.id,
-        status=[s.value for s in status] if status else None,
+        status=[s.value for s in order_statuses] if order_statuses else None,
         page=page,
         limit=limit,
         include_products=False,
         include_stores=True,
-        include_addresses=True
+        include_addresses=True,
     )
-    
+
     # Manually validate/dump orders in list to JSON
-    orders_data = [o.model_dump(mode="json") for o in result["orders"]]
-    
-    return success_response({
-        "orders": orders_data,
-        "pagination": result["pagination"]
-    })
+    orders_data = [
+        o.model_dump(mode="json", exclude={"items"}) for o in result["orders"]
+    ]
+
+    return success_response({"orders": orders_data, "pagination": result["pagination"]})
 
 
 @riders_router.get(
@@ -98,8 +97,7 @@ async def get_rider_profile(current_user=Depends(get_current_user)):
     rider = await query_service.get_rider_by_user_id(current_user.uid)
     if not rider:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Rider profile not found."
+            status_code=status.HTTP_404_NOT_FOUND, detail="Rider profile not found."
         )
     return success_response(rider.model_dump(mode="json"))
 
@@ -111,19 +109,21 @@ async def get_rider_profile(current_user=Depends(get_current_user)):
     dependencies=[Depends(RoleChecker([UserRole.RIDER]))],
 )
 async def update_rider_status(
-    status_update: RiderStatusUpdateSchema,
-    current_user=Depends(get_current_user)
+    status_update: RiderStatusUpdateSchema, current_user=Depends(get_current_user)
 ):
     """Toggle rider online/offline status."""
     rider = await query_service.get_rider_by_user_id(current_user.uid)
     if not rider:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Rider profile not found."
+            status_code=status.HTTP_404_NOT_FOUND, detail="Rider profile not found."
         )
-    
-    updated_rider = await rider_service.update_rider_status(rider.id, status_update.is_online)
-    return success_response(RiderProfileSchema.model_validate(updated_rider).model_dump(mode="json"))
+
+    updated_rider = await rider_service.update_rider_status(
+        rider.id, status_update.is_online
+    )
+    return success_response(
+        RiderProfileSchema.model_validate(updated_rider).model_dump(mode="json")
+    )
 
 
 @riders_router.get(
@@ -137,14 +137,13 @@ async def get_rider_stores(current_user=Depends(get_current_user)):
     rider = await query_service.get_rider_by_user_id(current_user.uid)
     if not rider:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Rider profile not found."
+            status_code=status.HTTP_404_NOT_FOUND, detail="Rider profile not found."
         )
-    
+
     stores = await rider_service.get_assigned_stores(rider.id)
-    # Convert store models to dicts/schema as needed. 
+    # Convert store models to dicts/schema as needed.
     # Store model has to_dict or pydantic validation.
-    # For now returning list of dicts manually or via model_dump if they were schemas. 
+    # For now returning list of dicts manually or via model_dump if they were schemas.
     # Since they are alchemy models:
     store_list = [
         {
@@ -153,8 +152,9 @@ async def get_rider_stores(current_user=Depends(get_current_user)):
             "address": s.address,
             "phone": s.phone,
             "latitude": s.latitude,
-            "longitude": s.longitude
-        } for s in stores
+            "longitude": s.longitude,
+        }
+        for s in stores
     ]
     return success_response(store_list)
 

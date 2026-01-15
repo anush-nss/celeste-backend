@@ -1,6 +1,4 @@
-from typing import Optional
-
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, insert, select
 from sqlalchemy.orm import selectinload
 
 from src.api.riders.models import (
@@ -19,7 +17,6 @@ class RiderService:
     def __init__(self):
         self._error_handler = ErrorHandler(__name__)
 
-
     async def update_rider(
         self, rider_id: int, payload: UpdateRiderSchema
     ) -> RiderProfileSchema:
@@ -31,7 +28,9 @@ class RiderService:
                 rider = result.scalars().first()
 
                 if not rider:
-                    raise ResourceNotFoundException(detail=f"Rider with ID {rider_id} not found")
+                    raise ResourceNotFoundException(
+                        detail=f"Rider with ID {rider_id} not found"
+                    )
 
                 update_data = payload.model_dump(exclude_unset=True)
                 for field, value in update_data.items():
@@ -57,7 +56,9 @@ class RiderService:
                     raise ResourceNotFoundException(detail="Rider not found")
 
                 # Validate store exists
-                store_exists = await session.scalar(select(Store.id).filter(Store.id == store_id))
+                store_exists = await session.scalar(
+                    select(Store.id).filter(Store.id == store_id)
+                )
                 if not store_exists:
                     raise ResourceNotFoundException(detail="Store not found")
 
@@ -93,12 +94,12 @@ class RiderService:
                 )
                 result = await session.execute(stmt)
                 await session.commit()
-                
+
                 if result.rowcount == 0:
-                     # Could raise 404, but idempotent is usually better. 
-                     # However user requested "delete also needed", usually implying explicit action.
-                     # We'll return success regardless if it existed or not (standard idempotent DELETE).
-                     pass
+                    # Could raise 404, but idempotent is usually better.
+                    # However user requested "delete also needed", usually implying explicit action.
+                    # We'll return success regardless if it existed or not (standard idempotent DELETE).
+                    pass
 
             except Exception as e:
                 self._error_handler.log_error("remove_rider_from_store", e)
@@ -115,9 +116,9 @@ class RiderService:
                 )
                 result = await session.execute(rider_stmt)
                 rider = result.scalar_one_or_none()
-                
+
                 if not rider:
-                     raise ResourceNotFoundException(detail="Rider not found")
+                    raise ResourceNotFoundException(detail="Rider not found")
 
                 # Reuse Store models logic, but we might want schema output.
                 # For now returning raw dictionaries matching Store schema structure logic if needed

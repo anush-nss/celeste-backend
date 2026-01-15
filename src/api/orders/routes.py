@@ -31,7 +31,11 @@ orders_router = APIRouter(prefix="/orders", tags=["Orders"])
 order_service = OrderService()
 
 
-@orders_router.get("/", summary="Retrieve orders", response_model=PaginatedOrdersResponse)
+@orders_router.get(
+    "/",
+    summary="Retrieve orders",
+    response_model=PaginatedOrdersResponse,
+)
 async def get_orders(
     current_user: DecodedToken = Depends(get_current_user),
     cart_id: Optional[List[int]] = Query(
@@ -74,14 +78,11 @@ async def get_orders(
             include_stores=include_stores,
             include_addresses=include_addresses,
         )
-    
+
     # Manually dump models for JSON compatibility
     orders_data = [order.model_dump(mode="json") for order in result["orders"]]
-    
-    return success_response({
-        "orders": orders_data,
-        "pagination": result["pagination"]
-    })
+
+    return success_response({"orders": orders_data, "pagination": result["pagination"]})
 
 
 @orders_router.get(
@@ -145,14 +146,14 @@ async def create__order(
     dependencies=[Depends(RoleChecker([UserRole.ADMIN, UserRole.RIDER]))],
 )
 async def update_order_status(
-    order_id: int, 
+    order_id: int,
     order_data: UpdateOrderSchema,
-    current_user: DecodedToken = Depends(get_current_user)
+    current_user: DecodedToken = Depends(get_current_user),
 ):
     updated_order = await order_service.update_order_status(
-        order_id, 
-        order_data, 
-        current_user={"role": current_user.role, "uid": current_user.uid}
+        order_id,
+        order_data,
+        current_user={"role": current_user.role, "uid": current_user.uid},
     )
     return success_response(updated_order.model_dump(mode="json"))
 

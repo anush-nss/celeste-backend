@@ -1,7 +1,6 @@
 from typing import List, Optional
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from src.api.riders.models import RiderProfileSchema
 from src.database.connection import AsyncSessionLocal
@@ -56,7 +55,9 @@ class RiderQueryService:
                 self._error_handler.log_error("get_rider_by_user_id", e)
                 raise
 
-    async def get_riders(self, store_id: Optional[int] = None) -> List[RiderProfileSchema]:
+    async def get_riders(
+        self, store_id: Optional[int] = None
+    ) -> List[RiderProfileSchema]:
         """Get all riders, optionally filtered by store_id"""
         async with AsyncSessionLocal() as session:
             try:

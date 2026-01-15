@@ -30,6 +30,7 @@ from src.config.constants import (
     FulfillmentMode,
     OrderStatus,
     DELIVERY_PRODUCT_ODOO_ID,
+    DeliveryOption,
 )
 from src.database.connection import AsyncSessionLocal
 from src.database.models.cart import Cart
@@ -63,6 +64,7 @@ class OrderService:
         location: LocationSchema,
         cart_ids: List[int],
         platform: Optional[str] = None,
+        delivery_option: Optional[DeliveryOption] = None,
     ) -> OrderSchema:
         """Creates a single order for a specific store's fulfillment."""
         async with AsyncSessionLocal() as session:
@@ -87,6 +89,7 @@ class OrderService:
                     fulfillment_mode=fulfillment_mode,
                     delivery_service_level=location.delivery_service_level,
                     platform=platform,
+                    delivery_option=delivery_option,
                     status=OrderStatus.PENDING.value,
                 )
                 session.add(new_order)
@@ -138,7 +141,8 @@ class OrderService:
                 result = await session.execute(
                     select(Order)
                     .options(
-                        selectinload(Order.items), selectinload(Order.payment_transaction)
+                        selectinload(Order.items),
+                        selectinload(Order.payment_transaction),
                     )
                     .filter(Order.id == new_order.id)
                 )
@@ -489,7 +493,7 @@ class OrderService:
 
             if user_id:
                 query = query.filter(Order.user_id == user_id)
-            
+
             if rider_id:
                 query = query.filter(Order.rider_id == rider_id)
 
@@ -524,14 +528,16 @@ class OrderService:
         async with AsyncSessionLocal() as session:
             # Base query creation (similar to get_all_orders but we need count too)
             query = select(Order)
-            
+
             # Apply Filters
             if cart_ids:
-                query = query.join(Order.items).filter(OrderItem.source_cart_id.in_(cart_ids))
+                query = query.join(Order.items).filter(
+                    OrderItem.source_cart_id.in_(cart_ids)
+                )
 
             if user_id:
                 query = query.filter(Order.user_id == user_id)
-            
+
             if rider_id:
                 query = query.filter(Order.rider_id == rider_id)
 
@@ -541,14 +547,14 @@ class OrderService:
             # Count query (efficient count)
             # We clone the query for count before adding eager loads and ordering
             from sqlalchemy import func
+
             count_query = select(func.count()).select_from(query.subquery())
             total_result = await session.execute(count_query)
             total_count = total_result.scalar() or 0
 
             # Add eager loads and ordering for data query
             query = (
-                query
-                .options(
+                query.options(
                     selectinload(Order.items), selectinload(Order.payment_transaction)
                 )
                 .distinct()
@@ -567,15 +573,15 @@ class OrderService:
                 include_stores=include_stores,
                 include_addresses=include_addresses,
             )
-            
+
             return {
                 "orders": enriched_orders,
                 "pagination": {
                     "limit": limit,
                     "offset": offset,
                     "total_results": total_count,
-                    "page": page
-                }
+                    "page": page,
+                },
             }
 
     @handle_service_errors("retrieving order")
@@ -662,6 +668,7 @@ class OrderService:
                     total_amount=total_amount,
                     status=OrderStatus.PENDING.value,
                     platform=platform,
+                    delivery_option=order_data.delivery_option,
                     items=order_items_to_create,
                 )
                 session.add(new_order)
@@ -671,7 +678,8 @@ class OrderService:
                 result = await session.execute(
                     select(Order)
                     .options(
-                        selectinload(Order.items), selectinload(Order.payment_transaction)
+                        selectinload(Order.items),
+                        selectinload(Order.payment_transaction),
                     )
                     .filter(Order.id == new_order.id)
                 )
@@ -688,7 +696,10 @@ class OrderService:
 
     @handle_service_errors("updating order status")
     async def update_order_status(
-        self, order_id: int, status_update: UpdateOrderSchema, current_user: Optional[Dict] = None
+        self,
+        order_id: int,
+        status_update: UpdateOrderSchema,
+        current_user: Optional[Dict] = None,
     ) -> OrderSchema:
         async with AsyncSessionLocal() as session:
             async with session.begin():
@@ -715,33 +726,36 @@ class OrderService:
                     if isinstance(status_update.status, OrderStatus)
                     else status_update.status
                 )
-                
+
                 # Role-based validation
                 if current_user and current_user.get("role") == "rider":
-                     # 1. Verify Assignment
-                     # We need to fetch the rider profile for this user
-                     rider_stmt = select(RiderProfile).where(RiderProfile.user_id == current_user.get("uid"))
-                     rider_result = await session.execute(rider_stmt)
-                     rider_profile = rider_result.scalar_one_or_none()
-                     
-                     if not rider_profile or order.rider_id != rider_profile.id:
-                         # Use ForbiddenException if available, else ValidationException
-                         raise ValidationException("You can only update status for orders assigned to you.")
-                     
-                     # 2. Verify Valid Transitions for Riders
-                     # Allowed: PACKED -> SHIPPED -> DELIVERED
-                     allowed_transitions = {
-                         OrderStatus.PACKED.value: [OrderStatus.SHIPPED.value],
-                         OrderStatus.SHIPPED.value: [OrderStatus.DELIVERED.value]
-                     }
-                     
-                     allowed_next_statuses = allowed_transitions.get(current_status, [])
-                     if new_status not in allowed_next_statuses:
-                         raise ValidationException(
-                             f"Riders cannot transition order from {current_status} to {new_status}. "
-                             f"Allowed transitions: {allowed_transitions}"
-                         )
+                    # 1. Verify Assignment
+                    # We need to fetch the rider profile for this user
+                    rider_stmt = select(RiderProfile).where(
+                        RiderProfile.user_id == current_user.get("uid")
+                    )
+                    rider_result = await session.execute(rider_stmt)
+                    rider_profile = rider_result.scalar_one_or_none()
 
+                    if not rider_profile or order.rider_id != rider_profile.id:
+                        # Use ForbiddenException if available, else ValidationException
+                        raise ValidationException(
+                            "You can only update status for orders assigned to you."
+                        )
+
+                    # 2. Verify Valid Transitions for Riders
+                    # Allowed: PACKED -> SHIPPED -> DELIVERED
+                    allowed_transitions = {
+                        OrderStatus.PACKED.value: [OrderStatus.SHIPPED.value],
+                        OrderStatus.SHIPPED.value: [OrderStatus.DELIVERED.value],
+                    }
+
+                    allowed_next_statuses = allowed_transitions.get(current_status, [])
+                    if new_status not in allowed_next_statuses:
+                        raise ValidationException(
+                            f"Riders cannot transition order from {current_status} to {new_status}. "
+                            f"Allowed transitions: {allowed_transitions}"
+                        )
 
                 if current_status == new_status:
                     return OrderSchema.model_validate(order)  # No change
@@ -843,7 +857,8 @@ class OrderService:
                 result = await session.execute(
                     select(Order)
                     .options(
-                        selectinload(Order.items), selectinload(Order.payment_transaction)
+                        selectinload(Order.items),
+                        selectinload(Order.payment_transaction),
                     )
                     .filter(Order.id == order.id)
                 )
@@ -915,29 +930,30 @@ class OrderService:
                 )
                 result = await session.execute(stmt)
                 orders = result.scalars().all()
-            
+
             # Update each order status
             # We call update_order_status one by one to trigger side effects (inventory)
             for order in orders:
                 if order.status == OrderStatus.PENDING.value:
                     try:
                         await self.update_order_status(
-                            order.id, 
-                            UpdateOrderSchema(status=OrderStatus.CONFIRMED)
+                            order.id, UpdateOrderSchema(status=OrderStatus.CONFIRMED)
                         )
                         self._error_handler.logger.info(
                             f"Order {order.id} confirmed via payment callback"
                         )
-                        
+
                         # Logically, we might want to trigger Odoo sync here or in update_order_status
                         if background_tasks:
-                            background_tasks.add_task(self._background_odoo_sync, order.id)
-                            
+                            background_tasks.add_task(
+                                self._background_odoo_sync, order.id
+                            )
+
                     except Exception as e:
                         self._error_handler.logger.error(
                             f"Failed to confirm order {order.id} in callback: {e}"
                         )
-                        # We don't fail the entire callback if one order fails, 
+                        # We don't fail the entire callback if one order fails,
                         # but we should log it.
 
         return callback_result
@@ -952,7 +968,9 @@ class OrderService:
                 rider_result = await session.execute(rider_stmt)
                 rider = rider_result.scalar_one_or_none()
                 if not rider:
-                    raise ResourceNotFoundException(f"Rider with ID {rider_id} not found")
+                    raise ResourceNotFoundException(
+                        f"Rider with ID {rider_id} not found"
+                    )
 
                 # 2. Verify Order exists and is PACKED
                 order_stmt = (
@@ -969,17 +987,19 @@ class OrderService:
                 order = order_result.scalar_one_or_none()
 
                 if not order:
-                    raise ResourceNotFoundException(f"Order with ID {order_id} not found")
+                    raise ResourceNotFoundException(
+                        f"Order with ID {order_id} not found"
+                    )
 
                 if order.status != OrderStatus.PACKED.value:
                     raise ValidationException(
                         f"Order must be in PACKED state to assign a rider. Current status: {order.status}"
                     )
-                
+
                 # 3. Assign Rider
                 order.rider_id = rider_id
                 await session.flush()
-                
+
                 # Re-query to ensure everything is loaded correctly for the return schema
                 # This avoids "greenlet_spawn" issues with accessing relationships on a potentially stale object
                 order_stmt = (
@@ -1015,13 +1035,15 @@ class OrderService:
                 order = result.scalar_one_or_none()
 
                 if not order:
-                    raise ResourceNotFoundException(f"Order with ID {order_id} not found")
+                    raise ResourceNotFoundException(
+                        f"Order with ID {order_id} not found"
+                    )
 
                 if order.status != OrderStatus.PACKED.value:
                     raise ValidationException(
                         f"Order must be in PACKED state to unassign a rider. Current status: {order.status}"
                     )
-                
+
                 order.rider_id = None
                 await session.flush()
         return {"message": "Rider assignment removed successfully"}

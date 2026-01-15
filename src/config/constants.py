@@ -43,6 +43,12 @@ class DeliveryServiceLevel(str, Enum):
     STANDARD = "standard"
 
 
+class DeliveryOption(str, Enum):
+    LEAVE_AT_DOOR = "leave_at_door"
+    MEET_OUTSIDE = "meet_outside"
+    AT_RECEPTION = "at_reception"
+
+
 class OdooSyncStatus(str, Enum):
     PENDING = "pending"
     SYNCED = "synced"

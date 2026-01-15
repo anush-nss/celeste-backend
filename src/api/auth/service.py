@@ -130,19 +130,21 @@ class AuthService:
         phone_number = decoded_token.phone_number
 
         if not phone_number:
-            raise ValidationException(detail="Phone number required in ID token for rider registration")
+            raise ValidationException(
+                detail="Phone number required in ID token for rider registration"
+            )
 
         # Handle Rider Profile (Create or Link)
         from src.database.connection import AsyncSessionLocal
         from src.database.models.rider import RiderProfile
-        from sqlalchemy import select, update
+        from sqlalchemy import select
 
         async with AsyncSessionLocal() as session:
             # Check if rider profile exists
             query = select(RiderProfile).filter(RiderProfile.phone == phone_number)
             result = await session.execute(query)
             rider_profile = result.scalars().first()
-            
+
             if not rider_profile:
                 # Create new Rider Profile
                 rider_profile = RiderProfile(
@@ -151,20 +153,24 @@ class AuthService:
                     vehicle_type=user_registration.vehicle_type,
                     vehicle_registration_number=user_registration.vehicle_registration_number,
                     is_active=True,
-                    user_id=uid # Link immediately
+                    user_id=uid,  # Link immediately
                 )
                 session.add(rider_profile)
             else:
                 # Update existing profile
                 rider_profile.user_id = uid
-                rider_profile.name = user_registration.name.strip() # Update name if changed
+                rider_profile.name = (
+                    user_registration.name.strip()
+                )  # Update name if changed
                 rider_profile.vehicle_type = user_registration.vehicle_type
                 if user_registration.vehicle_registration_number:
-                    rider_profile.vehicle_registration_number = user_registration.vehicle_registration_number
-                
+                    rider_profile.vehicle_registration_number = (
+                        user_registration.vehicle_registration_number
+                    )
+
                 if not rider_profile.is_active:
-                     # Reactivate if it was inactive? Or error? Let's reactivate for registration.
-                     rider_profile.is_active = True
+                    # Reactivate if it was inactive? Or error? Let's reactivate for registration.
+                    rider_profile.is_active = True
 
             await session.commit()
 
@@ -173,23 +179,23 @@ class AuthService:
 
         # Check if user already exists
         existing_user = await self.user_service.get_user_by_id(uid)
-        
+
         if existing_user:
-             # If user exists, we've updated their profile link above. 
-             # Should we update their role in DB if it was different? 
-             # Assuming yes to self-correct.
-             if existing_user.role != UserRole.RIDER:
-                  await self.user_service.update_user(uid, {"role": UserRole.RIDER})
-             
-             # Return existing user info
-             return {
+            # If user exists, we've updated their profile link above.
+            # Should we update their role in DB if it was different?
+            # Assuming yes to self-correct.
+            if existing_user.role != UserRole.RIDER:
+                await self.user_service.update_user(uid, {"role": UserRole.RIDER})
+
+            # Return existing user info
+            return {
                 "message": "Rider registered successfully (User linked)",
-                 "user": {
+                "user": {
                     "uid": existing_user.firebase_uid,
                     "role": UserRole.RIDER,
                     "tier_id": existing_user.tier_id,
                 },
-             }, 200
+            }, 200
 
         # Create user in PostgreSQL database as RIDER
         create_user_data = CreateUserSchema(

@@ -22,9 +22,7 @@ from src.database.models.ecommerce_category import (
 from src.database.models.product import Product, Tag, ProductTag  # Added product models
 from src.database.models.associations import (
     product_categories,
-    store_riders,
 )  # Import association table
-from src.database.models.rider import RiderProfile  # Added rider model
 from src.database.models.store import Store  # Added store model
 from src.database.models.store_tag import StoreTag  # Added store tag model
 from src.database.models.tier import Tier

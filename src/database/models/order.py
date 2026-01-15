@@ -128,6 +128,9 @@ class Order(Base):
         ),
         nullable=True,
     )
+    delivery_option: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, default=None
+    )
     status: Mapped[str] = mapped_column(
         Enum(
             OrderStatus,
@@ -174,8 +177,12 @@ class Order(Base):
     )
     user: Mapped["User"] = relationship("User", back_populates="orders")
     store: Mapped["Store"] = relationship("Store")
-    payment_transaction: Mapped["PaymentTransaction"] = relationship("PaymentTransaction")
-    rider: Mapped["RiderProfile"] = relationship("RiderProfile", back_populates="assigned_orders")
+    payment_transaction: Mapped["PaymentTransaction"] = relationship(
+        "PaymentTransaction"
+    )
+    rider: Mapped["RiderProfile"] = relationship(
+        "RiderProfile", back_populates="assigned_orders"
+    )
 
     rider_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("rider_profiles.id"), nullable=True

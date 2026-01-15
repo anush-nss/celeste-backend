@@ -19,6 +19,7 @@ from src.database.models.associations import store_riders
 
 if TYPE_CHECKING:
     from src.database.models.store_tag import StoreTag
+    from src.database.models.rider import RiderProfile
 
 
 class Store(Base):
