@@ -14,6 +14,7 @@ from src.api.search.routes import search_router
 from src.api.search.service import SearchService
 from src.api.stores.routes import stores_router
 from src.api.tags.routes import tags_router
+from src.api.riders.routes import riders_router
 from src.api.tiers.routes import router as tiers_router
 from src.api.users.routes import users_router
 from src.middleware.error import http_exception_handler
@@ -83,6 +84,7 @@ app.include_router(stores_router)
 app.include_router(pricing_router)
 app.include_router(tiers_router)
 app.include_router(tags_router)
+app.include_router(riders_router)
 
 # Include dev router only in development environment
 if os.getenv("ENVIRONMENT") == "development":

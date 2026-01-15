@@ -4,6 +4,16 @@ from enum import Enum
 class UserRole(str, Enum):
     CUSTOMER = "CUSTOMER"
     ADMIN = "ADMIN"
+    RIDER = "RIDER"
+
+
+class VehicleType(str, Enum):
+    MOTORCYCLE = "motorcycle"
+    BICYCLE = "bicycle"
+    SCOOTER = "scooter"
+    CAR = "car"
+    VAN = "van"
+    OTHER = "other"
 
 
 class DiscountType(str, Enum):

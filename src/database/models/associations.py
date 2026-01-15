@@ -32,3 +32,27 @@ product_categories = Table(
     # Timestamp index for audit queries
     Index("idx_product_categories_created_at", "created_at"),
 )
+
+
+# Association table for many-to-many relationship between stores and riders
+store_riders = Table(
+    "store_riders",
+    Base.metadata,
+    Column(
+        "store_id",
+        Integer,
+        ForeignKey("stores.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "rider_profile_id",
+        Integer,
+        ForeignKey("rider_profiles.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("assigned_at", TIMESTAMP(timezone=True), server_default=text("NOW()")),
+    # Relationship indexes
+    Index("idx_store_riders_store", "store_id"),
+    Index("idx_store_riders_rider", "rider_profile_id"),
+    Index("idx_store_riders_composite", "store_id", "rider_profile_id"),
+)
