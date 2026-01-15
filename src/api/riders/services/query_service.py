@@ -42,6 +42,20 @@ class RiderQueryService:
                 self._error_handler.log_error("get_rider_by_phone", e)
                 raise
 
+    async def get_rider_by_user_id(self, user_id: str) -> Optional[RiderProfileSchema]:
+        """Get rider by Firebase User ID"""
+        async with AsyncSessionLocal() as session:
+            try:
+                query = select(RiderProfile).filter(RiderProfile.user_id == user_id)
+                result = await session.execute(query)
+                rider = result.scalars().first()
+                if rider:
+                    return RiderProfileSchema.model_validate(rider)
+                return None
+            except Exception as e:
+                self._error_handler.log_error("get_rider_by_user_id", e)
+                raise
+
     async def get_riders(self, store_id: Optional[int] = None) -> List[RiderProfileSchema]:
         """Get all riders, optionally filtered by store_id"""
         async with AsyncSessionLocal() as session:

@@ -28,10 +28,9 @@ from src.database.base import Base
 if TYPE_CHECKING:
     from src.database.models.product import Product
     from src.database.models.store import Store
-    from src.database.models.product import Product
-    from src.database.models.store import Store
     from src.database.models.user import User
     from src.database.models.payment import PaymentTransaction
+    from src.database.models.rider import RiderProfile
 
 
 class Order(Base):
@@ -176,6 +175,11 @@ class Order(Base):
     user: Mapped["User"] = relationship("User", back_populates="orders")
     store: Mapped["Store"] = relationship("Store")
     payment_transaction: Mapped["PaymentTransaction"] = relationship("PaymentTransaction")
+    rider: Mapped["RiderProfile"] = relationship("RiderProfile", back_populates="assigned_orders")
+
+    rider_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("rider_profiles.id"), nullable=True
+    )
 
 
 class OrderItem(Base):

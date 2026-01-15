@@ -18,6 +18,7 @@ from src.database.models.associations import store_riders
 
 if TYPE_CHECKING:
     from src.database.models.store import Store
+    from src.database.models.order import Order
 
 
 class RiderProfile(Base):
@@ -59,3 +60,4 @@ class RiderProfile(Base):
     stores: Mapped[List["Store"]] = relationship(
         "Store", secondary=store_riders, back_populates="riders"
     )
+    assigned_orders: Mapped[List["Order"]] = relationship("Order", back_populates="rider")

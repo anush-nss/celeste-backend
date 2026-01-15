@@ -36,6 +36,7 @@ from src.database.models.cart import Cart
 from src.database.models.order import Order, OrderItem
 from src.database.models.product import Product
 from src.database.models.user import User
+from src.database.models.rider import RiderProfile
 from src.integrations.odoo.order_sync import OdooOrderSync
 from src.shared.error_handler import ErrorHandler, handle_service_errors
 from src.shared.exceptions import ResourceNotFoundException, ValidationException
@@ -464,6 +465,7 @@ class OrderService:
     async def get_all_orders(
         self,
         user_id: Optional[str] = None,
+        rider_id: Optional[int] = None,
         cart_ids: Optional[List[int]] = None,
         status: Optional[List[str]] = None,
         include_products: bool = False,
@@ -487,6 +489,9 @@ class OrderService:
 
             if user_id:
                 query = query.filter(Order.user_id == user_id)
+            
+            if rider_id:
+                query = query.filter(Order.rider_id == rider_id)
 
             if status:
                 query = query.filter(Order.status.in_(status))
@@ -798,6 +803,86 @@ class OrderService:
 
         if not cart_ids:
             return {"status": "error", "message": "Cart IDs not found in callback"}
+
+        return callback_result
+
+    @handle_service_errors("assigning rider to order")
+    async def assign_rider(self, order_id: int, rider_id: int) -> OrderSchema:
+        """Assign a rider to a PACKED order"""
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                # 1. Verify Rider exists
+                rider_stmt = select(RiderProfile).where(RiderProfile.id == rider_id)
+                rider_result = await session.execute(rider_stmt)
+                rider = rider_result.scalar_one_or_none()
+                if not rider:
+                    raise ResourceNotFoundException(f"Rider with ID {rider_id} not found")
+
+                # 2. Verify Order exists and is PACKED
+                order_stmt = (
+                    select(Order)
+                    .options(
+                        selectinload(Order.items).selectinload(OrderItem.product),
+                        selectinload(Order.store),
+                    )
+                    .where(Order.id == order_id)
+                )
+                order_result = await session.execute(order_stmt)
+                order = order_result.scalar_one_or_none()
+
+                if not order:
+                    raise ResourceNotFoundException(f"Order with ID {order_id} not found")
+
+                if order.status != OrderStatus.PACKED.value:
+                    raise ValidationException(
+                        f"Order must be in PACKED state to assign a rider. Current status: {order.status}"
+                    )
+                
+                # 3. Assign Rider
+                order.rider_id = rider_id
+                await session.flush()
+                
+                # Re-query
+                # result = await session.execute(
+                #     select(Order)
+                #     .options(
+                #         selectinload(Order.items), selectinload(Order.payment_transaction)
+                #     )
+                #     .filter(Order.id == order.id)
+                # )
+                # order_with_items = result.scalar_one()
+
+            # Enrich
+            enriched_orders = await self._enrich_orders_with_products_and_stores(
+                [order],
+                include_products=True,
+                include_stores=True,
+                include_addresses=True,
+            )
+            return enriched_orders[0]
+
+    @handle_service_errors("unassigning rider from order")
+    async def unassign_rider(self, order_id: int) -> dict:
+        """Remove rider assignment from a PACKED order"""
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                # Verify Order exists and is PACKED
+                stmt = select(Order).where(Order.id == order_id)
+                result = await session.execute(stmt)
+                order = result.scalar_one_or_none()
+
+                if not order:
+                    raise ResourceNotFoundException(f"Order with ID {order_id} not found")
+
+                if order.status != OrderStatus.PACKED.value:
+                    raise ValidationException(
+                        f"Order must be in PACKED state to unassign a rider. Current status: {order.status}"
+                    )
+                
+                order.rider_id = None
+                await session.flush()
+        
+        return {"message": "Rider assignment removed successfully"}
 
         # Fetch all orders associated with the cart_ids
         async with AsyncSessionLocal() as session:

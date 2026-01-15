@@ -139,6 +139,29 @@ async def update_order_status(order_id: int, order_data: UpdateOrderSchema):
 
 
 @orders_router.post(
+    "/{order_id}/assign/{rider_id}",
+    summary="Assign a rider to an order (Admin only)",
+    description="Assigns a rider to a PACKED order.",
+    response_model=OrderSchema,
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def assign_rider_to_order(order_id: int, rider_id: int):
+    updated_order = await order_service.assign_rider(order_id, rider_id)
+    return success_response(updated_order.model_dump(mode="json"))
+
+
+@orders_router.delete(
+    "/{order_id}/assign",
+    summary="Remove rider assignment from an order (Admin only)",
+    description="Unassigns a rider from a PACKED order.",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+)
+async def unassign_rider_from_order(order_id: int):
+    result = await order_service.unassign_rider(order_id)
+    return success_response(result)
+
+
+@orders_router.post(
     "/payment/callback",
     summary="Handle payment gateway callback",
     status_code=status.HTTP_200_OK,

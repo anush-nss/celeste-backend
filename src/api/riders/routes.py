@@ -17,6 +17,13 @@ riders_router = APIRouter(prefix="/riders", tags=["Riders"])
 rider_service = RiderService()
 query_service = RiderQueryService()
 
+from fastapi import HTTPException
+from src.api.orders.models import OrderSchema
+from src.api.orders.service import OrderService
+from src.dependencies.auth import get_current_user
+
+order_service = OrderService()
+
 
 # ===== ADMIN ENDPOINTS =====
 
@@ -35,6 +42,32 @@ async def get_riders(
     """List all riders, optionally filtered by store."""
     riders = await query_service.get_riders(store_id=store_id)
     return success_response([r.model_dump(mode="json") for r in riders])
+
+
+@riders_router.get(
+    "/me/orders",
+    summary="Get assigned orders for current rider",
+    response_model=List[OrderSchema],
+    dependencies=[Depends(RoleChecker([UserRole.RIDER]))],
+)
+async def get_rider_orders(current_user=Depends(get_current_user)):
+    """List all orders assigned to the authenticated rider."""
+    # 1. Get Rider Profile
+    rider = await query_service.get_rider_by_user_id(current_user.uid)
+    if not rider:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Rider profile not found for this user."
+        )
+
+    # 2. Get Assigned Orders
+    orders = await order_service.get_all_orders(
+        rider_id=rider.id,
+        include_products=True,
+        include_stores=True,
+        include_addresses=True
+    )
+    return success_response([o.model_dump(mode="json") for o in orders])
 
 
 @riders_router.put(
