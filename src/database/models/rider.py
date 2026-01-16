@@ -89,6 +89,4 @@ class StoreRider(Base):
     rider: Mapped["RiderProfile"] = relationship(
         "RiderProfile", back_populates="store_associations", overlaps="stores"
     )
-    store: Mapped["Store"] = relationship(
-        "Store", viewonly=True, overlaps="riders"
-    )
+    store: Mapped["Store"] = relationship("Store", viewonly=True, overlaps="riders")

@@ -759,9 +759,8 @@ class OrderService:
                         )
 
                 if current_status == new_status:
-                     return OrderUpdateResponse(
-                        id=order.id,
-                        status=OrderStatus(current_status)
+                    return OrderUpdateResponse(
+                        id=order.id, status=OrderStatus(current_status)
                     )
 
                 # Logic for status transitions
@@ -793,6 +792,11 @@ class OrderService:
                         )
 
                 elif new_status == OrderStatus.SHIPPED.value:
+                    if order.fulfillment_mode == FulfillmentMode.PICKUP.value:
+                        raise ValidationException(
+                            "Pickup orders cannot be set to SHIPPED."
+                        )
+
                     if current_status != OrderStatus.PACKED.value:
                         raise ValidationException("Order must be PACKED to be SHIPPED.")
                     # Fulfill inventory when shipped (rider collected from store)
@@ -807,14 +811,18 @@ class OrderService:
                         )
 
                 elif new_status == OrderStatus.DELIVERED.value:
-                    # Can go from PACKED (pickup) or SHIPPED (delivery)
-                    if current_status not in [
-                        OrderStatus.PACKED.value,
-                        OrderStatus.SHIPPED.value,
-                    ]:
-                        raise ValidationException(
-                            "Order must be PACKED or SHIPPED to be DELIVERED."
-                        )
+                    # Enforce correct previous state based on fulfillment mode
+                    if order.fulfillment_mode == FulfillmentMode.PICKUP.value:
+                        if current_status != OrderStatus.PACKED.value:
+                            raise ValidationException(
+                                "Pickup orders must go directly from PACKED to DELIVERED."
+                            )
+                    else:
+                        # Delivery orders must go through SHIPPED
+                        if current_status != OrderStatus.SHIPPED.value:
+                            raise ValidationException(
+                                "Delivery orders must be SHIPPED before being DELIVERED."
+                            )
                     # If coming from PACKED (pickup order), fulfill inventory now
                     if current_status == OrderStatus.PACKED.value:
                         for item in order.items:
@@ -864,8 +872,7 @@ class OrderService:
                 updated_order = result.scalar_one()
 
             return OrderUpdateResponse(
-                id=updated_order.id,
-                status=OrderStatus(updated_order.status)
+                id=updated_order.id, status=OrderStatus(updated_order.status)
             )
 
     async def _background_odoo_sync(self, order_id: int) -> None:
@@ -990,6 +997,9 @@ class OrderService:
                     raise ValidationException(
                         f"Order must be in PACKED state to assign a rider. Current status: {order.status}"
                     )
+
+                if order.fulfillment_mode == FulfillmentMode.PICKUP.value:
+                    raise ValidationException("Cannot assign rider to a PICKUP order.")
 
                 # 3. Assign Rider
                 order.rider_id = rider_id
