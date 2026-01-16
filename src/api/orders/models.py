@@ -10,6 +10,11 @@ from src.api.riders.models import RiderProfileSchema
 from src.config.constants import FulfillmentMode, OrderStatus, Platform, DeliveryOption
 
 
+class CustomerSchema(BaseModel):
+    name: str = Field(..., examples=["John Doe"])
+    phone: Optional[str] = Field(None, examples=["+94771234567"])
+
+
 class OrderItemSchema(BaseModel):
     id: int = Field(..., examples=[101])
     order_id: int = Field(..., examples=[1])
@@ -79,6 +84,9 @@ class OrderSchema(BaseModel):
     rider: Optional[RiderProfileSchema] = Field(
         default=None, description="Assigned rider details (if populated)"
     )
+    customer: Optional[CustomerSchema] = Field(
+        default=None, description="Customer details (for riders)"
+    )
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -141,6 +149,8 @@ class UpdateOrderSchema(BaseModel):
 class OrderUpdateResponse(BaseModel):
     id: int
     status: OrderStatus
+
+
 
 
 class PaymentCallbackSchema(BaseModel):

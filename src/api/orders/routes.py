@@ -67,6 +67,7 @@ async def get_orders(
             include_products=include_products,
             include_stores=include_stores,
             include_addresses=include_addresses,
+            include_rider=True,
         )
     else:
         result = await order_service.get_orders_paginated(
@@ -78,6 +79,7 @@ async def get_orders(
             include_products=include_products,
             include_stores=include_stores,
             include_addresses=include_addresses,
+            include_rider=True,
         )
 
     # Manually dump models for JSON compatibility

@@ -76,6 +76,7 @@ async def get_rider_orders(
         include_products=False,
         include_stores=True,
         include_addresses=True,
+        include_customer=True,
     )
 
     # Manually validate/dump orders in list to JSON

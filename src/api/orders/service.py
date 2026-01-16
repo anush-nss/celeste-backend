@@ -22,6 +22,7 @@ from src.api.pricing.service import PricingService
 from src.api.products.cache import products_cache
 from src.api.products.service import ProductService
 from src.api.stores.service import StoreService
+from src.api.riders.models import RiderProfileSchema
 from src.api.users.services.address_service import UserAddressService
 
 
@@ -329,6 +330,8 @@ class OrderService:
         include_products: bool = True,
         include_stores: bool = True,
         include_addresses: bool = True,
+        include_customer: bool = False,
+        include_rider: bool = False,
     ) -> List[OrderSchema]:
         """
         Enrich orders with full product, store, and address details using bulk queries.
@@ -341,6 +344,9 @@ class OrderService:
             include_products: Fetch and populate full product details
             include_stores: Fetch and populate full store details
             include_addresses: Fetch and populate full address details
+            include_addresses: Fetch and populate full address details
+            include_customer: Fetch and populate customer details (name, phone)
+            include_rider: Fetch and populate rider details
 
         Returns:
             List of enriched OrderSchema objects
@@ -352,6 +358,8 @@ class OrderService:
         all_product_ids = set()
         all_store_ids = set()
         all_address_ids = set()
+        all_user_ids = set()
+        all_rider_ids = set()
 
         for order in orders:
             if include_stores:
@@ -362,6 +370,10 @@ class OrderService:
                 for item in order.items:
                     if item.product_id != DELIVERY_PRODUCT_ODOO_ID:
                         all_product_ids.add(item.product_id)
+            if include_customer and order.user_id:
+                all_user_ids.add(order.user_id)
+            if include_rider and order.rider_id:
+                all_rider_ids.add(order.rider_id)
 
         # Fetch all products in a single bulk query (reuses products module)
         products_map = {}
@@ -415,6 +427,36 @@ class OrderService:
             )
             addresses_map = {a.id: a.model_dump(mode="json") for a in addresses}
 
+        # Fetch all users in a single bulk query
+        users_map = {}
+        if include_customer and all_user_ids:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(User).filter(User.firebase_uid.in_(list(all_user_ids)))
+                )
+                users = result.scalars().all()
+                users_map = {
+                    u.firebase_uid: {
+                        "name": u.name,
+                        "phone": u.phone,
+                    }
+                    for u in users
+                }
+
+        # Fetch all riders in a single bulk query
+        riders_map = {}
+        if include_rider and all_rider_ids:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(RiderProfile).filter(RiderProfile.id.in_(list(all_rider_ids)))
+                )
+                riders = result.scalars().all()
+                # Use RiderProfileSchema to convert to dict
+                riders_map = {
+                    r.id: RiderProfileSchema.model_validate(r).model_dump(mode="json")
+                    for r in riders
+                }
+
         # Build enriched order schemas
         order_schemas = []
         for order in orders:
@@ -461,6 +503,12 @@ class OrderService:
                 "address": addresses_map.get(order.address_id)
                 if order.address_id
                 else None,  # Attach address
+                "customer": users_map.get(order.user_id)
+                if include_customer
+                else None,  # Attach customer
+                "rider": riders_map.get(order.rider_id)
+                if include_rider and order.rider_id
+                else None,  # Attach rider
             }
             order_schemas.append(OrderSchema.model_validate(order_dict))
 
@@ -524,6 +572,8 @@ class OrderService:
         include_products: bool = False,
         include_stores: bool = False,
         include_addresses: bool = False,
+        include_customer: bool = False,
+        include_rider: bool = False,
     ) -> Dict[str, Any]:
         offset = (page - 1) * limit
         async with AsyncSessionLocal() as session:
@@ -573,6 +623,8 @@ class OrderService:
                 include_products=include_products,
                 include_stores=include_stores,
                 include_addresses=include_addresses,
+                include_customer=include_customer,
+                include_rider=include_rider,
             )
 
             return {
