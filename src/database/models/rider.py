@@ -72,6 +72,21 @@ class RiderProfile(Base):
     stores: Mapped[List["Store"]] = relationship(
         "Store", secondary=store_riders, back_populates="riders"
     )
+    store_associations: Mapped[List["StoreRider"]] = relationship(
+        "StoreRider", back_populates="rider", viewonly=True
+    )
     assigned_orders: Mapped[List["Order"]] = relationship(
         "Order", back_populates="rider"
     )
+
+
+class StoreRider(Base):
+    __table__ = store_riders
+    __mapper_args__ = {
+        "primary_key": [store_riders.c.store_id, store_riders.c.rider_profile_id]
+    }
+
+    rider: Mapped["RiderProfile"] = relationship(
+        "RiderProfile", back_populates="store_associations"
+    )
+    store: Mapped["Store"] = relationship("Store", viewonly=True)

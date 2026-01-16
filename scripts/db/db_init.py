@@ -8,6 +8,7 @@ sys.path.append(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
 
+from sqlalchemy import text
 from src.database.base import Base
 from src.database.connection import engine
 from src.database.models.user import (
@@ -32,6 +33,7 @@ from src.database.models.price_list_line import PriceListLine
 from src.database.models.tier_price_list import TierPriceList
 from src.database.models.inventory import Inventory
 from src.database.models.order import Order, OrderItem
+from src.database.models.rider import RiderProfile, StoreRider
 
 # Avoid unused import issues
 _ = (
@@ -55,6 +57,8 @@ _ = (
     Inventory,
     Order,
     OrderItem,
+    RiderProfile,
+    StoreRider,
 )
 
 
@@ -64,6 +68,9 @@ async def init_db(drop_tables: bool = False):
             print("Dropping all tables...")
             await conn.run_sync(Base.metadata.drop_all)
             print("Tables dropped.")
+        print("Enabling extensions...")
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         print("Creating tables...")
         await conn.run_sync(Base.metadata.create_all)
         print("Tables created.")
