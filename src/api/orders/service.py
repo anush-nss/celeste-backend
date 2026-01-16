@@ -448,7 +448,9 @@ class OrderService:
         if include_rider and all_rider_ids:
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
-                    select(RiderProfile).filter(RiderProfile.id.in_(list(all_rider_ids)))
+                    select(RiderProfile).filter(
+                        RiderProfile.id.in_(list(all_rider_ids))
+                    )
                 )
                 riders = result.scalars().all()
                 # Use RiderProfileSchema to convert to dict

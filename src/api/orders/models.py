@@ -151,8 +151,6 @@ class OrderUpdateResponse(BaseModel):
     status: OrderStatus
 
 
-
-
 class PaymentCallbackSchema(BaseModel):
     payment_reference: str
     amount: float
