@@ -54,6 +54,9 @@ async def get_orders(
     include_addresses: bool = Query(
         False, description="Include full delivery address details"
     ),
+    include_rider: bool = Query(
+        True, description="Include assigned rider details (if any)"
+    ),
 ):
     """
     Retrieve orders with optional population of related data and pagination.
@@ -67,7 +70,7 @@ async def get_orders(
             include_products=include_products,
             include_stores=include_stores,
             include_addresses=include_addresses,
-            include_rider=True,
+            include_rider=include_rider,
         )
     else:
         result = await order_service.get_orders_paginated(
@@ -79,7 +82,7 @@ async def get_orders(
             include_products=include_products,
             include_stores=include_stores,
             include_addresses=include_addresses,
-            include_rider=True,
+            include_rider=include_rider,
         )
 
     # Manually dump models for JSON compatibility
