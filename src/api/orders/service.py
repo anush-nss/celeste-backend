@@ -14,6 +14,7 @@ from src.api.orders.models import (
     OrderItemSchema,
     OrderSchema,
     UpdateOrderSchema,
+    OrderUpdateResponse,
 )
 from src.api.orders.services.payment_service import PaymentService
 from src.api.orders.services.store_selection_service import StoreSelectionService
@@ -700,7 +701,7 @@ class OrderService:
         order_id: int,
         status_update: UpdateOrderSchema,
         current_user: Optional[Dict] = None,
-    ) -> OrderSchema:
+    ) -> OrderUpdateResponse:
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 result = await session.execute(
@@ -758,7 +759,10 @@ class OrderService:
                         )
 
                 if current_status == new_status:
-                    return OrderSchema.model_validate(order)  # No change
+                     return OrderUpdateResponse(
+                        id=order.id,
+                        status=OrderStatus(current_status)
+                    )
 
                 # Logic for status transitions
                 if new_status == OrderStatus.CONFIRMED.value:
@@ -855,23 +859,14 @@ class OrderService:
 
                 # Re-query with eager loading of items
                 result = await session.execute(
-                    select(Order)
-                    .options(
-                        selectinload(Order.items),
-                        selectinload(Order.payment_transaction),
-                    )
-                    .filter(Order.id == order.id)
+                    select(Order).filter(Order.id == order.id)
                 )
-                order_with_items = result.scalar_one()
+                updated_order = result.scalar_one()
 
-            # Use existing enrichment method to properly convert to schema
-            enriched_orders = await self._enrich_orders_with_products_and_stores(
-                [order_with_items],
-                include_products=True,
-                include_stores=True,
-                include_addresses=True,
+            return OrderUpdateResponse(
+                id=updated_order.id,
+                status=OrderStatus(updated_order.status)
             )
-            return enriched_orders[0]
 
     async def _background_odoo_sync(self, order_id: int) -> None:
         """Background task to sync order to Odoo (runs after response is sent)"""

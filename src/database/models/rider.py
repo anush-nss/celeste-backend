@@ -87,6 +87,8 @@ class StoreRider(Base):
     }
 
     rider: Mapped["RiderProfile"] = relationship(
-        "RiderProfile", back_populates="store_associations"
+        "RiderProfile", back_populates="store_associations", overlaps="stores"
     )
-    store: Mapped["Store"] = relationship("Store", viewonly=True)
+    store: Mapped["Store"] = relationship(
+        "Store", viewonly=True, overlaps="riders"
+    )

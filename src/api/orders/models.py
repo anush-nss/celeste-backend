@@ -3,6 +3,10 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.api.products.models import ProductSchema
+from src.api.stores.models import StoreSchema
+from src.api.users.models import AddressResponseSchema
+from src.api.riders.models import RiderProfileSchema
 from src.config.constants import FulfillmentMode, OrderStatus, Platform, DeliveryOption
 
 
@@ -16,7 +20,7 @@ class OrderItemSchema(BaseModel):
     unit_price: float = Field(..., examples=[1150.0])
     total_price: float = Field(..., examples=[2300.0])
     created_at: datetime
-    product: Optional[Dict[str, Any]] = Field(
+    product: Optional[ProductSchema] = Field(
         default=None, description="Full product details (if populated)"
     )
 
@@ -66,11 +70,14 @@ class OrderSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
     items: List[OrderItemSchema]
-    store: Optional[Dict[str, Any]] = Field(
+    store: Optional[StoreSchema] = Field(
         default=None, description="Full store details (if populated)"
     )
-    address: Optional[Dict[str, Any]] = Field(
+    address: Optional[AddressResponseSchema] = Field(
         default=None, description="Full delivery address details (if populated)"
+    )
+    rider: Optional[RiderProfileSchema] = Field(
+        default=None, description="Assigned rider details (if populated)"
     )
 
     model_config = ConfigDict(
@@ -129,6 +136,11 @@ class CreateOrderSchema(BaseModel):
 
 class UpdateOrderSchema(BaseModel):
     status: OrderStatus = Field(..., examples=[OrderStatus.CONFIRMED.value])
+
+
+class OrderUpdateResponse(BaseModel):
+    id: int
+    status: OrderStatus
 
 
 class PaymentCallbackSchema(BaseModel):

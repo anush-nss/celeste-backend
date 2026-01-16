@@ -17,6 +17,7 @@ from src.api.orders.models import (
     PaginatedOrdersResponse,
     PaymentCallbackSchema,
     UpdateOrderSchema,
+    OrderUpdateResponse,
 )
 from src.api.orders.service import OrderService
 from src.config.constants import OdooSyncStatus, OrderStatus, UserRole
@@ -142,7 +143,7 @@ async def create__order(
 @orders_router.put(
     "/{order_id}/status",
     summary="Update an order status",
-    response_model=OrderSchema,
+    response_model=OrderUpdateResponse,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN, UserRole.RIDER]))],
 )
 async def update_order_status(
@@ -155,7 +156,9 @@ async def update_order_status(
         order_data,
         current_user={"role": current_user.role, "uid": current_user.uid},
     )
-    return success_response(updated_order.model_dump(mode="json"))
+    return success_response(
+        updated_order.model_dump(), message="Order status updated successfully"
+    )
 
 
 @orders_router.post(
