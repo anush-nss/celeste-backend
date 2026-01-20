@@ -35,11 +35,14 @@ from src.api.users.checkout_models import (
     PaymentInfo,
 )
 from src.api.users.checkout_service import CheckoutService
+from src.api.payments.service import PaymentService
+from src.api.payments.models import InitiatePaymentSchema
 
 users_router = APIRouter(prefix="/users", tags=["Users"])
 
 user_service = UserService()
 order_service = OrderService()
+payment_service = PaymentService()
 checkout_service = CheckoutService()
 interaction_service = InteractionService()
 
@@ -542,15 +545,30 @@ async def create_multi_cart_order(
     if not user_id:
         raise UnauthorizedException(detail="User ID not found in token")
 
-    order_summary = await checkout_service.create_order(user_id, checkout_data)
+    # Generate preview to get totals and items without creating orders yet
+    order_summary = await checkout_service.preview_order(user_id, checkout_data)
 
-    # Initiate payment
-    payment_info_dict = await order_service.payment_service.initiate_payment(
+    # Initiate payment with checkout intent
+    payment_data = InitiatePaymentSchema(
+        amount=Decimal(str(order_summary.overall_total)),
+        currency="LKR",
         cart_ids=checkout_data.cart_ids,
-        total_amount=Decimal(order_summary.overall_total),
+        save_card=checkout_data.save_card,
+        source_token_id=checkout_data.source_token_id,
+        checkout_data=checkout_data.model_dump(mode="json"),
+    )
+    payment_info_dict = await payment_service.initiate_payment(
+        payment_data=payment_data,
         user_id=user_id,
     )
-    order_summary.payment_info = PaymentInfo(**payment_info_dict)
+    order_summary.payment_info = PaymentInfo(
+        payment_reference=payment_info_dict["payment_reference"],
+        session_id=payment_info_dict["session_id"],
+        merchant_id=payment_info_dict["merchant_id"],
+        success_indicator=payment_info_dict["success_indicator"],
+        amount=float(order_summary.overall_total),
+        currency="LKR",
+    )
 
     return success_response(
         order_summary.model_dump(mode="json"), status_code=status.HTTP_201_CREATED

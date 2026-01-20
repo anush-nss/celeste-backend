@@ -33,6 +33,8 @@ from src.database.models.price_list_line import PriceListLine
 from src.database.models.tier_price_list import TierPriceList
 from src.database.models.inventory import Inventory
 from src.database.models.order import Order, OrderItem
+from src.database.models.payment import PaymentTransaction
+from src.database.models.payment_token import UserPaymentToken
 from src.database.models.rider import RiderProfile, StoreRider
 
 # Avoid unused import issues
@@ -57,6 +59,8 @@ _ = (
     Inventory,
     Order,
     OrderItem,
+    PaymentTransaction,
+    UserPaymentToken,
     RiderProfile,
     StoreRider,
 )

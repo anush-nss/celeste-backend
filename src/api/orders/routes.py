@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional
+from typing import List, Optional
 
 from fastapi import (
     APIRouter,
@@ -15,7 +15,6 @@ from src.api.orders.models import (
     CreateOrderSchema,
     OrderSchema,
     PaginatedOrdersResponse,
-    PaymentCallbackSchema,
     UpdateOrderSchema,
     OrderUpdateResponse,
 )
@@ -187,55 +186,6 @@ async def assign_rider_to_order(order_id: int, rider_id: int):
 async def unassign_rider_from_order(order_id: int):
     result = await order_service.unassign_rider(order_id)
     return success_response(result)
-
-
-@orders_router.post(
-    "/payment/callback",
-    summary="Handle payment gateway callback",
-    status_code=status.HTTP_200_OK,
-)
-async def payment_callback(
-    callback_data: PaymentCallbackSchema, background_tasks: BackgroundTasks
-):
-    """Handle payment gateway callback (webhook)"""
-
-    # Process callback through order service (with background tasks for Odoo sync)
-    result = await order_service.process_payment_callback(
-        callback_data.model_dump(), background_tasks
-    )
-
-    if result["status"] == "success":
-        return success_response(result)
-    else:
-        return success_response(result, status_code=400)
-
-
-@orders_router.post(
-    "/{order_id}/payment/verify",
-    summary="Verify payment status",
-    dependencies=[Depends(get_current_user)],
-)
-async def verify_payment(
-    order_id: int,
-    payment_reference: str,
-    current_user: Annotated[DecodedToken, Depends(get_current_user)],
-):
-    """Verify payment status for an order"""
-
-    # Check if user owns the order or is admin
-    order = await order_service.get_order_by_id(order_id)
-    if not order:
-        raise ResourceNotFoundException(detail=f"Order with ID {order_id} not found")
-
-    if current_user.role != UserRole.ADMIN and order.user_id != current_user.uid:
-        raise ForbiddenException("You do not have permission to verify this payment")
-
-    # Verify payment with gateway
-    verification_result = await order_service.payment_service.verify_payment(
-        payment_reference, order_id
-    )
-
-    return success_response(verification_result)
 
 
 @orders_router.get(

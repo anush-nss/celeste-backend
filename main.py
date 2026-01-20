@@ -17,6 +17,7 @@ from src.api.tags.routes import tags_router
 from src.api.riders.routes import riders_router
 from src.api.tiers.routes import router as tiers_router
 from src.api.users.routes import users_router
+from src.api.payments.routes import payments_router
 from src.middleware.error import http_exception_handler
 from src.middleware.rate_limit import limiter
 from src.middleware.security import TrustedSourceMiddleware
@@ -85,6 +86,7 @@ app.include_router(pricing_router)
 app.include_router(tiers_router)
 app.include_router(tags_router)
 app.include_router(riders_router)
+app.include_router(payments_router)
 
 # Include dev router only in development environment
 if os.getenv("ENVIRONMENT") == "development":

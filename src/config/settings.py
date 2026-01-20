@@ -51,5 +51,17 @@ class Settings:
     ODOO_USERNAME = os.getenv("ODOO_USERNAME", None)
     ODOO_PASSWORD = os.getenv("ODOO_PASSWORD", None)
 
+    # Payment Gateway
+    API_BASE_URL = os.getenv(
+        "API_BASE_URL", "https://celeste-api-846811285865.asia-south1.run.app"
+    )
+    MPGS_MERCHANT_ID = os.getenv("MPGS_MERCHANT_ID", None)
+    MPGS_API_USERNAME = os.getenv("MPGS_API_USERNAME", None)
+    MPGS_API_PASSWORD = os.getenv("MPGS_API_PASSWORD", None)
+    MPGS_GATEWAY_URL = os.getenv(
+        "MPGS_GATEWAY_URL",
+        "https://cbcmpgs.gateway.mastercard.com/api/rest/version/100",
+    )
+
 
 settings = Settings()

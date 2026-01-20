@@ -16,7 +16,7 @@ from src.api.orders.models import (
     UpdateOrderSchema,
     OrderUpdateResponse,
 )
-from src.api.orders.services.payment_service import PaymentService
+
 from src.api.orders.services.store_selection_service import StoreSelectionService
 from src.api.pricing.service import PricingService
 from src.api.products.cache import products_cache
@@ -51,7 +51,6 @@ class OrderService:
         self.interaction_service = InteractionService()
         self.inventory_service = InventoryService()
         self.pricing_service = PricingService()
-        self.payment_service = PaymentService()
         self.store_selection_service = StoreSelectionService()
         self.products_cache = products_cache
         self.product_service = ProductService()
@@ -949,70 +948,49 @@ class OrderService:
                 exc_info=True,
             )
 
-    @handle_service_errors("processing payment callback")
-    async def process_payment_callback(
-        self, callback_data: Dict, background_tasks=None
-    ) -> Dict[str, Any]:
-        """Process payment gateway callback and update order status
-
-        Args:
-            callback_data: Payment gateway callback data
-            background_tasks: FastAPI BackgroundTasks for async processing
+    @handle_service_errors("confirming orders by cart ids")
+    async def confirm_orders_by_cart_ids(
+        self, cart_ids: List[int], background_tasks=None
+    ) -> List[int]:
+        """Update multiple orders status to CONFIRMED based on cart IDs.
+        Used after successful payment.
         """
-
-        # Process callback through payment service
-        callback_result = await self.payment_service.process_payment_callback(
-            callback_data
-        )
-
-        if callback_result["status"] == "error":
-            return callback_result
-
-        cart_ids = callback_result.get("cart_ids")
-        payment_status = callback_result["status"]
-
         if not cart_ids:
-            return {"status": "error", "message": "Cart IDs not found in callback"}
+            return []
 
-        if payment_status == "success":
-            # Update order statuses to CONFIRMED
-            # We need to find the orders associated with these carts
-            async with AsyncSessionLocal() as session:
-                stmt = (
-                    select(Order)
-                    .join(Order.items)
-                    .where(OrderItem.source_cart_id.in_(cart_ids))
-                    .distinct()
-                )
-                result = await session.execute(stmt)
-                orders = result.scalars().all()
+        # Find the orders associated with these carts
+        async with AsyncSessionLocal() as session:
+            stmt = (
+                select(Order)
+                .join(Order.items)
+                .where(OrderItem.source_cart_id.in_(cart_ids))
+                .distinct()
+            )
+            result = await session.execute(stmt)
+            orders = result.scalars().all()
 
-            # Update each order status
-            # We call update_order_status one by one to trigger side effects (inventory)
-            for order in orders:
-                if order.status == OrderStatus.PENDING.value:
-                    try:
-                        await self.update_order_status(
-                            order.id, UpdateOrderSchema(status=OrderStatus.CONFIRMED)
-                        )
-                        self._error_handler.logger.info(
-                            f"Order {order.id} confirmed via payment callback"
-                        )
+        confirmed_ids = []
+        # Update each order status
+        for order in orders:
+            if order.status == OrderStatus.PENDING.value:
+                try:
+                    await self.update_order_status(
+                        order.id, UpdateOrderSchema(status=OrderStatus.CONFIRMED)
+                    )
+                    confirmed_ids.append(order.id)
+                    self._error_handler.logger.info(
+                        f"Order {order.id} confirmed via successful payment"
+                    )
 
-                        # Logically, we might want to trigger Odoo sync here or in update_order_status
-                        if background_tasks:
-                            background_tasks.add_task(
-                                self._background_odoo_sync, order.id
-                            )
+                    if background_tasks:
+                        background_tasks.add_task(self._background_odoo_sync, order.id)
 
-                    except Exception as e:
-                        self._error_handler.logger.error(
-                            f"Failed to confirm order {order.id} in callback: {e}"
-                        )
-                        # We don't fail the entire callback if one order fails,
-                        # but we should log it.
+                except Exception as e:
+                    self._error_handler.logger.error(
+                        f"Failed to confirm order {order.id}: {e}"
+                    )
 
-        return callback_result
+        return confirmed_ids
 
     @handle_service_errors("assigning rider to order")
     async def assign_rider(self, order_id: int, rider_id: int) -> OrderSchema:

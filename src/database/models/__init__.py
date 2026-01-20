@@ -17,6 +17,7 @@ from .tier import Tier
 from .tier_benefit import Benefit, tier_benefits
 from .tier_price_list import TierPriceList
 from .payment import PaymentTransaction
+from .payment_token import UserPaymentToken
 from .user import User
 from .product_vector import ProductVector
 from .search_interaction import SearchInteraction
@@ -49,6 +50,7 @@ __all__ = [
     "Order",
     "OrderItem",
     "PaymentTransaction",
+    "UserPaymentToken",
     "ProductVector",
     "SearchInteraction",
     "UserPreference",

@@ -2,7 +2,6 @@
 Pydantic models for the checkout process.
 """
 
-from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -60,6 +59,14 @@ class CheckoutRequestSchema(BaseModel):
         description="Delivery instruction option (e.g., leave_at_door)",
         examples=[DeliveryOption.LEAVE_AT_DOOR],
     )
+    save_card: bool = Field(
+        False,
+        description="Whether to save the card for future use (defaults to False)",
+    )
+    source_token_id: Optional[int] = Field(
+        None,
+        description="ID of the saved card token to use for this payment",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -93,9 +100,9 @@ class StoreFulfillmentResponse(BaseModel):
 
 class PaymentInfo(BaseModel):
     payment_reference: str
-    payment_url: str
-    status: str
-    expires_at: datetime
+    session_id: Optional[str] = None
+    merchant_id: Optional[str] = None
+    success_indicator: Optional[str] = None
     amount: float
     currency: str
 
@@ -152,6 +159,14 @@ class CheckoutResponse(BaseModel):
                     "unavailable_items": [
                         {"product_id": 6285, "quantity": 59, "cart_id": 2}
                     ],
+                    "payment_info": {
+                        "payment_reference": "PAY-71546362248F",
+                        "session_id": "SESSION0002469515981J54919494J0",
+                        "merchant_id": "TESTCELESTENOLKR",
+                        "success_indicator": "c4c7514ad1fa4e3d",
+                        "amount": 2886.96,
+                        "currency": "LKR",
+                    },
                 }
             ]
         }
