@@ -62,6 +62,7 @@ class Settings:
         "MPGS_GATEWAY_URL",
         "https://cbcmpgs.gateway.mastercard.com/api/rest/version/100",
     )
+    MPGS_WEBHOOK_SECRET = os.getenv("MPGS_WEBHOOK_SECRET", None)
 
 
 settings = Settings()

@@ -25,6 +25,7 @@ from .user_preference import UserPreference
 from .product_interaction import ProductInteraction
 from .product_popularity import ProductPopularity
 from .search_suggestion import SearchSuggestion
+from .webhook_notification import WebhookNotification
 
 __all__ = [
     "User",
@@ -57,4 +58,5 @@ __all__ = [
     "ProductInteraction",
     "ProductPopularity",
     "SearchSuggestion",
+    "WebhookNotification",
 ]

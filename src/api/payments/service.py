@@ -174,6 +174,16 @@ class PaymentService:
             if not transaction:
                 raise ResourceNotFoundException("Payment transaction not found.")
 
+            # Idempotency check: If already processed, return early
+            if transaction.status in ["success", "failed"]:
+                self._error_handler.logger.info(
+                    f"Payment {payment_reference} already processed with status: {transaction.status}"
+                )
+                return {
+                    "status": transaction.status,
+                    "payment_reference": payment_reference,
+                }
+
             # 2. Verify with Gateway (using simple GET order or RETRIEVE SESSION)
             # We typically use GET /order/{orderId} to check status
             endpoint = f"{self.gateway_url}/merchant/{self.merchant_id}/order/{payment_reference}"
@@ -255,7 +265,9 @@ class PaymentService:
             return {
                 "status": transaction.status,
                 "payment_reference": payment_reference,
-                "updated_at": transaction.updated_at.isoformat() if transaction.updated_at else None,
+                "updated_at": transaction.updated_at.isoformat()
+                if transaction.updated_at
+                else None,
             }
 
     async def _create_payment_token(self, session, transaction, order_data):

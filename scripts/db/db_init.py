@@ -35,6 +35,7 @@ from src.database.models.inventory import Inventory
 from src.database.models.order import Order, OrderItem
 from src.database.models.payment import PaymentTransaction
 from src.database.models.payment_token import UserPaymentToken
+from src.database.models.webhook_notification import WebhookNotification
 from src.database.models.rider import RiderProfile, StoreRider
 
 # Avoid unused import issues
@@ -61,6 +62,7 @@ _ = (
     OrderItem,
     PaymentTransaction,
     UserPaymentToken,
+    WebhookNotification,
     RiderProfile,
     StoreRider,
 )
