@@ -1,4 +1,5 @@
 import math
+from enum import Enum
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -24,6 +25,7 @@ from src.api.products.service import ProductService
 from src.api.stores.service import StoreService
 from src.api.riders.models import RiderProfileSchema
 from src.api.users.services.address_service import UserAddressService
+from src.api.riders.services.assignment_service import RiderAssignmentService
 
 
 from src.api.users.checkout_models import LocationSchema, StoreFulfillmentResponse
@@ -56,6 +58,7 @@ class OrderService:
         self.product_service = ProductService()
         self.store_service = StoreService()
         self.address_service = UserAddressService()
+        self._rider_assignment_service = RiderAssignmentService()
 
     @handle_service_errors("creating single store order")
     async def create_single_store_order(
@@ -89,8 +92,10 @@ class OrderService:
                     delivery_charge=Decimal(str(store_fulfillment.delivery_cost)),
                     fulfillment_mode=fulfillment_mode,
                     delivery_service_level=location.delivery_service_level,
-                    platform=platform,
-                    delivery_option=delivery_option,
+                    platform=platform.value if isinstance(platform, Enum) else platform,
+                    delivery_option=delivery_option.value
+                    if isinstance(delivery_option, Enum)
+                    else delivery_option,
                     status=OrderStatus.PENDING.value,
                 )
                 session.add(new_order)
@@ -490,6 +495,7 @@ class OrderService:
                 "fulfillment_mode": order.fulfillment_mode,
                 "delivery_service_level": order.delivery_service_level,
                 "platform": order.platform,
+                "delivery_option": order.delivery_option,
                 "status": order.status,
                 "payment_reference": order.payment_transaction.payment_reference
                 if order.payment_transaction
@@ -605,12 +611,18 @@ class OrderService:
             total_count = total_result.scalar() or 0
 
             # Add eager loads and ordering for data query
+            # ### TESTING: PACKED orders should show oldest first ###
+            if status and len(status) == 1 and status[0] == OrderStatus.PACKED.value:
+                order_by_clause = Order.created_at.asc()
+            else:
+                order_by_clause = Order.created_at.desc()
+
             query = (
                 query.options(
                     selectinload(Order.items), selectinload(Order.payment_transaction)
                 )
                 .distinct()
-                .order_by(Order.created_at.desc())
+                .order_by(order_by_clause)
                 .limit(limit)
                 .offset(offset)
             )
@@ -721,8 +733,10 @@ class OrderService:
                     store_id=order_data.store_id,
                     total_amount=total_amount,
                     status=OrderStatus.PENDING.value,
-                    platform=platform,
-                    delivery_option=order_data.delivery_option,
+                    platform=platform.value if isinstance(platform, Enum) else platform,
+                    delivery_option=order_data.delivery_option.value
+                    if isinstance(order_data.delivery_option, Enum)
+                    else order_data.delivery_option,
                     items=order_items_to_create,
                 )
                 session.add(new_order)
@@ -985,6 +999,31 @@ class OrderService:
                     if background_tasks:
                         background_tasks.add_task(self._background_odoo_sync, order.id)
 
+                    # ### TESTING ONLY: Auto-transition to PACKED ###
+                    # Automatically move orders from CONFIRMED -> PROCESSING -> PACKED (if not pickup)
+                    if order.fulfillment_mode != FulfillmentMode.PICKUP.value:
+                        try:
+                            # 1. To PROCESSING
+                            await self.update_order_status(
+                                order.id,
+                                UpdateOrderSchema(status=OrderStatus.PROCESSING),
+                            )
+                            # 2. To PACKED
+                            await self.update_order_status(
+                                order.id, UpdateOrderSchema(status=OrderStatus.PACKED)
+                            )
+                            # 3. Auto-assign Rider
+                            await self.auto_assign_rider(order.id)
+
+                            self._error_handler.logger.info(
+                                f"[TEST] Order {order.id} auto-transitioned to PACKED and assigned to rider"
+                            )
+                        except Exception as e:
+                            self._error_handler.logger.error(
+                                f"[TEST] Failed auto-transition for order {order.id}: {e}"
+                            )
+                    # ### END TESTING ONLY ###
+
                 except Exception as e:
                     self._error_handler.logger.error(
                         f"Failed to confirm order {order.id}: {e}"
@@ -1084,3 +1123,29 @@ class OrderService:
                 order.rider_id = None
                 await session.flush()
         return {"message": "Rider assignment removed successfully"}
+
+    @handle_service_errors("auto-assigning rider to order")
+    async def auto_assign_rider(self, order_id: int) -> OrderSchema:
+        """
+        Automatically assign a rider using the assignment service.
+        This uses placeholder logic for testing.
+        """
+        # 1. Gather data for assignment (Placeholders for now)
+        # In a real scenario, we'd query online riders and their stats
+        available_riders = [1, 2, 3, 4, 5]
+        rider_stats = {2: {"daily_count": 5, "current_load": 1}}
+
+        # 2. Call the assignment service
+        rider_id = await self._rider_assignment_service.auto_assign_rider(
+            order_id=order_id,
+            available_riders=available_riders,
+            rider_stats=rider_stats,
+        )
+
+        if not rider_id:
+            raise ValidationException(
+                "Could not automatically assign a rider at this time."
+            )
+
+        # 3. Use existing assign_rider logic to perform the actual update
+        return await self.assign_rider(order_id, rider_id)
