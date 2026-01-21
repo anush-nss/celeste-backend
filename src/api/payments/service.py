@@ -255,7 +255,7 @@ class PaymentService:
             return {
                 "status": transaction.status,
                 "payment_reference": payment_reference,
-                "updated_at": transaction.updated_at,
+                "updated_at": transaction.updated_at.isoformat() if transaction.updated_at else None,
             }
 
     async def _create_payment_token(self, session, transaction, order_data):

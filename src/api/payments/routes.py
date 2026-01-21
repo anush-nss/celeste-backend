@@ -11,6 +11,7 @@ from src.api.payments.service import PaymentService
 from src.dependencies.auth import get_current_user, RoleChecker
 from src.config.constants import UserRole
 from src.shared.responses import success_response
+from fastapi.responses import HTMLResponse
 
 payments_router = APIRouter(prefix="/payments", tags=["Payments"])
 payment_service = PaymentService()
@@ -57,11 +58,55 @@ async def payment_callback(
     """
     Callback endpoint where MPGS redirects after payment.
     We verify the transaction and update status.
+    Returns HTML for browser/WebView compatibility.
     """
     result = await payment_service.process_payment_callback(
         ref, resultIndicator, background_tasks
     )
-    return success_response(result)
+    
+    # Return HTML instead of JSON for WebView compatibility
+    status = result.get("status", "unknown")
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Payment {status.title()}</title>
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                background: #f5f5f5;
+            }}
+            .container {{
+                text-align: center;
+                padding: 2rem;
+                background: white;
+                border-radius: 12px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            }}
+            .success {{ color: #10b981; }}
+            .failed {{ color: #ef4444; }}
+            .processing {{ color: #f59e0b; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1 class="{status}">Payment {status.title()}</h1>
+            <p>Reference: {ref}</p>
+            <p>You can close this window.</p>
+        </div>
+    </body>
+    </html>
+    """
+
+    return HTMLResponse(content=html_content)
 
 
 @payments_router.get(
