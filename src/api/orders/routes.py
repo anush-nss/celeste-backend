@@ -54,7 +54,7 @@ async def get_orders(
         False, description="Include full delivery address details"
     ),
     include_rider: bool = Query(
-        True, description="Include assigned rider details (if any)"
+        False, description="Include assigned rider details (if any)"
     ),
 ):
     """
@@ -103,6 +103,9 @@ async def get_order_by_id(
     include_addresses: bool = Query(
         True, description="Include full delivery address details"
     ),
+    include_rider: bool = Query(
+        False, description="Include assigned rider details (if any)"
+    ),
 ):
     """
     Retrieve a specific order with optional population of related data.
@@ -115,6 +118,7 @@ async def get_order_by_id(
         include_products=include_products,
         include_stores=include_stores,
         include_addresses=include_addresses,
+        include_rider=include_rider,
     )
     if not order:
         raise ResourceNotFoundException(detail=f"Order with ID {order_id} not found")

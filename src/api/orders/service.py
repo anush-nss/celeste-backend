@@ -657,6 +657,7 @@ class OrderService:
         include_products: bool = True,
         include_stores: bool = True,
         include_addresses: bool = True,
+        include_rider: bool = False,
     ) -> OrderSchema | None:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -676,6 +677,7 @@ class OrderService:
                 include_products=include_products,
                 include_stores=include_stores,
                 include_addresses=include_addresses,
+                include_rider=include_rider,
             )
             return enriched_orders[0] if enriched_orders else None
 
