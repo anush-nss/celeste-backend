@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from tenacity import (
     retry,
@@ -27,7 +26,7 @@ from src.config.constants import (
     ODOO_SALESPERSON_ID,
 )
 from src.database.connection import AsyncSessionLocal
-from src.database.models.order import Order, OrderItem
+from src.database.models.order import Order
 from src.database.models.user import User
 from src.integrations.odoo.exceptions import (
     OdooAuthenticationError,
@@ -77,64 +76,75 @@ class OdooOrderSync:
         try:
             self._error_handler.logger.info(f"Starting Odoo sync for order {order_id}")
 
-            # Fetch order data with relationships
-            self._error_handler.logger.info(f"[{order_id}] Fetching order data...")
-            async with AsyncSessionLocal() as session:
-                order_data = await self._fetch_order_data(session, order_id)
+            # Local imports to avoid circular dependency
+            from src.api.orders.service import OrderService
+            from src.api.users.service import UserService
+
+            order_service = OrderService()
+            user_service = UserService()
+
+            # Step 1: Fetch enriched order data using existing service (Efficiency #1)
             self._error_handler.logger.info(
-                f"[{order_id}] Fetched order data successfully."
+                f"[{order_id}] Fetching enriched order data..."
             )
+            order_schema = await order_service.get_order_by_id(
+                order_id,
+                include_products=True,
+                include_stores=True,
+                include_addresses=True,
+            )
+
+            if not order_schema:
+                raise OdooSyncError(f"Order {order_id} not found")
+
+            # Fetch user with address for customer sync
+            user_schema = await user_service.get_user_by_id(
+                order_schema.user_id, include_addresses=True
+            )
+
+            if not user_schema:
+                raise OdooSyncError(f"User {order_schema.user_id} not found")
 
             # Ensure authenticated with Odoo
             if self.odoo._uid is None:
-                self._error_handler.logger.info(
-                    f"[{order_id}] Authenticating with Odoo..."
-                )
                 self.odoo.authenticate()
-                self._error_handler.logger.info(
-                    f"[{order_id}] Authenticated successfully."
+
+            # Step 2: Sync customer to Odoo (find or create)
+            # Removed proactive verification (Efficiency #3)
+            odoo_customer_id = await self._sync_customer(user_schema)
+
+            # Step 3: Create sales order with all lines in Odoo
+            try:
+                odoo_order_result = await self._create_sales_order(
+                    order_schema, odoo_customer_id
                 )
+            except OdooSyncError as e:
+                # Reactive Recovery (Efficiency #3): If partner doesn't exist, recreate and retry
+                error_str = str(e)
+                if "res.partner" in error_str and (
+                    "Record does not exist" in error_str or "deleted" in error_str
+                ):
+                    self._error_handler.logger.warning(
+                        f"Odoo customer {odoo_customer_id} not found. Re-syncing and retrying..."
+                    )
+                    # Force re-sync by passing something that triggers create/search
+                    odoo_customer_id = await self._sync_customer(
+                        user_schema, force_resync=True
+                    )
+                    odoo_order_result = await self._create_sales_order(
+                        order_schema, odoo_customer_id
+                    )
+                else:
+                    raise
 
-            # Step 1: Sync customer to Odoo (find or create)
-            self._error_handler.logger.info(f"[{order_id}] Syncing customer...")
-            odoo_customer_id = await self._sync_customer(order_data["user"])
-            self._error_handler.logger.info(
-                f"[{order_id}] Customer synced successfully. Odoo Customer ID: {odoo_customer_id}"
-            )
-
-            # Step 2: Create sales order with all lines in Odoo (or find existing)
-            self._error_handler.logger.info(
-                f"[{order_id}] Creating sales order with all lines in one call..."
-            )
-            odoo_order_result = await self._create_sales_order(
-                order_data, odoo_customer_id
-            )
             odoo_order_id = odoo_order_result["order_id"]
             order_exists = odoo_order_result["already_exists"]
             order_state = odoo_order_result.get("state", "draft")
-            lines_created = odoo_order_result.get("lines_created", 0)
-            lines_skipped = odoo_order_result.get("lines_skipped", 0)
 
-            if order_exists:
-                self._error_handler.logger.info(
-                    f"[{order_id}] Sales order found in Odoo. Odoo Order ID: {odoo_order_id}"
-                )
-            else:
-                self._error_handler.logger.info(
-                    f"[{order_id}] Sales order created with {lines_created} lines ({lines_skipped} skipped). Odoo Order ID: {odoo_order_id}"
-                )
-
-            # Step 3: Confirm order in Odoo (skip if already confirmed)
+            # Step 4: Confirm order in Odoo
+            # Optimized flow: Only skip if we definitively know it's already 'sale' (Efficiency #4)
             if order_state != "sale":
-                self._error_handler.logger.info(f"[{order_id}] Confirming order...")
                 await self._confirm_order(odoo_order_id)
-                self._error_handler.logger.info(
-                    f"[{order_id}] Order confirmed successfully."
-                )
-            else:
-                self._error_handler.logger.info(
-                    f"Order {odoo_order_id} already confirmed in Odoo, skipping confirmation"
-                )
 
             # Step 5: Update our order record
             await self._update_order_sync_status(
@@ -196,66 +206,37 @@ class OdooOrderSync:
             }
 
     async def _fetch_order_data(self, session, order_id: int) -> Dict[str, Any]:
-        """Fetch order data with all relationships"""
-        # Fetch order with items
-        order_query = select(Order).where(Order.id == order_id)
-        result = await session.execute(order_query)
-        order = result.scalar_one_or_none()
+        """Obsolete - replaced by OrderService.get_order_by_id"""
+        return {}
 
-        if not order:
-            raise OdooSyncError(f"Order {order_id} not found")
-
-        # Fetch order items
-        items_query = select(OrderItem).where(OrderItem.order_id == order_id)
-        items_result = await session.execute(items_query)
-        order_items = items_result.scalars().all()
-
-        # Fetch user with addresses eagerly loaded
-        user_query = (
-            select(User)
-            .options(selectinload(User.addresses))
-            .where(User.firebase_uid == order.user_id)
-        )
-        user_result = await session.execute(user_query)
-        user = user_result.scalar_one_or_none()
-
-        if not user:
-            raise OdooSyncError(f"User {order.user_id} not found")
-
-        return {
-            "order": order,
-            "items": order_items,
-            "user": user,
-        }
-
-    async def _sync_customer(self, user: User) -> int:
+    async def _sync_customer(self, user: Any, force_resync: bool = False) -> int:
         """
         Find or create customer in Odoo, with local caching.
+        Optimized: Removed proactive verification.
 
         Args:
-            user: User model instance
+            user: User schema or model
+            force_resync: Ignore cache and re-sync from Odoo
 
         Returns:
             Odoo partner ID
         """
+        loop = asyncio.get_event_loop()
+
         # Step 1: Check for cached Odoo customer ID
-        if user.odoo_customer_id:
-            self._error_handler.logger.info(
-                f"Found cached Odoo customer ID {user.odoo_customer_id} for user {user.firebase_uid}"
-            )
+        if user.odoo_customer_id and not force_resync:
             return user.odoo_customer_id
 
         try:
-            # Step 2: Search for existing customer in Odoo by firebase_uid (async)
+            # Step 2: Search for existing customer in Odoo by firebase_uuid
             self._error_handler.logger.info(
-                f"No cached ID found. Searching for Odoo customer for user {user.firebase_uid}"
+                f"Searching for Odoo customer for user {user.firebase_uid}"
             )
-            loop = asyncio.get_event_loop()
             existing_customers = await loop.run_in_executor(
                 self._executor,
                 lambda: self.odoo.search_read(
                     "res.partner",
-                    [("firebase_uid", "=", user.firebase_uid)],
+                    [("firebase_uuid", "=", user.firebase_uid)],
                     fields=["id", "name", "email"],
                     limit=1,
                 ),
@@ -275,14 +256,18 @@ class OdooOrderSync:
                     "name": user.name,
                     "email": user.email or False,
                     "phone": user.phone or False,
-                    "firebase_uid": user.firebase_uid,
+                    "firebase_uuid": user.firebase_uid,
                     "customer_rank": 1,
                     "is_company": False,
                 }
 
-                if user.addresses and len(user.addresses) > 0:
+                if hasattr(user, "addresses") and user.addresses:
                     default_address = next(
-                        (addr for addr in user.addresses if addr.is_default),
+                        (
+                            addr
+                            for addr in user.addresses
+                            if getattr(addr, "is_default", False)
+                        ),
                         user.addresses[0],
                     )
                     customer_values["street"] = default_address.address
@@ -290,9 +275,6 @@ class OdooOrderSync:
                 customer_id = await loop.run_in_executor(
                     self._executor,
                     lambda: self.odoo.create("res.partner", customer_values),
-                )
-                self._error_handler.logger.info(
-                    f"Created new Odoo customer {customer_id} for user {user.firebase_uid}"
                 )
 
             # Step 4: Cache the Odoo customer ID in our local database
@@ -310,26 +292,17 @@ class OdooOrderSync:
             raise OdooSyncError(f"Customer sync failed: {e}")
 
     async def _create_sales_order(
-        self, order_data: Dict[str, Any], odoo_customer_id: int
+        self, order: Any, odoo_customer_id: int
     ) -> Dict[str, Any]:
         """
         Create sales order in Odoo with all order lines in a single call (with duplicate check)
+        Optimized: Reuses data already fetched in Step 1.
 
         Args:
-            order_data: Dict with order, items, user
+            order: OrderSchema object
             odoo_customer_id: Odoo partner ID
-
-        Returns:
-            Dict with:
-                - order_id: Odoo sales order ID
-                - already_exists: bool
-                - state: Order state in Odoo
-                - lines_created: Number of lines created
-                - lines_skipped: Number of lines skipped
         """
         try:
-            order = order_data["order"]
-            order_items = order_data["items"]
             client_ref = f"CELESTE-{order.id}"
 
             # Check for existing order with this client reference (async)
@@ -345,64 +318,26 @@ class OdooOrderSync:
             )
 
             if existing_orders:
-                # Order already exists in Odoo
                 existing_order = existing_orders[0]
-                order_id = existing_order["id"]
-                order_state = existing_order["state"]
-
-                self._error_handler.logger.warning(
-                    f"Order already exists in Odoo | "
-                    f"Celeste Order ID: {order.id} | "
-                    f"Odoo Order ID: {order_id} | "
-                    f"Odoo Order Name: {existing_order['name']} | "
-                    f"State: {order_state} | "
-                    f"Skipping duplicate creation"
-                )
-
                 return {
-                    "order_id": order_id,
+                    "order_id": existing_order["id"],
                     "already_exists": True,
-                    "state": order_state,
-                    "lines_created": 0,
-                    "lines_skipped": 0,
+                    "state": existing_order["state"],
                 }
 
-            # No duplicate found - prepare order lines first
-            self._error_handler.logger.info(
-                f"Preparing {len(order_items)} order lines for order {order.id}"
-            )
+            # Prepare order lines using data already in the schema
+            order_lines = []
+            lines_skipped = 0
 
-            # Step 1: Fetch all products in a single query
-            product_ids = [item.product_id for item in order_items]
-            async with AsyncSessionLocal() as session:
-                from src.database.models.product import Product
+            # Map to store products we found in Odoo
+            padded_refs = [
+                str(item.product.ref).zfill(6)
+                for item in order.items
+                if item.product and item.product.ref
+            ]
 
-                products_query = select(Product).where(Product.id.in_(product_ids))
-                products_result = await session.execute(products_query)
-                products = {p.id: p for p in products_result.scalars().all()}
-
-            self._error_handler.logger.info(
-                f"Fetched {len(products)} products from database"
-            )
-
-            # Step 2: Batch fetch Odoo products by refs
-            padded_refs = []
-            product_ref_map = {}  # Map padded_ref -> our product
-
-            for item in order_items:
-                product = products.get(item.product_id)
-                if product:
-                    padded_ref = str(product.ref).zfill(6)
-                    padded_refs.append(padded_ref)
-                    product_ref_map[padded_ref] = product
-
-            # Batch search Odoo products (run in thread pool to avoid blocking)
             odoo_products_list = []
             if padded_refs:
-                self._error_handler.logger.info(
-                    f"Searching for {len(padded_refs)} products in Odoo (async)"
-                )
-                loop = asyncio.get_event_loop()
                 odoo_products_list = await loop.run_in_executor(
                     self._executor,
                     lambda: self.odoo.search_read(
@@ -411,141 +346,89 @@ class OdooOrderSync:
                         fields=["id", "name", "default_code"],
                     ),
                 )
-
-            # Create a map: padded_ref -> odoo_product_id
             odoo_product_map = {p["default_code"]: p["id"] for p in odoo_products_list}
 
-            self._error_handler.logger.info(
-                f"Found {len(odoo_product_map)} products in Odoo"
-            )
-
-            # Step 3: Build order lines
-            order_lines = []
-            lines_skipped = 0
-
-            for item in order_items:
-                product = products.get(item.product_id)
-
-                if not product:
-                    self._error_handler.logger.warning(
-                        f"Product {item.product_id} not found in database, skipping order line"
-                    )
+            for item in order.items:
+                if not item.product:
                     lines_skipped += 1
                     continue
 
-                padded_ref = str(product.ref).zfill(6)
+                padded_ref = str(item.product.ref).zfill(6)
                 odoo_product_id = odoo_product_map.get(padded_ref)
 
                 if not odoo_product_id:
-                    self._error_handler.logger.warning(
-                        f"Product ref '{product.ref}' (padded: '{padded_ref}') not found in Odoo, skipping order line"
-                    )
                     lines_skipped += 1
                     continue
 
-                # For regular products, calculate discount based on base vs final price.
-                base_price = float(product.base_price)
+                base_price = float(item.product.base_price)
                 final_price = float(item.unit_price)
 
                 if base_price > 0:
                     discount_percent = ((base_price - final_price) / base_price) * 100
-                    discount_percent = max(
-                        0.0, min(100.0, discount_percent)
-                    )  # Clamp 0-100
+                    discount_percent = max(0.0, min(100.0, discount_percent))
                 else:
                     discount_percent = 0.0
 
-                # Prepare order line using Odoo's command syntax: (0, 0, {...})
-                line_values = {
-                    "product_id": odoo_product_id,
-                    "product_uom_qty": item.quantity,
-                    "price_unit": base_price,  # Use base_price or dynamic price
-                    "discount": discount_percent,  # Apply calculated discount
-                }
-
-                self._error_handler.logger.info(
-                    f"Prepared order line | Product: {product.ref} | "
-                    f"Qty: {item.quantity} | Price: {base_price} | "
-                    f"Final Price: {final_price} | Discount: {discount_percent:.2f}% | "
-                    f"Odoo Line Values: {line_values}"
+                order_lines.append(
+                    (
+                        0,
+                        0,
+                        {
+                            "product_id": odoo_product_id,
+                            "product_uom_qty": item.quantity,
+                            "price_unit": base_price,
+                            "discount": discount_percent,
+                        },
+                    )
                 )
 
-                # Add to order_lines list using (0, 0, values) command
-                order_lines.append((0, 0, line_values))
-
-            lines_created = len(order_lines)
-
-            # Add delivery charge as a separate line
+            # Add delivery charge
             if order.delivery_charge > 0:
-                delivery_line_values = {
-                    "product_id": DELIVERY_PRODUCT_ODOO_ID,
-                    "product_uom_qty": 1,
-                    "price_unit": float(order.delivery_charge),
-                    "discount": 0.0,
-                }
-                order_lines.append((0, 0, delivery_line_values))
-                self._error_handler.logger.info(
-                    f"Added delivery charge line | Odoo Line Values: {delivery_line_values}"
-                )
-                lines_created += 1
-
-            if lines_created == 0:
-                raise OdooSyncError(
-                    "No order lines were created. All products were skipped."
+                order_lines.append(
+                    (
+                        0,
+                        0,
+                        {
+                            "product_id": DELIVERY_PRODUCT_ODOO_ID,
+                            "product_uom_qty": 1,
+                            "price_unit": float(order.delivery_charge),
+                            "discount": 0.0,
+                        },
+                    )
                 )
 
-            self._error_handler.logger.info(
-                f"Order lines summary | Prepared: {lines_created} | Skipped: {lines_skipped}"
-            )
+            if not order_lines:
+                raise OdooSyncError("No valid order lines found for Odoo sync")
 
-            # Create order with all lines in a single call (run in thread pool)
             date_order_str = order.created_at.strftime("%Y-%m-%d %H:%M:%S")
-
-            # Get warehouse_id from store
-            async with AsyncSessionLocal() as session:
-                from src.database.models.store import Store
-
-                store_result = await session.execute(
-                    select(Store).where(Store.id == order.store_id)
-                )
-                store = store_result.scalars().first()
 
             order_values = {
                 "partner_id": odoo_customer_id,
                 "date_order": date_order_str,
                 "client_order_ref": client_ref,
-                "state": "draft",  # Will confirm later
-                "order_line": order_lines,  # Include all lines in one call
+                "state": "draft",
+                "order_line": order_lines,
                 "aggregator_selection": ODOO_AGGREGATOR_SELECTION,
                 "user_id": ODOO_SALESPERSON_ID,
             }
 
-            if store and store.odoo_warehouse_id:
-                order_values["warehouse_id"] = store.odoo_warehouse_id
+            if order.store and order.store.odoo_warehouse_id:
+                order_values["warehouse_id"] = order.store.odoo_warehouse_id
 
-            self._error_handler.logger.info(
-                f"Creating Odoo sales order with {lines_created} lines (async)..."
-            )
-            loop = asyncio.get_event_loop()
             order_id = await loop.run_in_executor(
                 self._executor, lambda: self.odoo.create("sale.order", order_values)
-            )
-
-            self._error_handler.logger.info(
-                f"Created Odoo sales order {order_id} with {lines_created} lines for order {order.id}"
             )
 
             return {
                 "order_id": order_id,
                 "already_exists": False,
                 "state": "draft",
-                "lines_created": lines_created,
-                "lines_skipped": lines_skipped,
             }
 
-        except OdooSyncError:
-            raise
         except Exception as e:
+            # Let OdooSyncError bubble up naturally
+            if isinstance(e, OdooSyncError):
+                raise e
             self._error_handler.logger.error(
                 f"Failed to create sales order: {e}", exc_info=True
             )
@@ -554,30 +437,13 @@ class OdooOrderSync:
     async def _confirm_order(self, odoo_order_id: int) -> None:
         """
         Confirm sales order in Odoo (change state to 'sale')
+        Optimized: Direct confirmation call.
 
         Args:
             odoo_order_id: Odoo sales order ID
         """
         try:
-            # Check current state first to avoid re-confirming (async)
             loop = asyncio.get_event_loop()
-            order_info = await loop.run_in_executor(
-                self._executor,
-                lambda: self.odoo.search_read(
-                    "sale.order",
-                    [("id", "=", odoo_order_id)],
-                    fields=["state"],
-                    limit=1,
-                ),
-            )
-
-            if order_info and order_info[0]["state"] == "sale":
-                self._error_handler.logger.info(
-                    f"Odoo sales order {odoo_order_id} is already confirmed, skipping confirmation"
-                )
-                return
-
-            # Confirm the order by calling action_confirm method (async)
             await loop.run_in_executor(
                 self._executor,
                 lambda: self.odoo.execute_kw(
@@ -586,11 +452,9 @@ class OdooOrderSync:
                     [[odoo_order_id]],
                 ),
             )
-
             self._error_handler.logger.info(
                 f"Confirmed Odoo sales order {odoo_order_id}"
             )
-
         except Exception as e:
             self._error_handler.logger.error(
                 f"Failed to confirm order {odoo_order_id}: {e}"

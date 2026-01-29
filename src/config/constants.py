@@ -152,7 +152,7 @@ class CartUserRole(str, Enum):
 
 
 # Odoo-related constants
-DELIVERY_PRODUCT_ODOO_ID = 20906
+DELIVERY_PRODUCT_ODOO_ID = 29772
 ODOO_AGGREGATOR_SELECTION = "celeste"
 ODOO_SALESPERSON_ID = 6  # Placeholder ID for salesperson
 

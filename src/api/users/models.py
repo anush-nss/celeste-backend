@@ -97,6 +97,9 @@ class UserSchema(BaseModel):
     tier_id: Optional[int] = Field(
         default=None, description="Customer tier ID", examples=[2]
     )
+    odoo_customer_id: Optional[int] = Field(
+        default=None, description="Odoo Partner ID", examples=[1234]
+    )
     total_orders: int = Field(
         default=0, ge=0, description="Total number of orders placed", examples=[15]
     )

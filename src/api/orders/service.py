@@ -413,6 +413,7 @@ class OrderService:
                         "phone": s.phone,
                         "email": s.email,
                         "is_active": s.is_active,
+                        "odoo_warehouse_id": s.odoo_warehouse_id,
                         "created_at": s.created_at.isoformat()
                         if s.created_at
                         else None,
