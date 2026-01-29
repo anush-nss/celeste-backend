@@ -298,6 +298,12 @@ async def retry_odoo_sync(order_id: int, background_tasks: BackgroundTasks):
                     detail=f"Order {order_id} is not confirmed. Only confirmed orders can be synced to Odoo.",
                 )
 
+            if order.odoo_sync_status == OdooSyncStatus.SYNCED:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Order {order_id} is already synced to Odoo.",
+                )
+
         # Attempt sync in the background
         odoo_sync = OdooOrderSync()
         background_tasks.add_task(odoo_sync.sync_order_to_odoo, order_id)

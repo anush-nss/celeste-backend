@@ -70,7 +70,10 @@ class RiderProfile(Base):
 
     # Relationships
     stores: Mapped[List["Store"]] = relationship(
-        "Store", secondary=store_riders, back_populates="riders"
+        "Store",
+        secondary=store_riders,
+        back_populates="riders",
+        overlaps="store_associations",
     )
     store_associations: Mapped[List["StoreRider"]] = relationship(
         "StoreRider", back_populates="rider", viewonly=True
@@ -87,6 +90,8 @@ class StoreRider(Base):
     }
 
     rider: Mapped["RiderProfile"] = relationship(
-        "RiderProfile", back_populates="store_associations", overlaps="stores"
+        "RiderProfile", back_populates="store_associations", overlaps="riders,stores"
     )
-    store: Mapped["Store"] = relationship("Store", viewonly=True, overlaps="riders")
+    store: Mapped["Store"] = relationship(
+        "Store", viewonly=True, overlaps="riders,stores"
+    )

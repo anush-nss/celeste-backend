@@ -35,6 +35,7 @@ from src.config.constants import (
     OrderStatus,
     DELIVERY_PRODUCT_ODOO_ID,
     DeliveryOption,
+    OdooSyncStatus,
 )
 from src.database.connection import AsyncSessionLocal
 from src.database.models.cart import Cart
@@ -498,6 +499,12 @@ class OrderService:
                 "platform": order.platform,
                 "delivery_option": order.delivery_option,
                 "status": order.status,
+                "odoo_sync_status": order.odoo_sync_status,
+                "odoo_order_id": order.odoo_order_id,
+                "odoo_customer_id": order.odoo_customer_id,
+                "odoo_sync_error": order.odoo_sync_error,
+                "odoo_synced_at": order.odoo_synced_at,
+                "odoo_last_retry_at": order.odoo_last_retry_at,
                 "payment_reference": order.payment_transaction.payment_reference
                 if order.payment_transaction
                 else None,

@@ -97,6 +97,16 @@ class OdooOrderSync:
             if not order_schema:
                 raise OdooSyncError(f"Order {order_id} not found")
 
+            # Early exit if already synced (Efficiency & Idempotency)
+            if order_schema.odoo_sync_status == OdooSyncStatus.SYNCED:
+                self._error_handler.logger.info(f"Order {order_id} already successfully synced to Odoo. Skipping.")
+                return {
+                    "success": True,
+                    "odoo_order_id": order_schema.odoo_order_id,
+                    "odoo_customer_id": order_schema.odoo_customer_id,
+                    "error": None,
+                }
+
             # Fetch user with address for customer sync
             user_schema = await user_service.get_user_by_id(
                 order_schema.user_id, include_addresses=True

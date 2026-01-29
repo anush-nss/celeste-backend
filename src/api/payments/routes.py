@@ -237,9 +237,17 @@ async def payment_webhook(
     "/status/{ref}",
     summary="Check status of a payment transaction",
 )
-async def get_payment_status(ref: str):
+async def get_payment_status(
+    ref: str,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+):
     """
     Polling endpoint for frontend to check if a payment was successful.
+    Only accessible by the user who initiated the payment or an admin.
     """
-    result = await payment_service.get_transaction_status(ref)
+    result = await payment_service.get_transaction_status(
+        ref,
+        user_id=current_user.uid,
+        is_admin=(current_user.role == UserRole.ADMIN),
+    )
     return success_response(result)
