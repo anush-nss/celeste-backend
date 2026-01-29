@@ -7,7 +7,13 @@ from src.api.products.models import ProductSchema
 from src.api.stores.models import StoreSchema
 from src.api.users.models import AddressResponseSchema
 from src.api.riders.models import RiderProfileSchema
-from src.config.constants import FulfillmentMode, OrderStatus, Platform, DeliveryOption
+from src.config.constants import (
+    FulfillmentMode,
+    OrderStatus,
+    Platform,
+    DeliveryOption,
+    OdooSyncStatus,
+)
 
 
 class CustomerSchema(BaseModel):
@@ -72,6 +78,21 @@ class OrderSchema(BaseModel):
         examples=[DeliveryOption.LEAVE_AT_DOOR],
     )
     status: OrderStatus = Field(..., examples=[OrderStatus.PENDING.value])
+    odoo_sync_status: Optional[OdooSyncStatus] = Field(
+        default=OdooSyncStatus.PENDING,
+        description="Current status of Odoo ERP synchronization",
+    )
+    odoo_order_id: Optional[int] = Field(
+        default=None, description="Linked Odoo Sales Order ID"
+    )
+    odoo_customer_id: Optional[int] = Field(
+        default=None, description="Linked Odoo Partner/Customer ID"
+    )
+    odoo_sync_error: Optional[str] = Field(
+        default=None, description="Error message from last failed sync attempt"
+    )
+    odoo_synced_at: Optional[datetime] = None
+    odoo_last_retry_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     items: List[OrderItemSchema]

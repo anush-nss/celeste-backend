@@ -44,6 +44,7 @@ def _user_to_dict(
         "phone": user.phone,
         "role": user.role,
         "tier_id": user.tier_id,
+        "odoo_customer_id": user.odoo_customer_id,
         "total_orders": getattr(user, "total_orders", 0),
         "lifetime_value": getattr(user, "lifetime_value", 0.0),
         "created_at": getattr(user, "created_at", None),

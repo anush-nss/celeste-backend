@@ -92,5 +92,8 @@ class Store(Base):
         "StoreTag", back_populates="store", cascade="all, delete-orphan"
     )
     riders: Mapped[List["RiderProfile"]] = relationship(
-        "RiderProfile", secondary=store_riders, back_populates="stores"
+        "RiderProfile",
+        secondary=store_riders,
+        back_populates="stores",
+        overlaps="store_associations",
     )

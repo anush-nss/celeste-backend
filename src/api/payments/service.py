@@ -326,7 +326,9 @@ class PaymentService:
             transaction.cart_ids, background_tasks=background_tasks
         )
 
-    async def get_transaction_status(self, payment_reference: str) -> Dict[str, Any]:
+    async def get_transaction_status(
+        self, payment_reference: str, user_id: str, is_admin: bool = False
+    ) -> Dict[str, Any]:
         """Check the current local status of a transaction."""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -337,6 +339,14 @@ class PaymentService:
             transaction = result.scalars().first()
             if not transaction:
                 raise ResourceNotFoundException("Transaction not found")
+
+            # Authorization check
+            if not is_admin and transaction.user_id != user_id:
+                from src.shared.exceptions import ForbiddenException
+
+                raise ForbiddenException(
+                    "You do not have permission to check this transaction status."
+                )
 
             return {
                 "status": transaction.status,
