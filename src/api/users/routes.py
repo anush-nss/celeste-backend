@@ -560,6 +560,7 @@ async def create_multi_cart_order(
     payment_info_dict = await payment_service.initiate_payment(
         payment_data=payment_data,
         user_id=user_id,
+        provider_id=checkout_data.payment_provider or "mastercard_mpgs",
     )
     order_summary.payment_info = PaymentInfo(
         payment_reference=payment_info_dict["payment_reference"],

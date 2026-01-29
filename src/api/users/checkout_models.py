@@ -67,6 +67,11 @@ class CheckoutRequestSchema(BaseModel):
         None,
         description="ID of the saved card token to use for this payment",
     )
+    payment_provider: Optional[str] = Field(
+        "mastercard_mpgs",
+        description="ID of the payment provider to use",
+        examples=["mastercard_mpgs"],
+    )
 
     model_config = ConfigDict(
         json_schema_extra={

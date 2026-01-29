@@ -17,8 +17,7 @@ from src.api.payments.models import (
     SavedCardSchema,
 )
 from src.api.payments.service import PaymentService
-from src.dependencies.auth import get_current_user, RoleChecker
-from src.config.constants import UserRole
+from src.dependencies.auth import get_current_user
 from src.config.settings import settings
 from src.shared.responses import success_response
 from src.shared.exceptions import UnauthorizedException
@@ -47,14 +46,29 @@ async def get_saved_cards(
 @payments_router.post(
     "/initiate",
     response_model=PaymentResponseSchema,
-    summary="Initiate a payment session (Internal/Admin Only)",
-    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
+    summary="Initiate a payment session",
 )
 async def initiate_payment(
     payment_data: InitiatePaymentSchema,
-    current_user: DecodedToken = Depends(get_current_user),
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
 ):
     result = await payment_service.initiate_payment(payment_data, current_user.uid)
+    return success_response(result)
+
+
+@payments_router.post(
+    "/add-card",
+    response_model=PaymentResponseSchema,
+    summary="Initiate a session to add a new card",
+)
+async def add_card(
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+    provider: str = Query("mastercard_mpgs", description="Payment provider ID"),
+):
+    """
+    Creates a setup session with the payment gateway to tokenize a card without a purchase.
+    """
+    result = await payment_service.initiate_add_card(current_user.uid, provider)
     return success_response(result)
 
 
@@ -123,10 +137,10 @@ async def payment_callback(
 
 
 @payments_router.post(
-    "/webhook",
+    "/webhook/mpgs",
     summary="MPGS Webhook Notification Handler",
 )
-async def payment_webhook(
+async def payment_webhook_mpgs(
     request: Request,
     background_tasks: BackgroundTasks,
     x_notification_secret: str = Header(None, alias="X-Notification-Secret"),

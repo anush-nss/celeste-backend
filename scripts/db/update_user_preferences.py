@@ -29,6 +29,27 @@ from src.config.constants import INTERACTION_DECAY_DAYS
 from src.database.connection import AsyncSessionLocal, engine
 from src.database.models.product_interaction import ProductInteraction
 
+# Import all database models to ensure SQLAlchemy relationships are properly registered
+from src.database.models.user import User
+from src.database.models.address import Address
+from src.database.models.cart import Cart
+from src.database.models.category import Category
+from src.database.models.ecommerce_category import EcommerceCategory
+from src.database.models.product import Product, Tag, ProductTag
+from src.database.models.store import Store
+from src.database.models.store_tag import StoreTag
+from src.database.models.tier import Tier
+from src.database.models.tier_benefit import Benefit, tier_benefits
+from src.database.models.price_list import PriceList
+from src.database.models.price_list_line import PriceListLine
+from src.database.models.tier_price_list import TierPriceList
+from src.database.models.inventory import Inventory
+from src.database.models.order import Order, OrderItem
+from src.database.models.payment import PaymentTransaction
+from src.database.models.payment_token import UserPaymentToken
+from src.database.models.webhook_notification import WebhookNotification
+from src.database.models.rider import RiderProfile, StoreRider
+
 
 async def get_active_users():
     """

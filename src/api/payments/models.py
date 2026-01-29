@@ -20,8 +20,7 @@ class InitiatePaymentSchema(BaseModel):
     amount: Decimal = Field(..., gt=0, description="Total amount to charge")
     currency: str = Field("LKR", description="Currency code")
     cart_ids: List[int] = Field(..., description="List of cart IDs to link")
-    source_token_id: Optional[int] = Field(None, description="ID of saved card token")
-    save_card: bool = Field(False, description="Whether to save card for future use")
+    source_token_id: int = Field(..., description="ID of saved card token")
     checkout_data: Optional[Dict[str, Any]] = None
 
 
