@@ -20,7 +20,12 @@ from tenacity import (
     retry_if_exception_type,
 )
 
-from src.config.constants import OdooSyncStatus, DELIVERY_PRODUCT_ODOO_ID
+from src.config.constants import (
+    OdooSyncStatus,
+    DELIVERY_PRODUCT_ODOO_ID,
+    ODOO_AGGREGATOR_SELECTION,
+    ODOO_SALESPERSON_ID,
+)
 from src.database.connection import AsyncSessionLocal
 from src.database.models.order import Order, OrderItem
 from src.database.models.user import User
@@ -512,6 +517,8 @@ class OdooOrderSync:
                 "client_order_ref": client_ref,
                 "state": "draft",  # Will confirm later
                 "order_line": order_lines,  # Include all lines in one call
+                "aggregator_selection": ODOO_AGGREGATOR_SELECTION,
+                "user_id": ODOO_SALESPERSON_ID,
             }
 
             if store and store.odoo_warehouse_id:
