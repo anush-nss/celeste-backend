@@ -35,7 +35,6 @@ from src.config.constants import (
     OrderStatus,
     DELIVERY_PRODUCT_ODOO_ID,
     DeliveryOption,
-    OdooSyncStatus,
 )
 from src.database.connection import AsyncSessionLocal
 from src.database.models.cart import Cart
