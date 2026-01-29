@@ -275,7 +275,6 @@ class OdooOrderSync:
                     "name": user.name,
                     "email": user.email or False,
                     "phone": user.phone or False,
-                    "mobile": user.phone or False,
                     "firebase_uid": user.firebase_uid,
                     "customer_rank": 1,
                     "is_company": False,
