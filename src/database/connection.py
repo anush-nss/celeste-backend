@@ -1,3 +1,4 @@
+import json
 import os
 
 import firebase_admin
@@ -17,31 +18,39 @@ if not DATABASE_URL:
 def initialize_firebase():
     """Initialize Firebase Admin SDK"""
     if not firebase_admin._apps:
+        # 1. Try to load from environment variable JSON string first (Best for Vercel/CI)
+        service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+        if service_account_json:
+            try:
+                cert_dict = json.loads(service_account_json)
+                cred = credentials.Certificate(cert_dict)
+                firebase_admin.initialize_app(cred)
+                return
+            except Exception as e:
+                # Log but potentially fall back
+                print(f"Failed to initialize Firebase from JSON string: {e}")
+
+        # 2. Fall back to existing logic (Local File or ADC)
         is_local = os.getenv("DEPLOYMENT", "cloud") == "local"
 
         if is_local:
-            # Local dev: must use service account key
+            # Local dev: must use service account key file
             service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
             if not service_account_path:
-                raise ValueError(
-                    "GOOGLE_APPLICATION_CREDENTIALS environment variable not set."
-                )
+                print("Warning: GOOGLE_APPLICATION_CREDENTIALS not set and no JSON string found.")
+                return
+            
             cred = credentials.Certificate(service_account_path)
             firebase_admin.initialize_app(cred)
         else:
             # Cloud Run (or any Google-managed environment): use ADC
             try:
-                cred, project_id = google.auth.default()
+                # Attempt to use Application Default Credentials
+                firebase_admin.initialize_app(
+                    credential=credentials.ApplicationDefault(),
+                )
             except Exception as e:
-                raise RuntimeError(f"Failed to get default credentials: {e}")
-
-            if not project_id:
-                raise ValueError("Project ID could not be inferred from environment.")
-
-            firebase_admin.initialize_app(
-                credential=credentials.ApplicationDefault(),
-                options={"projectId": project_id},
-            )
+                print(f"Failed to initialize Firebase from ADC: {e}. You may need to set FIREBASE_SERVICE_ACCOUNT_JSON.")
 
 
 engine = create_async_engine(
