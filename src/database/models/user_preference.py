@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import Optional
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
@@ -31,9 +30,8 @@ class UserPreference(Base):
     user_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
 
     # Aggregated interest vector (weighted average of interacted products)
-    interest_vector: Mapped[Vector] = mapped_column(
-        Vector(SEARCH_VECTOR_DIM), nullable=True
-    )
+    # Stored as JSONB for portability (pgvector disabled for Vercel)
+    interest_vector: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
     # Category affinity scores: {category_id: score}
     category_scores: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
