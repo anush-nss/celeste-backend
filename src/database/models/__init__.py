@@ -26,6 +26,9 @@ from .product_interaction import ProductInteraction
 from .product_popularity import ProductPopularity
 from .search_suggestion import SearchSuggestion
 from .webhook_notification import WebhookNotification
+from .promotion import Promotion
+from .rider import RiderProfile, StoreRider
+from .ecommerce_category import EcommerceCategory
 
 __all__ = [
     "User",
@@ -59,4 +62,8 @@ __all__ = [
     "ProductPopularity",
     "SearchSuggestion",
     "WebhookNotification",
+    "Promotion",
+    "RiderProfile",
+    "StoreRider",
+    "EcommerceCategory",
 ]

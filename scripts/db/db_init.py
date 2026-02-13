@@ -37,6 +37,14 @@ from src.database.models.payment import PaymentTransaction
 from src.database.models.payment_token import UserPaymentToken
 from src.database.models.webhook_notification import WebhookNotification
 from src.database.models.rider import RiderProfile, StoreRider
+from src.database.models.promotion import Promotion
+from src.database.models.favorite import Favorite
+from src.database.models.user_preference import UserPreference
+from src.database.models.product_interaction import ProductInteraction
+from src.database.models.product_popularity import ProductPopularity
+from src.database.models.product_vector import ProductVector
+from src.database.models.search_interaction import SearchInteraction
+from src.database.models.search_suggestion import SearchSuggestion
 
 # Avoid unused import issues
 _ = (
@@ -65,6 +73,14 @@ _ = (
     WebhookNotification,
     RiderProfile,
     StoreRider,
+    Promotion,
+    Favorite,
+    UserPreference,
+    ProductInteraction,
+    ProductPopularity,
+    ProductVector,
+    SearchInteraction,
+    SearchSuggestion,
 )
 
 

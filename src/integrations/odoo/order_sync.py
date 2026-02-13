@@ -154,9 +154,9 @@ class OdooOrderSync:
             order_state = odoo_order_result.get("state", "draft")
 
             # Step 4: Confirm order in Odoo
-            # Optimized flow: Only skip if we definitively know it's already 'sale' (Efficiency #4)
-            if order_state != "sale":
-                await self._confirm_order(odoo_order_id)
+            # Optimized flow: Only skip if we definitively know it's already 'received' (Efficiency #4)
+            if order_state != "received":
+                await self._mark_order_received(odoo_order_id)
 
             # Step 5: Update our order record
             await self._update_order_sync_status(
@@ -446,9 +446,9 @@ class OdooOrderSync:
             )
             raise OdooSyncError(f"Sales order creation failed: {e}")
 
-    async def _confirm_order(self, odoo_order_id: int) -> None:
+    async def _mark_order_received(self, odoo_order_id: int) -> None:
         """
-        Confirm sales order in Odoo (change state to 'sale')
+        Confirm sales order in Odoo (change state to 'received')
         Optimized: Direct confirmation call.
 
         Args:
@@ -460,12 +460,12 @@ class OdooOrderSync:
                 self._executor,
                 lambda: self.odoo.execute_kw(
                     "sale.order",
-                    "action_confirm",
+                    "action_mark_order_received",
                     [[odoo_order_id]],
                 ),
             )
             self._error_handler.logger.info(
-                f"Confirmed Odoo sales order {odoo_order_id}"
+                f"Confirmed Odoo sales order {odoo_order_id} to received state"
             )
         except Exception as e:
             self._error_handler.logger.error(
