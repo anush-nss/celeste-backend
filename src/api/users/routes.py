@@ -17,7 +17,9 @@ from src.api.users.models import (
     UpdateCartItemQuantitySchema,
     UpdateCartSchema,
     UpdateUserSchema,
+    AddFavoriteSchema,
 )
+from src.api.products.models import EnhancedProductSchema
 from src.api.users.service import UserService
 from src.dependencies.auth import get_current_user
 from src.shared.exceptions import (
@@ -33,11 +35,14 @@ from src.api.users.checkout_models import (
     PaymentInfo,
 )
 from src.api.users.checkout_service import CheckoutService
+from src.api.payments.service import PaymentService
+from src.api.payments.models import InitiatePaymentSchema
 
 users_router = APIRouter(prefix="/users", tags=["Users"])
 
 user_service = UserService()
 order_service = OrderService()
+payment_service = PaymentService()
 checkout_service = CheckoutService()
 interaction_service = InteractionService()
 
@@ -48,13 +53,18 @@ async def get_user_profile(
     include_addresses: bool = Query(
         True, description="Include user's addresses in the response"
     ),
+    include_favorites: bool = Query(
+        False, description="Include user's favorites in the response"
+    ),
 ):
     user_id = current_user.uid
     if not user_id:
         raise UnauthorizedException(detail="User ID not found in token")
 
     user = await user_service.get_user_by_id(
-        user_id, include_addresses=include_addresses
+        user_id,
+        include_addresses=include_addresses,
+        include_favorites=include_favorites,
     )
 
     if not user:
@@ -79,6 +89,90 @@ async def update_user_profile(
         raise ResourceNotFoundException(detail=f"User with ID {user_id} not found")
 
     return success_response(updated_user.model_dump(mode="json"))
+
+
+# Favorites Management Endpoints
+
+
+@users_router.post(
+    "/me/favorites",
+    summary="Add a product to user favorites",
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_favorite(
+    favorite_data: AddFavoriteSchema,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    product_ids = await user_service.add_favorite(user_id, favorite_data.product_id)
+
+    return success_response(
+        {"product_ids": product_ids}, status_code=status.HTTP_201_CREATED
+    )
+
+
+@users_router.delete(
+    "/me/favorites/{product_id}",
+    summary="Remove a product from user favorites",
+)
+async def remove_favorite(
+    product_id: int,
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    product_ids = await user_service.remove_favorite(user_id, product_id)
+
+    return success_response({"product_ids": product_ids})
+
+
+@users_router.get(
+    "/me/favorites",
+    summary="Get user favorites",
+    response_model=List[EnhancedProductSchema],
+)
+async def get_favorites(
+    current_user: Annotated[DecodedToken, Depends(get_current_user)],
+    include_products: bool = Query(True, description="Include full product details"),
+    latitude: Optional[float] = Query(None, description="Latitude for inventory check"),
+    longitude: Optional[float] = Query(
+        None, description="Longitude for inventory check"
+    ),
+    store_ids: Optional[List[int]] = Query(
+        None, description="Specific store IDs to check inventory"
+    ),
+):
+    user_id = current_user.uid
+    if not user_id:
+        raise UnauthorizedException(detail="User ID not found in token")
+
+    favorites = await user_service.get_favorites(
+        user_id,
+        include_products=include_products,
+        latitude=latitude,
+        longitude=longitude,
+        store_ids=store_ids,
+    )
+
+    if include_products:
+        serialized_favorites = []
+        for fav in favorites:
+            if isinstance(fav, EnhancedProductSchema):
+                serialized_favorites.append(fav.model_dump(mode="json"))
+            else:
+                serialized_favorites.append(fav)
+        return success_response(serialized_favorites)
+    else:
+        # If not including products, we might need a different response model or just return IDs.
+        # But the type hint says List[EnhancedProductSchema].
+        # If include_products is False, get_favorites returns List[int].
+        # So we should probably wrap it.
+        return success_response(favorites)
 
 
 # Address Management Endpoints
@@ -451,15 +545,30 @@ async def create_multi_cart_order(
     if not user_id:
         raise UnauthorizedException(detail="User ID not found in token")
 
-    order_summary = await checkout_service.create_order(user_id, checkout_data)
+    # Generate preview to get totals and items without creating orders yet
+    order_summary = await checkout_service.preview_order(user_id, checkout_data)
 
-    # Initiate payment
-    payment_info_dict = await order_service.payment_service.initiate_payment(
+    # Initiate payment with checkout intent
+    payment_data = InitiatePaymentSchema(
+        amount=Decimal(str(order_summary.overall_total)),
+        currency="LKR",
         cart_ids=checkout_data.cart_ids,
-        total_amount=Decimal(order_summary.overall_total),
+        save_card=checkout_data.save_card,
+        source_token_id=checkout_data.source_token_id,
+        checkout_data=checkout_data.model_dump(mode="json"),
+    )
+    payment_info_dict = await payment_service.initiate_payment(
+        payment_data=payment_data,
         user_id=user_id,
     )
-    order_summary.payment_info = PaymentInfo(**payment_info_dict)
+    order_summary.payment_info = PaymentInfo(
+        payment_reference=payment_info_dict["payment_reference"],
+        session_id=payment_info_dict["session_id"],
+        merchant_id=payment_info_dict["merchant_id"],
+        success_indicator=payment_info_dict["success_indicator"],
+        amount=float(order_summary.overall_total),
+        currency="LKR",
+    )
 
     return success_response(
         order_summary.model_dump(mode="json"), status_code=status.HTTP_201_CREATED

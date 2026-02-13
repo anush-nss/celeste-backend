@@ -37,6 +37,19 @@ class ErrorHandler:
     def __init__(self, logger_name: str):
         self.logger = get_logger(logger_name)
 
+    def log_error(
+        self,
+        message: str,
+        error: Optional[Exception] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Log an error with context but do not raise exception"""
+        context = context or {}
+        if error:
+            self.logger.error(f"{message}: {str(error)}", extra=context, exc_info=True)
+        else:
+            self.logger.error(message, extra=context)
+
     def handle_database_error(
         self, error: Exception, operation: str, context: Optional[Dict[str, Any]] = None
     ) -> None:

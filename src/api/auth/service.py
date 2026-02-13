@@ -5,7 +5,11 @@ import requests
 from dotenv import load_dotenv
 from firebase_admin import auth
 
-from src.api.auth.models import DecodedToken, UserRegistration
+from src.api.auth.models import (
+    DecodedToken,
+    UserRegistration,
+    RiderRegistrationRequest,
+)
 from src.api.users.models import CreateUserSchema, UserSchema
 from src.api.users.service import UserService
 from src.config.constants import UserRole
@@ -14,6 +18,7 @@ from src.shared.exceptions import (
     ResourceNotFoundException,
     ServiceUnavailableException,
     ValidationException,
+    ConflictException,
 )
 
 # Load environment variables from .env file
@@ -26,7 +31,9 @@ class AuthService:
         self._error_handler = ErrorHandler(__name__)
 
     @handle_service_errors("user registration")
-    async def register_user(self, user_registration: UserRegistration) -> dict:
+    async def register_user(
+        self, user_registration: UserRegistration
+    ) -> tuple[dict, int]:
         """
         Register a new user by verifying their Firebase ID token and creating user records.
 
@@ -56,6 +63,33 @@ class AuthService:
         # Add custom claim for user role
         auth.set_custom_user_claims(uid, {"role": UserRole.CUSTOMER.value})
 
+        # Check if user already exists
+        existing_user = await self.user_service.get_user_by_id(uid)
+
+        if existing_user:
+            # Check if phone number is different
+            if existing_user.phone != phone_number:
+                # Update phone number
+                updated_user = await self.user_service.update_user(
+                    uid, {"phone": phone_number}
+                )
+                if not updated_user:
+                    raise ResourceNotFoundException(
+                        detail=f"User with ID {uid} not found during update"
+                    )
+
+                return {
+                    "message": "User phone number updated successfully",
+                    "user": {
+                        "uid": updated_user.firebase_uid,
+                        "role": updated_user.role,
+                        "tier_id": updated_user.tier_id,
+                    },
+                }, 200
+            else:
+                # User exists and phone number is the same
+                raise ConflictException(detail=f"User with UID {uid} already exists")
+
         # Create user in PostgreSQL database
         create_user_data = CreateUserSchema(
             name=user_registration.name.strip(),
@@ -73,7 +107,115 @@ class AuthService:
                 "role": new_user.role,
                 "tier_id": new_user.tier_id,
             },
-        }
+        }, 201
+
+    @handle_service_errors("rider registration")
+    async def register_rider(
+        self, user_registration: "RiderRegistrationRequest"
+    ) -> tuple[dict, int]:
+        """
+        Register a new rider (Admin only).
+        Verifies ID token, creates/retrieves RiderProfile, creates User (RIDER), and links them.
+        """
+        if not user_registration.idToken:
+            raise ValidationException(detail="ID token is required for registration")
+
+        if not user_registration.name or len(user_registration.name.strip()) < 2:
+            raise ValidationException(detail="Valid name is required for registration")
+
+        # Verify the ID token
+        decoded_token_dict = auth.verify_id_token(user_registration.idToken)
+        decoded_token = DecodedToken(**decoded_token_dict)
+        uid = decoded_token.uid
+        phone_number = decoded_token.phone_number
+
+        if not phone_number:
+            raise ValidationException(
+                detail="Phone number required in ID token for rider registration"
+            )
+
+        # Handle Rider Profile (Create or Link)
+        from src.database.connection import AsyncSessionLocal
+        from src.database.models.rider import RiderProfile
+        from sqlalchemy import select
+
+        async with AsyncSessionLocal() as session:
+            # Check if rider profile exists
+            query = select(RiderProfile).filter(RiderProfile.phone == phone_number)
+            result = await session.execute(query)
+            rider_profile = result.scalars().first()
+
+            if not rider_profile:
+                # Create new Rider Profile
+                rider_profile = RiderProfile(
+                    phone=phone_number,
+                    name=user_registration.name.strip(),
+                    vehicle_type=user_registration.vehicle_type,
+                    vehicle_registration_number=user_registration.vehicle_registration_number,
+                    is_active=True,
+                    user_id=uid,  # Link immediately
+                )
+                session.add(rider_profile)
+            else:
+                # Update existing profile
+                rider_profile.user_id = uid
+                rider_profile.name = (
+                    user_registration.name.strip()
+                )  # Update name if changed
+                rider_profile.vehicle_type = user_registration.vehicle_type
+                if user_registration.vehicle_registration_number:
+                    rider_profile.vehicle_registration_number = (
+                        user_registration.vehicle_registration_number
+                    )
+
+                if not rider_profile.is_active:
+                    # Reactivate if it was inactive? Or error? Let's reactivate for registration.
+                    rider_profile.is_active = True
+
+            await session.commit()
+
+        # Set custom claim RIDER
+        auth.set_custom_user_claims(uid, {"role": UserRole.RIDER.value})
+
+        # Check if user already exists
+        existing_user = await self.user_service.get_user_by_id(uid)
+
+        if existing_user:
+            # If user exists, we've updated their profile link above.
+            # Should we update their role in DB if it was different?
+            # Assuming yes to self-correct.
+            if existing_user.role != UserRole.RIDER:
+                await self.user_service.update_user(uid, {"role": UserRole.RIDER})
+
+            # Return existing user info
+            return {
+                "message": "Rider registered successfully (User linked)",
+                "user": {
+                    "uid": existing_user.firebase_uid,
+                    "role": UserRole.RIDER,
+                    "tier_id": existing_user.tier_id,
+                },
+            }, 200
+
+        # Create user in PostgreSQL database as RIDER
+        create_user_data = CreateUserSchema(
+            name=user_registration.name.strip(),
+            # Riders do not have email, explicitly set to None even if token has it
+            email=None,
+            phone=phone_number,
+            role=UserRole.RIDER,
+            tier_id=None,
+        )
+        new_user = await self.user_service.create_user(create_user_data, uid)
+
+        return {
+            "message": "Rider registered successfully",
+            "user": {
+                "uid": new_user.firebase_uid,
+                "role": new_user.role,
+                "tier_id": new_user.tier_id,
+            },
+        }, 201
 
     @handle_service_errors("token verification")
     def verify_id_token(self, id_token: str) -> DecodedToken:

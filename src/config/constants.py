@@ -4,6 +4,16 @@ from enum import Enum
 class UserRole(str, Enum):
     CUSTOMER = "CUSTOMER"
     ADMIN = "ADMIN"
+    RIDER = "RIDER"
+
+
+class VehicleType(str, Enum):
+    MOTORCYCLE = "motorcycle"
+    BICYCLE = "bicycle"
+    SCOOTER = "scooter"
+    CAR = "car"
+    VAN = "van"
+    OTHER = "other"
 
 
 class DiscountType(str, Enum):
@@ -33,6 +43,12 @@ class DeliveryServiceLevel(str, Enum):
     STANDARD = "standard"
 
 
+class DeliveryOption(str, Enum):
+    LEAVE_AT_DOOR = "leave_at_door"
+    MEET_OUTSIDE = "meet_outside"
+    AT_RECEPTION = "at_reception"
+
+
 class OdooSyncStatus(str, Enum):
     PENDING = "pending"
     SYNCED = "synced"
@@ -43,6 +59,8 @@ class PromotionType(str, Enum):
     BANNER = "banner"
     POPUP = "popup"
     SEARCH = "search"
+    NEWS = "news"
+    OFFER = "offer"
 
 
 class Platform(str, Enum):
@@ -134,7 +152,9 @@ class CartUserRole(str, Enum):
 
 
 # Odoo-related constants
-DELIVERY_PRODUCT_ODOO_ID = 20906
+DELIVERY_PRODUCT_ODOO_ID = 29772
+ODOO_AGGREGATOR_SELECTION = "celeste"
+ODOO_SALESPERSON_ID = 6  # Placeholder ID for salesperson
 
 
 # Cache invalidation scope constants

@@ -76,3 +76,23 @@ class DecodedToken(BaseModel):
     firebase: dict
     uid: str
     role: Optional[UserRole] = None
+
+
+class RiderRegistrationRequest(UserRegistration):
+    vehicle_type: Annotated[
+        str,
+        Field(
+            description="Type of vehicle (motorcycle, bicycle, etc.)",
+            examples=["motorcycle"],
+        ),
+    ]
+    vehicle_registration_number: Optional[
+        Annotated[
+            str,
+            Field(
+                max_length=50,
+                description="Vehicle registration number",
+                examples=["ABC-1234"],
+            ),
+        ]
+    ] = None

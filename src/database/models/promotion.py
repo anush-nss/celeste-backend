@@ -6,14 +6,12 @@ from sqlalchemy import (
     BOOLEAN,
     INTEGER,
     CheckConstraint,
-    Enum,
     Index,
     text,
 )
 from sqlalchemy.dialects.postgresql import TEXT, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
-from src.config.constants import PromotionType
 from src.database.base import Base
 
 
@@ -36,13 +34,8 @@ class Promotion(Base):
     is_active: Mapped[bool] = mapped_column(
         BOOLEAN, nullable=False, server_default=text("TRUE")
     )
-    promotion_type: Mapped[PromotionType] = mapped_column(
-        Enum(
-            PromotionType,
-            values_callable=lambda obj: [e.value for e in obj],
-            name="promotiontype",
-            create_type=False,  # Type is created by migration
-        ),
+    promotion_type: Mapped[str] = mapped_column(
+        TEXT,
         nullable=False,
     )
     priority: Mapped[int] = mapped_column(

@@ -18,6 +18,7 @@ from src.database.base import Base
 
 if TYPE_CHECKING:
     from src.database.models.address import Address
+    from src.database.models.favorite import Favorite
     from src.database.models.order import Order
     from src.database.models.tier import Tier
 
@@ -141,6 +142,13 @@ class User(Base):
     # Relationships
     addresses: Mapped[List["Address"]] = relationship(
         "Address", back_populates="user", cascade="all, delete-orphan"
+    )
+    favorites: Mapped[Optional["Favorite"]] = relationship(
+        "Favorite",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+        lazy="selectin",
     )
     tier: Mapped[Optional["Tier"]] = relationship("Tier", foreign_keys=[tier_id])
     orders: Mapped[List["Order"]] = relationship(

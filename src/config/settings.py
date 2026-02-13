@@ -32,6 +32,16 @@ class Settings:
     JWT_ALGORITHM = "HS256"
     JWT_EXPIRATION_TIME_HOURS = 24
 
+    # Rate Limiting & Source Restriction
+    MOBILE_APP_SECRET = os.getenv("MOBILE_APP_SECRET", None)
+    ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",")
+    # Clean up origins
+    ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS if o.strip()]
+
+    RATE_LIMIT_EXEMPT_IPS = os.getenv("RATE_LIMIT_EXEMPT_IPS", "").split(",")
+    # Clean up IPs
+    RATE_LIMIT_EXEMPT_IPS = [ip.strip() for ip in RATE_LIMIT_EXEMPT_IPS if ip.strip()]
+
     # API
     API_V1_STR = "/api/v1"
 
@@ -40,6 +50,19 @@ class Settings:
     ODOO_DB = os.getenv("ODOO_DB", None)
     ODOO_USERNAME = os.getenv("ODOO_USERNAME", None)
     ODOO_PASSWORD = os.getenv("ODOO_PASSWORD", None)
+
+    # Payment Gateway
+    API_BASE_URL = os.getenv(
+        "API_BASE_URL", "https://celeste-api-846811285865.asia-south1.run.app"
+    )
+    MPGS_MERCHANT_ID = os.getenv("MPGS_MERCHANT_ID", None)
+    MPGS_API_USERNAME = os.getenv("MPGS_API_USERNAME", None)
+    MPGS_API_PASSWORD = os.getenv("MPGS_API_PASSWORD", None)
+    MPGS_GATEWAY_URL = os.getenv(
+        "MPGS_GATEWAY_URL",
+        "https://cbcmpgs.gateway.mastercard.com/api/rest/version/100",
+    )
+    MPGS_WEBHOOK_SECRET = os.getenv("MPGS_WEBHOOK_SECRET", None)
 
 
 settings = Settings()

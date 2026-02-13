@@ -3,7 +3,22 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.config.constants import FulfillmentMode, OrderStatus, Platform
+from src.api.products.models import ProductSchema
+from src.api.stores.models import StoreSchema
+from src.api.users.models import AddressResponseSchema
+from src.api.riders.models import RiderProfileSchema
+from src.config.constants import (
+    FulfillmentMode,
+    OrderStatus,
+    Platform,
+    DeliveryOption,
+    OdooSyncStatus,
+)
+
+
+class CustomerSchema(BaseModel):
+    name: str = Field(..., examples=["John Doe"])
+    phone: Optional[str] = Field(None, examples=["+94771234567"])
 
 
 class OrderItemSchema(BaseModel):
@@ -16,7 +31,7 @@ class OrderItemSchema(BaseModel):
     unit_price: float = Field(..., examples=[1150.0])
     total_price: float = Field(..., examples=[2300.0])
     created_at: datetime
-    product: Optional[Dict[str, Any]] = Field(
+    product: Optional[ProductSchema] = Field(
         default=None, description="Full product details (if populated)"
     )
 
@@ -25,6 +40,12 @@ class OrderItemSchema(BaseModel):
 
 class OrderSchema(BaseModel):
     id: int = Field(..., examples=[1])
+    payment_reference: Optional[str] = Field(
+        None, description="Payment reference for this order"
+    )
+    transaction_id: Optional[str] = Field(
+        None, description="External transaction ID from payment gateway"
+    )
     user_id: str = Field(..., examples=["TZKU3C493fY2JH9Ftnsdpz5occN2"])
     store_id: int = Field(..., examples=[1])
     address_id: Optional[int] = Field(
@@ -51,15 +72,41 @@ class OrderSchema(BaseModel):
         description="Platform from which the order originated (e.g., 'mobile', 'web')",
         examples=["web"],
     )
+    delivery_option: Optional[DeliveryOption] = Field(
+        default=None,
+        description="Delivery instruction option",
+        examples=[DeliveryOption.LEAVE_AT_DOOR],
+    )
     status: OrderStatus = Field(..., examples=[OrderStatus.PENDING.value])
+    odoo_sync_status: Optional[OdooSyncStatus] = Field(
+        default=OdooSyncStatus.PENDING,
+        description="Current status of Odoo ERP synchronization",
+    )
+    odoo_order_id: Optional[int] = Field(
+        default=None, description="Linked Odoo Sales Order ID"
+    )
+    odoo_customer_id: Optional[int] = Field(
+        default=None, description="Linked Odoo Partner/Customer ID"
+    )
+    odoo_sync_error: Optional[str] = Field(
+        default=None, description="Error message from last failed sync attempt"
+    )
+    odoo_synced_at: Optional[datetime] = None
+    odoo_last_retry_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     items: List[OrderItemSchema]
-    store: Optional[Dict[str, Any]] = Field(
+    store: Optional[StoreSchema] = Field(
         default=None, description="Full store details (if populated)"
     )
-    address: Optional[Dict[str, Any]] = Field(
+    address: Optional[AddressResponseSchema] = Field(
         default=None, description="Full delivery address details (if populated)"
+    )
+    rider: Optional[RiderProfileSchema] = Field(
+        default=None, description="Assigned rider details (if populated)"
+    )
+    customer: Optional[CustomerSchema] = Field(
+        default=None, description="Customer details (for riders)"
     )
 
     model_config = ConfigDict(
@@ -111,10 +158,18 @@ class CreateOrderSchema(BaseModel):
         description="Platform from which the order originated (e.g., 'mobile', 'web')",
         examples=["web"],
     )
+    delivery_option: Optional[DeliveryOption] = Field(
+        default=None, description="Delivery option"
+    )
 
 
 class UpdateOrderSchema(BaseModel):
     status: OrderStatus = Field(..., examples=[OrderStatus.CONFIRMED.value])
+
+
+class OrderUpdateResponse(BaseModel):
+    id: int
+    status: OrderStatus
 
 
 class PaymentCallbackSchema(BaseModel):
@@ -136,4 +191,19 @@ class PaymentCallbackSchema(BaseModel):
                 }
             ]
         }
+    )
+
+
+class PaginatedOrdersResponse(BaseModel):
+    orders: List[OrderSchema]
+    pagination: Dict[str, Any] = Field(
+        ...,
+        description="Pagination metadata",
+        examples=[
+            {
+                "limit": 20,
+                "offset": 0,
+                "total_results": 100,
+            }
+        ],
     )

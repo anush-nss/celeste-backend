@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional
+from typing import List, Optional
 
 from fastapi import (
     APIRouter,
@@ -14,11 +14,12 @@ from src.api.auth.models import DecodedToken
 from src.api.orders.models import (
     CreateOrderSchema,
     OrderSchema,
-    PaymentCallbackSchema,
+    PaginatedOrdersResponse,
     UpdateOrderSchema,
+    OrderUpdateResponse,
 )
 from src.api.orders.service import OrderService
-from src.config.constants import OdooSyncStatus, UserRole
+from src.config.constants import OdooSyncStatus, OrderStatus, UserRole
 from src.database.connection import AsyncSessionLocal
 from src.database.models.order import Order
 from src.dependencies.auth import RoleChecker, get_current_user
@@ -30,15 +31,21 @@ orders_router = APIRouter(prefix="/orders", tags=["Orders"])
 order_service = OrderService()
 
 
-@orders_router.get("/", summary="Retrieve orders", response_model=List[OrderSchema])
+@orders_router.get(
+    "/",
+    summary="Retrieve orders",
+    response_model=PaginatedOrdersResponse,
+)
 async def get_orders(
     current_user: DecodedToken = Depends(get_current_user),
     cart_id: Optional[List[int]] = Query(
         None, description="Filter orders by source cart ID(s)"
     ),
-    status: Optional[List[str]] = Query(
+    status: Optional[List[OrderStatus]] = Query(
         None, description="Filter orders by status (e.g., pending, confirmed)"
     ),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
     include_products: bool = Query(
         False, description="Include full product details in order items"
     ),
@@ -46,31 +53,41 @@ async def get_orders(
     include_addresses: bool = Query(
         False, description="Include full delivery address details"
     ),
+    include_rider: bool = Query(
+        False, description="Include assigned rider details (if any)"
+    ),
 ):
     """
-    Retrieve orders with optional population of related data.
-
-    By default, only order and item IDs/amounts are returned for fast listing.
-    Set query parameters to True to include full product/store/address details.
+    Retrieve orders with optional population of related data and pagination.
     """
     if current_user.role == UserRole.ADMIN:
-        orders = await order_service.get_all_orders(
+        result = await order_service.get_orders_paginated(
             cart_ids=cart_id,
-            status=status,
+            status=[s.value for s in status] if status else None,
+            page=page,
+            limit=limit,
             include_products=include_products,
             include_stores=include_stores,
             include_addresses=include_addresses,
+            include_rider=include_rider,
         )
     else:
-        orders = await order_service.get_all_orders(
+        result = await order_service.get_orders_paginated(
             user_id=current_user.uid,
             cart_ids=cart_id,
-            status=status,
+            status=[s.value for s in status] if status else None,
+            page=page,
+            limit=limit,
             include_products=include_products,
             include_stores=include_stores,
             include_addresses=include_addresses,
+            include_rider=include_rider,
         )
-    return success_response([order.model_dump(mode="json") for order in orders])
+
+    # Manually dump models for JSON compatibility
+    orders_data = [order.model_dump(mode="json") for order in result["orders"]]
+
+    return success_response({"orders": orders_data, "pagination": result["pagination"]})
 
 
 @orders_router.get(
@@ -86,6 +103,9 @@ async def get_order_by_id(
     include_addresses: bool = Query(
         True, description="Include full delivery address details"
     ),
+    include_rider: bool = Query(
+        False, description="Include assigned rider details (if any)"
+    ),
 ):
     """
     Retrieve a specific order with optional population of related data.
@@ -98,6 +118,7 @@ async def get_order_by_id(
         include_products=include_products,
         include_stores=include_stores,
         include_addresses=include_addresses,
+        include_rider=include_rider,
     )
     if not order:
         raise ResourceNotFoundException(detail=f"Order with ID {order_id} not found")
@@ -130,61 +151,45 @@ async def create__order(
 @orders_router.put(
     "/{order_id}/status",
     summary="Update an order status",
+    response_model=OrderUpdateResponse,
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN, UserRole.RIDER]))],
+)
+async def update_order_status(
+    order_id: int,
+    order_data: UpdateOrderSchema,
+    current_user: DecodedToken = Depends(get_current_user),
+):
+    updated_order = await order_service.update_order_status(
+        order_id,
+        order_data,
+        current_user={"role": current_user.role, "uid": current_user.uid},
+    )
+    return success_response(
+        updated_order.model_dump(), message="Order status updated successfully"
+    )
+
+
+@orders_router.post(
+    "/{order_id}/assign/{rider_id}",
+    summary="Assign a rider to an order (Admin only)",
+    description="Assigns a rider to a PACKED order.",
     response_model=OrderSchema,
     dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def update_order_status(order_id: int, order_data: UpdateOrderSchema):
-    updated_order = await order_service.update_order_status(order_id, order_data)
+async def assign_rider_to_order(order_id: int, rider_id: int):
+    updated_order = await order_service.assign_rider(order_id, rider_id)
     return success_response(updated_order.model_dump(mode="json"))
 
 
-@orders_router.post(
-    "/payment/callback",
-    summary="Handle payment gateway callback",
-    status_code=status.HTTP_200_OK,
+@orders_router.delete(
+    "/{order_id}/assign",
+    summary="Remove rider assignment from an order (Admin only)",
+    description="Unassigns a rider from a PACKED order.",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))],
 )
-async def payment_callback(
-    callback_data: PaymentCallbackSchema, background_tasks: BackgroundTasks
-):
-    """Handle payment gateway callback (webhook)"""
-
-    # Process callback through order service (with background tasks for Odoo sync)
-    result = await order_service.process_payment_callback(
-        callback_data.model_dump(), background_tasks
-    )
-
-    if result["status"] == "success":
-        return success_response(result)
-    else:
-        return success_response(result, status_code=400)
-
-
-@orders_router.post(
-    "/{order_id}/payment/verify",
-    summary="Verify payment status",
-    dependencies=[Depends(get_current_user)],
-)
-async def verify_payment(
-    order_id: int,
-    payment_reference: str,
-    current_user: Annotated[DecodedToken, Depends(get_current_user)],
-):
-    """Verify payment status for an order"""
-
-    # Check if user owns the order or is admin
-    order = await order_service.get_order_by_id(order_id)
-    if not order:
-        raise ResourceNotFoundException(detail=f"Order with ID {order_id} not found")
-
-    if current_user.role != UserRole.ADMIN and order.user_id != current_user.uid:
-        raise ForbiddenException("You do not have permission to verify this payment")
-
-    # Verify payment with gateway
-    verification_result = await order_service.payment_service.verify_payment(
-        payment_reference, order_id
-    )
-
-    return success_response(verification_result)
+async def unassign_rider_from_order(order_id: int):
+    result = await order_service.unassign_rider(order_id)
+    return success_response(result)
 
 
 @orders_router.get(
@@ -291,6 +296,12 @@ async def retry_odoo_sync(order_id: int, background_tasks: BackgroundTasks):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Order {order_id} is not confirmed. Only confirmed orders can be synced to Odoo.",
+                )
+
+            if order.odoo_sync_status == OdooSyncStatus.SYNCED:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Order {order_id} is already synced to Odoo.",
                 )
 
         # Attempt sync in the background

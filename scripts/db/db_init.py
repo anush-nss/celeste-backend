@@ -8,6 +8,7 @@ sys.path.append(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
 
+from sqlalchemy import text
 from src.database.base import Base
 from src.database.connection import engine
 from src.database.models.user import (
@@ -32,6 +33,18 @@ from src.database.models.price_list_line import PriceListLine
 from src.database.models.tier_price_list import TierPriceList
 from src.database.models.inventory import Inventory
 from src.database.models.order import Order, OrderItem
+from src.database.models.payment import PaymentTransaction
+from src.database.models.payment_token import UserPaymentToken
+from src.database.models.webhook_notification import WebhookNotification
+from src.database.models.rider import RiderProfile, StoreRider
+from src.database.models.promotion import Promotion
+from src.database.models.favorite import Favorite
+from src.database.models.user_preference import UserPreference
+from src.database.models.product_interaction import ProductInteraction
+from src.database.models.product_popularity import ProductPopularity
+from src.database.models.product_vector import ProductVector
+from src.database.models.search_interaction import SearchInteraction
+from src.database.models.search_suggestion import SearchSuggestion
 
 # Avoid unused import issues
 _ = (
@@ -55,6 +68,19 @@ _ = (
     Inventory,
     Order,
     OrderItem,
+    PaymentTransaction,
+    UserPaymentToken,
+    WebhookNotification,
+    RiderProfile,
+    StoreRider,
+    Promotion,
+    Favorite,
+    UserPreference,
+    ProductInteraction,
+    ProductPopularity,
+    ProductVector,
+    SearchInteraction,
+    SearchSuggestion,
 )
 
 
@@ -64,6 +90,9 @@ async def init_db(drop_tables: bool = False):
             print("Dropping all tables...")
             await conn.run_sync(Base.metadata.drop_all)
             print("Tables dropped.")
+        print("Enabling extensions...")
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         print("Creating tables...")
         await conn.run_sync(Base.metadata.create_all)
         print("Tables created.")

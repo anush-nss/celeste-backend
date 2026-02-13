@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from src.database.models.product import Product
     from src.database.models.store import Store
     from src.database.models.user import User
+    from src.database.models.payment import PaymentTransaction
+    from src.database.models.rider import RiderProfile
 
 
 class Order(Base):
@@ -93,6 +95,9 @@ class Order(Base):
     address_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("addresses.id"), nullable=True
     )
+    payment_transaction_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("payment_transactions.id"), nullable=True
+    )
     total_amount: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
     delivery_charge: Mapped[Decimal] = mapped_column(
         DECIMAL(10, 2), nullable=False, server_default=text("'0.00'")
@@ -122,6 +127,9 @@ class Order(Base):
             name="platform",
         ),
         nullable=True,
+    )
+    delivery_option: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, default=None
     )
     status: Mapped[str] = mapped_column(
         Enum(
@@ -169,6 +177,16 @@ class Order(Base):
     )
     user: Mapped["User"] = relationship("User", back_populates="orders")
     store: Mapped["Store"] = relationship("Store")
+    payment_transaction: Mapped["PaymentTransaction"] = relationship(
+        "PaymentTransaction"
+    )
+    rider: Mapped["RiderProfile"] = relationship(
+        "RiderProfile", back_populates="assigned_orders"
+    )
+
+    rider_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("rider_profiles.id"), nullable=True
+    )
 
 
 class OrderItem(Base):

@@ -15,9 +15,11 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.base import Base
+from src.database.models.associations import store_riders
 
 if TYPE_CHECKING:
     from src.database.models.store_tag import StoreTag
+    from src.database.models.rider import RiderProfile
 
 
 class Store(Base):
@@ -88,4 +90,10 @@ class Store(Base):
     # Relationships
     store_tags: Mapped[List["StoreTag"]] = relationship(
         "StoreTag", back_populates="store", cascade="all, delete-orphan"
+    )
+    riders: Mapped[List["RiderProfile"]] = relationship(
+        "RiderProfile",
+        secondary=store_riders,
+        back_populates="stores",
+        overlaps="store_associations",
     )

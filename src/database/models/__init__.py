@@ -5,6 +5,7 @@ from .address import Address
 from .associations import product_categories
 from .cart import Cart, CartItem, CartUser
 from .category import Category
+from .favorite import Favorite
 from .inventory import Inventory
 from .order import Order, OrderItem
 from .price_list import PriceList
@@ -16,6 +17,7 @@ from .tier import Tier
 from .tier_benefit import Benefit, tier_benefits
 from .tier_price_list import TierPriceList
 from .payment import PaymentTransaction
+from .payment_token import UserPaymentToken
 from .user import User
 from .product_vector import ProductVector
 from .search_interaction import SearchInteraction
@@ -23,6 +25,10 @@ from .user_preference import UserPreference
 from .product_interaction import ProductInteraction
 from .product_popularity import ProductPopularity
 from .search_suggestion import SearchSuggestion
+from .webhook_notification import WebhookNotification
+from .promotion import Promotion
+from .rider import RiderProfile, StoreRider
+from .ecommerce_category import EcommerceCategory
 
 __all__ = [
     "User",
@@ -31,6 +37,7 @@ __all__ = [
     "CartUser",
     "CartItem",
     "Category",
+    "Favorite",
     "Product",
     "Tag",
     "ProductTag",
@@ -47,10 +54,16 @@ __all__ = [
     "Order",
     "OrderItem",
     "PaymentTransaction",
+    "UserPaymentToken",
     "ProductVector",
     "SearchInteraction",
     "UserPreference",
     "ProductInteraction",
     "ProductPopularity",
     "SearchSuggestion",
+    "WebhookNotification",
+    "Promotion",
+    "RiderProfile",
+    "StoreRider",
+    "EcommerceCategory",
 ]

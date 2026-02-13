@@ -1,4 +1,5 @@
 import math
+from enum import Enum
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -14,14 +15,17 @@ from src.api.orders.models import (
     OrderItemSchema,
     OrderSchema,
     UpdateOrderSchema,
+    OrderUpdateResponse,
 )
-from src.api.orders.services.payment_service import PaymentService
+
 from src.api.orders.services.store_selection_service import StoreSelectionService
 from src.api.pricing.service import PricingService
 from src.api.products.cache import products_cache
 from src.api.products.service import ProductService
 from src.api.stores.service import StoreService
+from src.api.riders.models import RiderProfileSchema
 from src.api.users.services.address_service import UserAddressService
+from src.api.riders.services.assignment_service import RiderAssignmentService
 
 
 from src.api.users.checkout_models import LocationSchema, StoreFulfillmentResponse
@@ -30,12 +34,14 @@ from src.config.constants import (
     FulfillmentMode,
     OrderStatus,
     DELIVERY_PRODUCT_ODOO_ID,
+    DeliveryOption,
 )
 from src.database.connection import AsyncSessionLocal
 from src.database.models.cart import Cart
 from src.database.models.order import Order, OrderItem
 from src.database.models.product import Product
 from src.database.models.user import User
+from src.database.models.rider import RiderProfile
 from src.integrations.odoo.order_sync import OdooOrderSync
 from src.shared.error_handler import ErrorHandler, handle_service_errors
 from src.shared.exceptions import ResourceNotFoundException, ValidationException
@@ -47,12 +53,12 @@ class OrderService:
         self.interaction_service = InteractionService()
         self.inventory_service = InventoryService()
         self.pricing_service = PricingService()
-        self.payment_service = PaymentService()
         self.store_selection_service = StoreSelectionService()
         self.products_cache = products_cache
         self.product_service = ProductService()
         self.store_service = StoreService()
         self.address_service = UserAddressService()
+        self._rider_assignment_service = RiderAssignmentService()
 
     @handle_service_errors("creating single store order")
     async def create_single_store_order(
@@ -62,6 +68,7 @@ class OrderService:
         location: LocationSchema,
         cart_ids: List[int],
         platform: Optional[str] = None,
+        delivery_option: Optional[DeliveryOption] = None,
     ) -> OrderSchema:
         """Creates a single order for a specific store's fulfillment."""
         async with AsyncSessionLocal() as session:
@@ -85,7 +92,10 @@ class OrderService:
                     delivery_charge=Decimal(str(store_fulfillment.delivery_cost)),
                     fulfillment_mode=fulfillment_mode,
                     delivery_service_level=location.delivery_service_level,
-                    platform=platform,
+                    platform=platform.value if isinstance(platform, Enum) else platform,
+                    delivery_option=delivery_option.value
+                    if isinstance(delivery_option, Enum)
+                    else delivery_option,
                     status=OrderStatus.PENDING.value,
                 )
                 session.add(new_order)
@@ -136,7 +146,10 @@ class OrderService:
                 # Re-query with eager loading of items
                 result = await session.execute(
                     select(Order)
-                    .options(selectinload(Order.items))
+                    .options(
+                        selectinload(Order.items),
+                        selectinload(Order.payment_transaction),
+                    )
                     .filter(Order.id == new_order.id)
                 )
                 order_with_items = result.scalar_one()
@@ -321,6 +334,8 @@ class OrderService:
         include_products: bool = True,
         include_stores: bool = True,
         include_addresses: bool = True,
+        include_customer: bool = False,
+        include_rider: bool = False,
     ) -> List[OrderSchema]:
         """
         Enrich orders with full product, store, and address details using bulk queries.
@@ -333,6 +348,9 @@ class OrderService:
             include_products: Fetch and populate full product details
             include_stores: Fetch and populate full store details
             include_addresses: Fetch and populate full address details
+            include_addresses: Fetch and populate full address details
+            include_customer: Fetch and populate customer details (name, phone)
+            include_rider: Fetch and populate rider details
 
         Returns:
             List of enriched OrderSchema objects
@@ -344,6 +362,8 @@ class OrderService:
         all_product_ids = set()
         all_store_ids = set()
         all_address_ids = set()
+        all_user_ids = set()
+        all_rider_ids = set()
 
         for order in orders:
             if include_stores:
@@ -354,6 +374,10 @@ class OrderService:
                 for item in order.items:
                     if item.product_id != DELIVERY_PRODUCT_ODOO_ID:
                         all_product_ids.add(item.product_id)
+            if include_customer and order.user_id:
+                all_user_ids.add(order.user_id)
+            if include_rider and order.rider_id:
+                all_rider_ids.add(order.rider_id)
 
         # Fetch all products in a single bulk query (reuses products module)
         products_map = {}
@@ -389,6 +413,7 @@ class OrderService:
                         "phone": s.phone,
                         "email": s.email,
                         "is_active": s.is_active,
+                        "odoo_warehouse_id": s.odoo_warehouse_id,
                         "created_at": s.created_at.isoformat()
                         if s.created_at
                         else None,
@@ -406,6 +431,38 @@ class OrderService:
                 list(all_address_ids)
             )
             addresses_map = {a.id: a.model_dump(mode="json") for a in addresses}
+
+        # Fetch all users in a single bulk query
+        users_map = {}
+        if include_customer and all_user_ids:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(User).filter(User.firebase_uid.in_(list(all_user_ids)))
+                )
+                users = result.scalars().all()
+                users_map = {
+                    u.firebase_uid: {
+                        "name": u.name,
+                        "phone": u.phone,
+                    }
+                    for u in users
+                }
+
+        # Fetch all riders in a single bulk query
+        riders_map = {}
+        if include_rider and all_rider_ids:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(RiderProfile).filter(
+                        RiderProfile.id.in_(list(all_rider_ids))
+                    )
+                )
+                riders = result.scalars().all()
+                # Use RiderProfileSchema to convert to dict
+                riders_map = {
+                    r.id: RiderProfileSchema.model_validate(r).model_dump(mode="json")
+                    for r in riders
+                }
 
         # Build enriched order schemas
         order_schemas = []
@@ -439,7 +496,20 @@ class OrderService:
                 "fulfillment_mode": order.fulfillment_mode,
                 "delivery_service_level": order.delivery_service_level,
                 "platform": order.platform,
+                "delivery_option": order.delivery_option,
                 "status": order.status,
+                "odoo_sync_status": order.odoo_sync_status,
+                "odoo_order_id": order.odoo_order_id,
+                "odoo_customer_id": order.odoo_customer_id,
+                "odoo_sync_error": order.odoo_sync_error,
+                "odoo_synced_at": order.odoo_synced_at,
+                "odoo_last_retry_at": order.odoo_last_retry_at,
+                "payment_reference": order.payment_transaction.payment_reference
+                if order.payment_transaction
+                else None,
+                "transaction_id": order.payment_transaction.transaction_id
+                if order.payment_transaction
+                else None,
                 "created_at": order.created_at,
                 "updated_at": order.updated_at,
                 "items": filtered_items,
@@ -447,6 +517,12 @@ class OrderService:
                 "address": addresses_map.get(order.address_id)
                 if order.address_id
                 else None,  # Attach address
+                "customer": users_map.get(order.user_id)
+                if include_customer
+                else None,  # Attach customer
+                "rider": riders_map.get(order.rider_id)
+                if include_rider and order.rider_id
+                else None,  # Attach rider
             }
             order_schemas.append(OrderSchema.model_validate(order_dict))
 
@@ -456,6 +532,7 @@ class OrderService:
     async def get_all_orders(
         self,
         user_id: Optional[str] = None,
+        rider_id: Optional[int] = None,
         cart_ids: Optional[List[int]] = None,
         status: Optional[List[str]] = None,
         include_products: bool = False,
@@ -465,7 +542,9 @@ class OrderService:
         async with AsyncSessionLocal() as session:
             query = (
                 select(Order)
-                .options(selectinload(Order.items))
+                .options(
+                    selectinload(Order.items), selectinload(Order.payment_transaction)
+                )
                 .distinct()
                 .order_by(Order.created_at.desc())
             )
@@ -477,6 +556,9 @@ class OrderService:
 
             if user_id:
                 query = query.filter(Order.user_id == user_id)
+
+            if rider_id:
+                query = query.filter(Order.rider_id == rider_id)
 
             if status:
                 query = query.filter(Order.status.in_(status))
@@ -492,6 +574,89 @@ class OrderService:
                 include_addresses=include_addresses,
             )
 
+    @handle_service_errors("retrieving paginated orders")
+    async def get_orders_paginated(
+        self,
+        page: int = 1,
+        limit: int = 20,
+        user_id: Optional[str] = None,
+        rider_id: Optional[int] = None,
+        cart_ids: Optional[List[int]] = None,
+        status: Optional[List[str]] = None,
+        include_products: bool = False,
+        include_stores: bool = False,
+        include_addresses: bool = False,
+        include_customer: bool = False,
+        include_rider: bool = False,
+    ) -> Dict[str, Any]:
+        offset = (page - 1) * limit
+        async with AsyncSessionLocal() as session:
+            # Base query creation (similar to get_all_orders but we need count too)
+            query = select(Order)
+
+            # Apply Filters
+            if cart_ids:
+                query = query.join(Order.items).filter(
+                    OrderItem.source_cart_id.in_(cart_ids)
+                )
+
+            if user_id:
+                query = query.filter(Order.user_id == user_id)
+
+            if rider_id:
+                query = query.filter(Order.rider_id == rider_id)
+
+            if status:
+                query = query.filter(Order.status.in_(status))
+
+            # Count query (efficient count)
+            # We clone the query for count before adding eager loads and ordering
+            from sqlalchemy import func
+
+            count_query = select(func.count()).select_from(query.subquery())
+            total_result = await session.execute(count_query)
+            total_count = total_result.scalar() or 0
+
+            # Add eager loads and ordering for data query
+            # ### TESTING: PACKED orders should show oldest first ###
+            if status and len(status) == 1 and status[0] == OrderStatus.PACKED.value:
+                order_by_clause = Order.created_at.asc()
+            else:
+                order_by_clause = Order.created_at.desc()
+
+            query = (
+                query.options(
+                    selectinload(Order.items), selectinload(Order.payment_transaction)
+                )
+                .distinct()
+                .order_by(order_by_clause)
+                .limit(limit)
+                .offset(offset)
+            )
+
+            result = await session.execute(query)
+            orders = list(result.scalars().unique().all())
+
+            # Enrich
+            enriched_orders = await self._enrich_orders_with_products_and_stores(
+                orders,
+                include_products=include_products,
+                include_stores=include_stores,
+                include_addresses=include_addresses,
+                include_customer=include_customer,
+                include_rider=include_rider,
+            )
+
+            return {
+                "orders": enriched_orders,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "total_results": total_count,
+                    "page": page,
+                },
+            }
+
     @handle_service_errors("retrieving order")
     async def get_order_by_id(
         self,
@@ -499,11 +664,14 @@ class OrderService:
         include_products: bool = True,
         include_stores: bool = True,
         include_addresses: bool = True,
+        include_rider: bool = False,
     ) -> OrderSchema | None:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(Order)
-                .options(selectinload(Order.items))
+                .options(
+                    selectinload(Order.items), selectinload(Order.payment_transaction)
+                )
                 .filter(Order.id == order_id)
             )
             order = result.scalars().first()
@@ -516,6 +684,7 @@ class OrderService:
                 include_products=include_products,
                 include_stores=include_stores,
                 include_addresses=include_addresses,
+                include_rider=include_rider,
             )
             return enriched_orders[0] if enriched_orders else None
 
@@ -573,7 +742,10 @@ class OrderService:
                     store_id=order_data.store_id,
                     total_amount=total_amount,
                     status=OrderStatus.PENDING.value,
-                    platform=platform,
+                    platform=platform.value if isinstance(platform, Enum) else platform,
+                    delivery_option=order_data.delivery_option.value
+                    if isinstance(order_data.delivery_option, Enum)
+                    else order_data.delivery_option,
                     items=order_items_to_create,
                 )
                 session.add(new_order)
@@ -582,7 +754,10 @@ class OrderService:
                 # Re-query with eager loading of items
                 result = await session.execute(
                     select(Order)
-                    .options(selectinload(Order.items))
+                    .options(
+                        selectinload(Order.items),
+                        selectinload(Order.payment_transaction),
+                    )
                     .filter(Order.id == new_order.id)
                 )
                 order_with_items = result.scalar_one()
@@ -598,8 +773,11 @@ class OrderService:
 
     @handle_service_errors("updating order status")
     async def update_order_status(
-        self, order_id: int, status_update: UpdateOrderSchema
-    ) -> OrderSchema:
+        self,
+        order_id: int,
+        status_update: UpdateOrderSchema,
+        current_user: Optional[Dict] = None,
+    ) -> OrderUpdateResponse:
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 result = await session.execute(
@@ -607,6 +785,7 @@ class OrderService:
                     .options(
                         selectinload(Order.items).selectinload(OrderItem.product),
                         selectinload(Order.store),
+                        selectinload(Order.rider),
                     )
                     .filter(Order.id == order_id)
                 )
@@ -625,8 +804,40 @@ class OrderService:
                     else status_update.status
                 )
 
+                # Role-based validation
+                if current_user and current_user.get("role") == "rider":
+                    # 1. Verify Assignment
+                    # We need to fetch the rider profile for this user
+                    rider_stmt = select(RiderProfile).where(
+                        RiderProfile.user_id == current_user.get("uid")
+                    )
+                    rider_result = await session.execute(rider_stmt)
+                    rider_profile = rider_result.scalar_one_or_none()
+
+                    if not rider_profile or order.rider_id != rider_profile.id:
+                        # Use ForbiddenException if available, else ValidationException
+                        raise ValidationException(
+                            "You can only update status for orders assigned to you."
+                        )
+
+                    # 2. Verify Valid Transitions for Riders
+                    # Allowed: PACKED -> SHIPPED -> DELIVERED
+                    allowed_transitions = {
+                        OrderStatus.PACKED.value: [OrderStatus.SHIPPED.value],
+                        OrderStatus.SHIPPED.value: [OrderStatus.DELIVERED.value],
+                    }
+
+                    allowed_next_statuses = allowed_transitions.get(current_status, [])
+                    if new_status not in allowed_next_statuses:
+                        raise ValidationException(
+                            f"Riders cannot transition order from {current_status} to {new_status}. "
+                            f"Allowed transitions: {allowed_transitions}"
+                        )
+
                 if current_status == new_status:
-                    return OrderSchema.model_validate(order)  # No change
+                    return OrderUpdateResponse(
+                        id=order.id, status=OrderStatus(current_status)
+                    )
 
                 # Logic for status transitions
                 if new_status == OrderStatus.CONFIRMED.value:
@@ -657,6 +868,11 @@ class OrderService:
                         )
 
                 elif new_status == OrderStatus.SHIPPED.value:
+                    if order.fulfillment_mode == FulfillmentMode.PICKUP.value:
+                        raise ValidationException(
+                            "Pickup orders cannot be set to SHIPPED."
+                        )
+
                     if current_status != OrderStatus.PACKED.value:
                         raise ValidationException("Order must be PACKED to be SHIPPED.")
                     # Fulfill inventory when shipped (rider collected from store)
@@ -671,14 +887,18 @@ class OrderService:
                         )
 
                 elif new_status == OrderStatus.DELIVERED.value:
-                    # Can go from PACKED (pickup) or SHIPPED (delivery)
-                    if current_status not in [
-                        OrderStatus.PACKED.value,
-                        OrderStatus.SHIPPED.value,
-                    ]:
-                        raise ValidationException(
-                            "Order must be PACKED or SHIPPED to be DELIVERED."
-                        )
+                    # Enforce correct previous state based on fulfillment mode
+                    if order.fulfillment_mode == FulfillmentMode.PICKUP.value:
+                        if current_status != OrderStatus.PACKED.value:
+                            raise ValidationException(
+                                "Pickup orders must go directly from PACKED to DELIVERED."
+                            )
+                    else:
+                        # Delivery orders must go through SHIPPED
+                        if current_status != OrderStatus.SHIPPED.value:
+                            raise ValidationException(
+                                "Delivery orders must be SHIPPED before being DELIVERED."
+                            )
                     # If coming from PACKED (pickup order), fulfill inventory now
                     if current_status == OrderStatus.PACKED.value:
                         for item in order.items:
@@ -723,20 +943,13 @@ class OrderService:
 
                 # Re-query with eager loading of items
                 result = await session.execute(
-                    select(Order)
-                    .options(selectinload(Order.items))
-                    .filter(Order.id == order.id)
+                    select(Order).filter(Order.id == order.id)
                 )
-                order_with_items = result.scalar_one()
+                updated_order = result.scalar_one()
 
-            # Use existing enrichment method to properly convert to schema
-            enriched_orders = await self._enrich_orders_with_products_and_stores(
-                [order_with_items],
-                include_products=True,
-                include_stores=True,
-                include_addresses=True,
+            return OrderUpdateResponse(
+                id=updated_order.id, status=OrderStatus(updated_order.status)
             )
-            return enriched_orders[0]
 
     async def _background_odoo_sync(self, order_id: int) -> None:
         """Background task to sync order to Odoo (runs after response is sent)"""
@@ -758,128 +971,190 @@ class OrderService:
                 exc_info=True,
             )
 
-    @handle_service_errors("processing payment callback")
-    async def process_payment_callback(
-        self, callback_data: Dict, background_tasks=None
-    ) -> Dict[str, Any]:
-        """Process payment gateway callback and update order status
-
-        Args:
-            callback_data: Payment gateway callback data
-            background_tasks: FastAPI BackgroundTasks for async processing
+    @handle_service_errors("confirming orders by cart ids")
+    async def confirm_orders_by_cart_ids(
+        self, cart_ids: List[int], background_tasks=None
+    ) -> List[int]:
+        """Update multiple orders status to CONFIRMED based on cart IDs.
+        Used after successful payment.
         """
-
-        # Process callback through payment service
-        callback_result = await self.payment_service.process_payment_callback(
-            callback_data
-        )
-
-        if callback_result["status"] == "error":
-            return callback_result
-
-        cart_ids = callback_result.get("cart_ids")
-        payment_status = callback_result["status"]
-
         if not cart_ids:
-            return {"status": "error", "message": "Cart IDs not found in callback"}
+            return []
 
-        # Fetch all orders associated with the cart_ids
+        # Find the orders associated with these carts
+        async with AsyncSessionLocal() as session:
+            stmt = (
+                select(Order)
+                .join(Order.items)
+                .where(OrderItem.source_cart_id.in_(cart_ids))
+                .distinct()
+            )
+            result = await session.execute(stmt)
+            orders = result.scalars().all()
+
+        confirmed_ids = []
+        # Update each order status
+        for order in orders:
+            if order.status == OrderStatus.PENDING.value:
+                try:
+                    await self.update_order_status(
+                        order.id, UpdateOrderSchema(status=OrderStatus.CONFIRMED)
+                    )
+                    confirmed_ids.append(order.id)
+                    self._error_handler.logger.info(
+                        f"Order {order.id} confirmed via successful payment"
+                    )
+
+                    if background_tasks:
+                        background_tasks.add_task(self._background_odoo_sync, order.id)
+
+                    # ### TESTING ONLY: Auto-transition to PACKED ###
+                    # Automatically move orders from CONFIRMED -> PROCESSING -> PACKED (if not pickup)
+                    if order.fulfillment_mode != FulfillmentMode.PICKUP.value:
+                        try:
+                            # 1. To PROCESSING
+                            await self.update_order_status(
+                                order.id,
+                                UpdateOrderSchema(status=OrderStatus.PROCESSING),
+                            )
+                            # 2. To PACKED
+                            await self.update_order_status(
+                                order.id, UpdateOrderSchema(status=OrderStatus.PACKED)
+                            )
+                            # 3. Auto-assign Rider
+                            await self.auto_assign_rider(order.id)
+
+                            self._error_handler.logger.info(
+                                f"[TEST] Order {order.id} auto-transitioned to PACKED and assigned to rider"
+                            )
+                        except Exception as e:
+                            self._error_handler.logger.error(
+                                f"[TEST] Failed auto-transition for order {order.id}: {e}"
+                            )
+                    # ### END TESTING ONLY ###
+
+                except Exception as e:
+                    self._error_handler.logger.error(
+                        f"Failed to confirm order {order.id}: {e}"
+                    )
+
+        return confirmed_ids
+
+    @handle_service_errors("assigning rider to order")
+    async def assign_rider(self, order_id: int, rider_id: int) -> OrderSchema:
+        """Assign a rider to a PACKED order"""
         async with AsyncSessionLocal() as session:
             async with session.begin():
-                result = await session.execute(
+                # 1. Verify Rider exists
+                rider_stmt = select(RiderProfile).where(RiderProfile.id == rider_id)
+                rider_result = await session.execute(rider_stmt)
+                rider = rider_result.scalar_one_or_none()
+                if not rider:
+                    raise ResourceNotFoundException(
+                        f"Rider with ID {rider_id} not found"
+                    )
+
+                # 2. Verify Order exists and is PACKED
+                order_stmt = (
                     select(Order)
-                    .join(OrderItem)
-                    .filter(OrderItem.source_cart_id.in_(cart_ids))
+                    .options(
+                        selectinload(Order.items).selectinload(OrderItem.product),
+                        selectinload(Order.store),
+                        selectinload(Order.payment_transaction),
+                        selectinload(Order.rider),
+                    )
+                    .where(Order.id == order_id)
                 )
-                orders = result.scalars().unique().all()
+                order_result = await session.execute(order_stmt)
+                order = order_result.scalar_one_or_none()
 
-                if not orders:
-                    return {
-                        "status": "error",
-                        "message": "No orders found for the given carts",
-                    }
+                if not order:
+                    raise ResourceNotFoundException(
+                        f"Order with ID {order_id} not found"
+                    )
 
-                processed_orders = []
-                for order in orders:
-                    if payment_status == "success":
-                        # Automatically confirm the order (convert holds to reservations)
-                        update_schema = UpdateOrderSchema(status=OrderStatus.CONFIRMED)
-                        updated_order = await self.update_order_status(
-                            order.id, update_schema
-                        )
+                if order.status != OrderStatus.PACKED.value:
+                    raise ValidationException(
+                        f"Order must be in PACKED state to assign a rider. Current status: {order.status}"
+                    )
 
-                        # Track order interactions for all products
-                        try:
-                            # Get order items
-                            order_items = [
-                                (item.product_id, item.quantity, item.unit_price)
-                                for item in updated_order.items
-                            ]
+                if order.fulfillment_mode == FulfillmentMode.PICKUP.value:
+                    raise ValidationException("Cannot assign rider to a PICKUP order.")
 
-                            # Track bulk order interactions
-                            await self.interaction_service.track_bulk_orders(
-                                user_id=updated_order.user_id,
-                                order_id=updated_order.id,
-                                products=order_items,
-                                auto_update=True,  # Auto-update popularity and preferences
-                            )
-                            self._error_handler.logger.info(
-                                f"Tracked {len(order_items)} product interactions for order {order.id}"
-                            )
-                        except Exception as e:
-                            # Log but don't fail the payment processing
-                            self._error_handler.logger.error(
-                                f"Failed to track interactions for order {order.id}: {str(e)}"
-                            )
+                # 3. Assign Rider
+                order.rider_id = rider_id
+                await session.flush()
 
-                        # Update user statistics for successful payment
-                        try:
-                            await self.update_user_statistics(
-                                updated_order.user_id,
-                                Decimal(str(updated_order.total_amount)),
-                            )
-                        except Exception as e:
-                            # Log but don't fail the payment processing
-                            self._error_handler.logger.error(
-                                f"Failed to update user statistics for order {order.id}: {str(e)}"
-                            )
+                # Re-query to ensure everything is loaded correctly for the return schema
+                # This avoids "greenlet_spawn" issues with accessing relationships on a potentially stale object
+                order_stmt = (
+                    select(Order)
+                    .options(
+                        selectinload(Order.items).selectinload(OrderItem.product),
+                        selectinload(Order.store),
+                        selectinload(Order.payment_transaction),
+                        selectinload(Order.rider),
+                    )
+                    .where(Order.id == order_id)
+                )
+                order_result = await session.execute(order_stmt)
+                order = order_result.scalar_one()
 
-                        # Queue Odoo sync as background task (non-blocking)
-                        if background_tasks:
-                            background_tasks.add_task(
-                                self._background_odoo_sync, order.id
-                            )
-                            self._error_handler.logger.info(
-                                f"Odoo sync queued as background task for order {order.id}"
-                            )
-                        else:
-                            # Fallback: log warning if BackgroundTasks not provided
-                            self._error_handler.logger.warning(
-                                f"BackgroundTasks not provided - Odoo sync skipped for order {order.id}. "
-                                "Use retry endpoint to sync manually."
-                            )
-                        processed_orders.append(
-                            {
-                                "order_id": order.id,
-                                "order_status": updated_order.status,
-                            }
-                        )
-                    else:
-                        # Payment failed - cancel order and release holds
-                        update_schema = UpdateOrderSchema(status=OrderStatus.CANCELLED)
-                        updated_order = await self.update_order_status(
-                            order.id, update_schema
-                        )
-                        processed_orders.append(
-                            {
-                                "order_id": order.id,
-                                "order_status": updated_order.status,
-                            }
-                        )
+            # Enrich
+            enriched_orders = await self._enrich_orders_with_products_and_stores(
+                [order],
+                include_products=True,
+                include_stores=True,
+                include_addresses=True,
+            )
+            return enriched_orders[0]
 
-        return {
-            "status": "success",
-            "processed_orders": processed_orders,
-            "payment_reference": callback_result["payment_reference"],
-            "transaction_id": callback_result["transaction_id"],
-        }
+    @handle_service_errors("unassigning rider from order")
+    async def unassign_rider(self, order_id: int) -> dict:
+        """Remove rider assignment from a PACKED order"""
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                # Verify Order exists and is PACKED
+                stmt = select(Order).where(Order.id == order_id)
+                result = await session.execute(stmt)
+                order = result.scalar_one_or_none()
+
+                if not order:
+                    raise ResourceNotFoundException(
+                        f"Order with ID {order_id} not found"
+                    )
+
+                if order.status != OrderStatus.PACKED.value:
+                    raise ValidationException(
+                        f"Order must be in PACKED state to unassign a rider. Current status: {order.status}"
+                    )
+
+                order.rider_id = None
+                await session.flush()
+        return {"message": "Rider assignment removed successfully"}
+
+    @handle_service_errors("auto-assigning rider to order")
+    async def auto_assign_rider(self, order_id: int) -> OrderSchema:
+        """
+        Automatically assign a rider using the assignment service.
+        This uses placeholder logic for testing.
+        """
+        # 1. Gather data for assignment (Placeholders for now)
+        # In a real scenario, we'd query online riders and their stats
+        available_riders = [1, 2, 3, 4, 5]
+        rider_stats = {2: {"daily_count": 5, "current_load": 1}}
+
+        # 2. Call the assignment service
+        rider_id = await self._rider_assignment_service.auto_assign_rider(
+            order_id=order_id,
+            available_riders=available_riders,
+            rider_stats=rider_stats,
+        )
+
+        if not rider_id:
+            raise ValidationException(
+                "Could not automatically assign a rider at this time."
+            )
+
+        # 3. Use existing assign_rider logic to perform the actual update
+        return await self.assign_rider(order_id, rider_id)

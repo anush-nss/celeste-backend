@@ -14,12 +14,19 @@ from src.api.search.routes import search_router
 from src.api.search.service import SearchService
 from src.api.stores.routes import stores_router
 from src.api.tags.routes import tags_router
+from src.api.riders.routes import riders_router
 from src.api.tiers.routes import router as tiers_router
 from src.api.users.routes import users_router
+from src.api.payments.routes import payments_router
 from src.middleware.error import http_exception_handler
+from src.middleware.rate_limit import limiter
+from src.middleware.security import TrustedSourceMiddleware
 from src.middleware.timing import add_process_time_header
 from src.shared.utils import get_logger
 from fastapi.openapi.utils import get_openapi
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 initialize_firebase()
 
@@ -55,6 +62,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Register SlowAPI Limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
+app.add_middleware(SlowAPIMiddleware)
+
+# Register Security Middleware
+app.add_middleware(TrustedSourceMiddleware)
+
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(categories_router)
@@ -70,6 +85,8 @@ app.include_router(stores_router)
 app.include_router(pricing_router)
 app.include_router(tiers_router)
 app.include_router(tags_router)
+app.include_router(riders_router)
+app.include_router(payments_router)
 
 # Include dev router only in development environment
 if os.getenv("ENVIRONMENT") == "development":

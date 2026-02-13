@@ -4,6 +4,7 @@ from typing import Annotated, List, Optional
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from src.config.constants import CartStatus, CartUserRole, UserRole
+from src.api.products.models import EnhancedProductSchema
 
 
 class AddressResponseSchema(BaseModel):
@@ -96,6 +97,9 @@ class UserSchema(BaseModel):
     tier_id: Optional[int] = Field(
         default=None, description="Customer tier ID", examples=[2]
     )
+    odoo_customer_id: Optional[int] = Field(
+        default=None, description="Odoo Partner ID", examples=[1234]
+    )
     total_orders: int = Field(
         default=0, ge=0, description="Total number of orders placed", examples=[15]
     )
@@ -109,6 +113,7 @@ class UserSchema(BaseModel):
     updated_at: Optional[datetime] = None
     last_order_at: Optional[datetime] = None
     addresses: Optional[List[AddressResponseSchema]] = None
+    favorites: Optional[List[EnhancedProductSchema]] = None
     cart: Optional[List[CartItemSchema]] = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -273,6 +278,12 @@ class UpdateCartItemQuantitySchema(BaseModel):
         Field(
             gt=0, le=1000, description="New quantity for the cart item", examples=[5]
         ),
+    ]
+
+
+class AddFavoriteSchema(BaseModel):
+    product_id: Annotated[
+        int, Field(gt=0, description="Product ID to add to favorites", examples=[1])
     ]
 
 
