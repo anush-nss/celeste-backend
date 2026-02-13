@@ -20,6 +20,11 @@ class Settings:
     DATABASE_URL = os.getenv("DATABASE_URL", None)
     if DATABASE_URL:
         DATABASE_URL = DATABASE_URL.strip()
+        # Ensure the URL is in the correct format for async SQLAlchemy (asyncpg)
+        if DATABASE_URL.startswith("postgres://"):
+            DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
+            DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
     DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
     DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "10"))
