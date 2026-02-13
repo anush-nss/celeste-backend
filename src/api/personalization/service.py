@@ -2,7 +2,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
-import numpy as np
 from sqlalchemy import desc
 from sqlalchemy.future import select
 
@@ -182,56 +181,10 @@ class PersonalizationService:
         self, interactions: List, session
     ) -> Optional[List[float]]:
         """
-        Calculate user interest vector as weighted average of product vectors.
-
-        Args:
-            interactions: List of (product_id, type, score, timestamp)
-            session: Database session
-
-        Returns:
-            Interest vector (384 dimensions) or None
+        Calculates user interest vector.
+        (Disabled for Vercel deployment to remove numpy dependency)
         """
-        try:
-            # Get product vectors for interacted products
-            product_ids = [interaction.product_id for interaction in interactions]
-
-            vectors_query = select(
-                ProductVector.product_id, ProductVector.vector_embedding
-            ).where(ProductVector.product_id.in_(product_ids))
-
-            result = await session.execute(vectors_query)
-            product_vectors = {row.product_id: row.vector_embedding for row in result}
-
-            if not product_vectors:
-                return None
-
-            # Calculate weighted average
-            weighted_sum = np.zeros(SEARCH_VECTOR_DIM)
-            total_weight = 0.0
-
-            for interaction in interactions:
-                if interaction.product_id in product_vectors:
-                    vector = np.array(product_vectors[interaction.product_id])
-                    weight = interaction.interaction_score
-
-                    # Apply time decay
-                    days_ago = (datetime.now(timezone.utc) - interaction.timestamp).days
-                    if days_ago > 0:
-                        time_decay = pow(0.9, days_ago / 7)  # Decay over weeks
-                        weight *= time_decay
-
-                    weighted_sum += vector * weight
-                    total_weight += weight
-
-            if total_weight > 0:
-                interest_vector = (weighted_sum / total_weight).tolist()
-                return interest_vector
-            else:
-                return None
-
-        except Exception as e:
-            self.logger.error(f"Error calculating interest vector: {e}", exc_info=True)
-            return None
+        return None
 
     async def _calculate_category_scores(
         self, interactions: List, session
@@ -459,55 +412,13 @@ class PersonalizationService:
                 products = result.fetchall()
 
                 scores = {}
-                user_vector = None  # Initialize user_vector to None
-
-                # Check if preferences.interest_vector is not None first
-                if preferences.interest_vector is not None:
-                    # Now, convert it to a NumPy array
-                    temp_user_vector = np.array(preferences.interest_vector)
-
-                    # Check if the converted vector is a zero vector
-                    if np.linalg.norm(temp_user_vector) > 0:
-                        user_vector = temp_user_vector
-                    # If it's a zero vector, user_vector remains None
 
                 for product in products:
                     score = 0.0
                     components = 0
 
-                    # 1. Vector similarity (semantic)
-                    if user_vector is not None and product.vector_embedding:
-                        product_vector = product.vector_embedding
-                        if isinstance(product_vector, str):
-                            try:
-                                vector_str = product_vector.strip("[]")
-                                product_vector = np.array(
-                                    [float(x) for x in vector_str.split(",")]
-                                )
-                            except ValueError:
-                                self.logger.warning(
-                                    f"Could not parse vector_embedding for product ID {product.id}: {product_vector}"
-                                )
-                                product_vector = None  # Set to None if parsing fails
-
-                        if product_vector is not None:
-                            # Calculate norms
-                            user_norm = np.linalg.norm(user_vector)
-                            product_norm = np.linalg.norm(product_vector)
-
-                            if user_norm > 0 and product_norm > 0:
-                                # Cosine similarity
-                                similarity = np.dot(user_vector, product_vector) / (
-                                    user_norm * product_norm
-                                )
-                                score += (
-                                    max(0, similarity) * PERSONALIZATION_VECTOR_WEIGHT
-                                )  # Clamp to 0-1
-                                components += 1
-                            else:
-                                # If one of the vectors is a zero vector, similarity is 0
-                                # Still count as a component, but with 0 score
-                                components += 1
+                    # 1. Vector similarity (semantic) - DISABLED for Vercel
+                    # (Removes numpy/pytorch dependency)
 
                     # 2. Category affinity
                     if preferences.category_scores and product.category_ids:
