@@ -1,10 +1,7 @@
 import logging
 import os
 
-# Create logs directory if it doesn't exist
-log_dir = "./logs"
-os.makedirs(log_dir, exist_ok=True)
-
+# LOGGING CONFIGURATION
 LOG_LEVEL = logging.INFO
 
 # Configure logging

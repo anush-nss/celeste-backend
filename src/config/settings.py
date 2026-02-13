@@ -18,6 +18,9 @@ class Settings:
 
     # Database
     DATABASE_URL = os.getenv("DATABASE_URL", None)
+    if DATABASE_URL:
+        DATABASE_URL = DATABASE_URL.strip()
+
     DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
     DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "10"))
     DB_POOL_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", "30"))
@@ -46,22 +49,25 @@ class Settings:
     API_V1_STR = "/api/v1"
 
     # Odoo ERP Integration
-    ODOO_URL = os.getenv("ODOO_URL", None)
+    _odoo_url = os.getenv("ODOO_URL", None)
+    ODOO_URL = _odoo_url.strip() if _odoo_url else None
     ODOO_DB = os.getenv("ODOO_DB", None)
     ODOO_USERNAME = os.getenv("ODOO_USERNAME", None)
     ODOO_PASSWORD = os.getenv("ODOO_PASSWORD", None)
 
     # Payment Gateway
-    API_BASE_URL = os.getenv(
+    _api_base_url = os.getenv(
         "API_BASE_URL", "https://celeste-api-846811285865.asia-south1.run.app"
     )
+    API_BASE_URL = _api_base_url.strip()
     MPGS_MERCHANT_ID = os.getenv("MPGS_MERCHANT_ID", None)
     MPGS_API_USERNAME = os.getenv("MPGS_API_USERNAME", None)
     MPGS_API_PASSWORD = os.getenv("MPGS_API_PASSWORD", None)
-    MPGS_GATEWAY_URL = os.getenv(
+    _mpgs_gateway_url = os.getenv(
         "MPGS_GATEWAY_URL",
         "https://cbcmpgs.gateway.mastercard.com/api/rest/version/100",
     )
+    MPGS_GATEWAY_URL = _mpgs_gateway_url.strip()
     MPGS_WEBHOOK_SECRET = os.getenv("MPGS_WEBHOOK_SECRET", None)
 
 
