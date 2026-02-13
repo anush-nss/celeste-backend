@@ -37,21 +37,9 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     """
     Application lifespan events.
-    Runs on startup and shutdown to manage resources.
     """
-    # Startup: Warm up search service
-    logger.info("Starting application startup tasks...")
-    try:
-        search_service = SearchService()
-        search_service.warmup()
-        logger.info("Application startup complete!")
-    except Exception as e:
-        logger.error(f"Error during startup warmup: {e}", exc_info=True)
-        # Don't crash the app if warmup fails, model will lazy-load on first search
-
+    logger.info("Starting application...")
     yield
-
-    # Shutdown: Cleanup (if needed in future)
     logger.info("Application shutdown")
 
 

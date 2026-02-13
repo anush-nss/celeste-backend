@@ -4,7 +4,6 @@ import logging
 from datetime import datetime
 from typing import List, Optional, cast
 
-from sentence_transformers import SentenceTransformer
 from sqlalchemy import and_, desc, text
 from sqlalchemy.future import select
 
@@ -16,10 +15,7 @@ from src.config.constants import (
     MIN_SUCCESS_RATE_FOR_SUGGESTION,
     SEARCH_DROPDOWN_LIMIT,
     SEARCH_FULL_DEFAULT_LIMIT,
-    SEARCH_HYBRID_WEIGHT_SEMANTIC,
-    SEARCH_HYBRID_WEIGHT_TFIDF,
     SEARCH_MIN_QUERY_LENGTH,
-    SENTENCE_TRANSFORMER_MODEL,
     InteractionType,
     SearchMode,
 )
@@ -34,18 +30,16 @@ class SearchService:
     """
     Service for product search functionality.
 
-    Implements hybrid search combining:
-    - Semantic search (sentence transformers + vector similarity)
-    - Keyword search (PostgreSQL full-text search)
+    Implements keyword search combining:
+    - PostgreSQL full-text search / ILIKE
     - Search tracking and analytics
     - Search suggestions
     """
 
     _instance: Optional["SearchService"] = None
-    _model_loaded: bool = False
 
     def __new__(cls):
-        """Singleton pattern to ensure only one instance with shared model"""
+        """Singleton pattern"""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -54,43 +48,13 @@ class SearchService:
         # Only initialize once
         if not hasattr(self, "_initialized"):
             self._error_handler = ErrorHandler(__name__)
-            self._model: Optional[SentenceTransformer] = None
             self.product_service = ProductService()
             self.logger = logging.getLogger(__name__)
             self._initialized = True
 
-    def _load_model(self):
-        """Lazy load the sentence transformer model with memory optimization"""
-        if self._model is None:
-            self.logger.info(
-                f"Loading sentence transformer model: {SENTENCE_TRANSFORMER_MODEL}"
-            )
-            # Load from local cache (pre-downloaded during container build)
-            # local_files_only=True prevents any internet access to HuggingFace Hub
-            self._model = SentenceTransformer(
-                SENTENCE_TRANSFORMER_MODEL,
-                device="cpu",  # Force CPU for consistency
-                cache_folder=None,  # Use default cache
-                local_files_only=True,  # CRITICAL: Never contact HuggingFace API
-            )
-            SearchService._model_loaded = True
-            self.logger.info("Model loaded successfully from local cache")
-        return self._model
-
     def warmup(self):
-        """
-        Warm up the search service by pre-loading the model.
-        Call this at application startup to avoid cold start delays.
-        """
-        if not SearchService._model_loaded:
-            self.logger.info("Warming up search service...")
-            model = self._load_model()
-            # Test encode to ensure model is fully initialized
-            if model:
-                model.encode("warmup query", convert_to_numpy=True)
-            self.logger.info("Search service warmup complete!")
-        else:
-            self.logger.info("Search service already warmed up")
+        """No warmup needed for basic text search"""
+        pass
 
     async def search_products(
         self,
@@ -345,41 +309,33 @@ class SearchService:
         longitude: Optional[float] = None,
     ) -> List[EnhancedProductSchema]:
         """
-        Hybrid search combining semantic similarity and keyword matching.
-
-        Uses pgvector for fast cosine similarity search.
+        Basic SQL text search replacement for vector hybrid search.
+        Uses ILIKE and basic keyword matching for Vercel efficiency.
         """
         try:
-            # Generate query embedding
-            model = self._load_model()
-            query_embedding = model.encode(query, convert_to_numpy=True)
-
             async with AsyncSessionLocal() as session:
-                # Build hybrid search query
-                # Using pgvector's cosine distance operator (<=>)
-                # Note: Using CAST() instead of :: to avoid conflict with named parameters
+                # Basic SQL search on name, description, and brand
+                # We also use the tsvector keyword data from product_vectors if it exists,
+                # fall back to basic products table otherwise.
                 search_query = """
-                WITH ranked_products AS (
-                    SELECT
-                        pv.product_id,
-                        pv.vector_embedding <=> CAST(:query_vector AS vector) AS distance,
-                        1 - (pv.vector_embedding <=> CAST(:query_vector AS vector)) AS similarity,
-                        ts_rank(
-                            to_tsvector('english', pv.text_content),
-                            plainto_tsquery('english', :query)
-                        ) AS keyword_rank
-                    FROM product_vectors pv
-                    WHERE pv.text_content IS NOT NULL
-                )
-                SELECT
+                SELECT 
                     p.id,
-                    rp.similarity,
-                    rp.keyword_rank,
-                    (:semantic_weight * rp.similarity + :keyword_weight * rp.keyword_rank) AS combined_score
-                FROM ranked_products rp
-                JOIN products p ON p.id = rp.product_id
-                WHERE rp.similarity > 0.1  -- Minimum similarity threshold
-                   OR rp.keyword_rank > 0  -- Or has keyword match
+                    (
+                        CASE 
+                            WHEN p.name ILIKE :exact_query THEN 10.0
+                            WHEN p.name ILIKE :prefix_query THEN 5.0
+                            ELSE 1.0
+                        END +
+                        ts_rank(
+                            to_tsvector('english', COALESCE(p.name, '') || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')),
+                            plainto_tsquery('english', :query)
+                        ) * 2.0
+                    ) as combined_score
+                FROM products p
+                WHERE p.name ILIKE :fuzzy_query
+                   OR p.brand ILIKE :fuzzy_query
+                   OR p.description ILIKE :fuzzy_query
+                   OR to_tsvector('english', COALESCE(p.name, '') || ' ' || COALESCE(p.brand, '') || ' ' || COALESCE(p.description, '')) @@ plainto_tsquery('english', :query)
                 ORDER BY combined_score DESC
                 LIMIT :search_limit
                 """
@@ -387,13 +343,11 @@ class SearchService:
                 result = await session.execute(
                     text(search_query),
                     {
-                        "query_vector": json.dumps(
-                            query_embedding.tolist()
-                        ),  # Convert to JSON array for CAST
                         "query": query,
-                        "semantic_weight": SEARCH_HYBRID_WEIGHT_SEMANTIC,
-                        "keyword_weight": SEARCH_HYBRID_WEIGHT_TFIDF,
-                        "search_limit": limit * 2,  # Get more for filtering
+                        "exact_query": query,
+                        "prefix_query": f"{query}%",
+                        "fuzzy_query": f"%{query}%",
+                        "search_limit": limit * 2,
                     },
                 )
                 rows = result.fetchall()
@@ -401,11 +355,9 @@ class SearchService:
                 if not rows:
                     return []
 
-                # Extract product IDs
                 product_ids = [row.id for row in rows]
 
                 # Get full product data using existing ProductQueryService
-                # Reuses the same bulk query infrastructure as products module
                 products = await self.product_service.query_service.get_products_by_ids(
                     product_ids=product_ids,
                     customer_tier=customer_tier,
@@ -419,34 +371,14 @@ class SearchService:
                     longitude=longitude,
                 )
 
-                # Apply additional filters
-                if category_ids:
-                    products = [
-                        p
-                        for p in products
-                        if any(
-                            cat.get("id") in category_ids
-                            for cat in (p.categories or [])
-                        )
-                    ]
-
-                if min_price is not None:
-                    products = [p for p in products if float(p.base_price) >= min_price]
-
-                if max_price is not None:
-                    products = [p for p in products if float(p.base_price) <= max_price]
-
-                # Maintain search ranking order
+                # Maintain scoring order
                 product_order_map = {pid: idx for idx, pid in enumerate(product_ids)}
-                products.sort(
-                    key=lambda p: product_order_map.get(p.id, len(product_ids))
-                )
+                products.sort(key=lambda p: product_order_map.get(p.id, len(product_ids)))
 
-                # Return up to limit
                 return products[:limit]
 
         except Exception as e:
-            self.logger.error(f"Error in hybrid search: {e}", exc_info=True)
+            self.logger.error(f"Error in text search: {e}", exc_info=True)
             return []
 
     async def _get_search_suggestions(self, query: str, limit: int = 5) -> List[dict]:
